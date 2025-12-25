@@ -1,6 +1,9 @@
 #include "functional/hartree.cuh"
 #include "functional/kedf/tf.cuh"
+#include "functional/kedf/vw.cuh"
+#include "functional/kedf/wt.cuh"
 #include "functional/pseudo.cuh"
+#include "functional/xc/lda_pz.cuh"
 #include "model/atoms.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
@@ -88,4 +91,50 @@ PYBIND11_MODULE(dftcu, m) {
             "  v_kedf: Output potential field (δE/δρ)\n\n"
             "Returns:\n"
             "  energy: Total Thomas-Fermi kinetic energy");
+
+    py::class_<dftcu::vonWeizsacker>(m, "vonWeizsacker")
+        .def(py::init<double>(), py::arg("coeff") = 1.0)
+        .def(
+            "compute",
+            [](dftcu::vonWeizsacker& self, const dftcu::RealField& rho, dftcu::RealField& v_kedf) {
+                return self.compute(rho, v_kedf);
+            },
+            py::arg("rho"), py::arg("v_kedf"),
+            "Compute von Weizsacker kinetic energy and potential\n\n"
+            "Parameters:\n"
+            "  rho: Input density field\n"
+            "  v_kedf: Output potential field (δE/δρ)\n\n"
+            "Returns:\n"
+            "  energy: Total von Weizsacker kinetic energy");
+
+    py::class_<dftcu::WangTeter>(m, "WangTeter")
+        .def(py::init<double, double, double>(), 
+             py::arg("coeff") = 1.0, py::arg("alpha") = 5.0/6.0, py::arg("beta") = 5.0/6.0)
+        .def(
+            "compute",
+            [](dftcu::WangTeter& self, const dftcu::RealField& rho, dftcu::RealField& v_kedf) {
+                return self.compute(rho, v_kedf);
+            },
+            py::arg("rho"), py::arg("v_kedf"),
+            "Compute Wang-Teter non-local kinetic energy and potential\n\n"
+            "Parameters:\n"
+            "  rho: Input density field\n"
+            "  v_kedf: Output potential field (δE/δρ)\n\n"
+            "Returns:\n"
+            "  energy: Total Wang-Teter non-local kinetic energy");
+
+    py::class_<dftcu::LDA_PZ>(m, "LDA_PZ")
+        .def(py::init<>())
+        .def(
+            "compute",
+            [](dftcu::LDA_PZ& self, const dftcu::RealField& rho, dftcu::RealField& v_xc) {
+                return self.compute(rho, v_xc);
+            },
+            py::arg("rho"), py::arg("v_xc"),
+            "Compute LDA Perdew-Zunger exchange-correlation energy and potential\n\n"
+            "Parameters:\n"
+            "  rho: Input density field\n"
+            "  v_xc: Output potential field (δE/δρ)\n\n"
+            "Returns:\n"
+            "  energy: Total XC energy");
 }

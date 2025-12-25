@@ -115,11 +115,11 @@ def test_tf_kedf():
     if energy_pass and potential_pass:
         print("✓ ALL TESTS PASSED")
         print("Thomas-Fermi KEDF implementation is validated!")
-        return 0
+        assert True
     else:
         print("✗ SOME TESTS FAILED")
         print("Please check the implementation.")
-        return 1
+        assert False
 
 
 if __name__ == "__main__":
