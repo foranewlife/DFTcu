@@ -12,7 +12,11 @@ UV := uv
 # CMake configuration
 CMAKE := cmake
 CMAKE_BUILD_TYPE ?= Release
-CUDA_ARCH ?= 86
+CUDA_ARCH ?= 52 # 52 triggers auto-detection in CMakeLists.txt
+DISPLAY_ARCH := $(CUDA_ARCH)
+ifeq ($(CUDA_ARCH),52)
+  DISPLAY_ARCH := auto
+endif
 CMAKE_FLAGS := -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE) \
                -DCMAKE_CUDA_ARCHITECTURES=$(CUDA_ARCH) \
                -DBUILD_TESTING=ON \
@@ -85,7 +89,7 @@ lock: ## Update uv.lock file
 
 .PHONY: configure
 configure: ## Configure CMake build
-	@echo "$(YELLOW)Configuring CMake ($(CMAKE_BUILD_TYPE), CUDA arch=$(CUDA_ARCH))...$(NC)"
+	@echo "$(YELLOW)Configuring CMake ($(CMAKE_BUILD_TYPE), CUDA arch=$(DISPLAY_ARCH))...$(NC)"
 	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_FLAGS)
 	@echo "$(GREEN)✓ Configuration complete$(NC)"
 

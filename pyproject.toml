@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel", "pybind11>=2.10"]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core>=0.5.0", "pybind11>=2.10"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "dftcu"
@@ -29,9 +29,19 @@ classifiers = [
 dependencies = [
     "numpy>=1.20.0",
     "scipy>=1.7.0",
-    "pybind11>=2.10.0",
     "ase>=3.22.0",
 ]
+
+[tool.scikit-build]
+cmake.version = ">=3.18"
+build-dir = "build/{wheel_tag}"
+cmake.args = [
+    "-DBUILD_TESTING=OFF",
+    "-DBUILD_DOCS=OFF",
+    "-DCMAKE_COMPILE_WARNING_AS_ERROR=OFF"
+]
+# Removed wheel.py-api = "cp39" to use current Python ABI for best performance
+
 
 [project.optional-dependencies]
 dev = [
