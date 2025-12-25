@@ -51,6 +51,9 @@ set(DFTCU_CORE_SOURCES
     src/functional/hartree.cu
     src/functional/pseudo.cu
     src/functional/kedf/tf.cu
+    src/functional/kedf/vw.cu
+    src/functional/kedf/wt.cu
+    src/functional/xc/lda_pz.cu
     src/utilities/kernels.cu
 )
 
