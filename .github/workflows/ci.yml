@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  # Code formatting check
+  format-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run clang-format
+        uses: jidicula/clang-format-action@v4.11.0
+        with:
+          clang-format-version: '17'
+          check-path: 'src'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python formatters
+        run: |
+          pip install black flake8 isort
+
+      - name: Check Python formatting
+        run: |
+          black --check .
+          isort --check-only --profile black .
+          flake8 . --max-line-length=100 --ignore=E203,W503
+
+  # Build and test on Linux with CUDA
+  build-test-cuda:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.3.0-devel-ubuntu22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            cmake \
+            python3 \
+            python3-pip \
+            python3-dev \
+            git
+
+      - name: Install Python packages
+        run: |
+          pip3 install numpy scipy pybind11 pytest
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CUDA_ARCHITECTURES=80 \
+            -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Run C++ tests
+        run: |
+          cd build
+          ctest --output-on-failure
+
+      - name: Run Python tests
+        run: |
+          export PYTHONPATH=$PWD/build:$PYTHONPATH
+          pytest tests/ -v
+
+  # Documentation build check
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Doxygen
+        run: sudo apt-get install -y doxygen graphviz
+
+      - name: Build documentation
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DBUILD_DOCS=ON
+          make doc
+
+      - name: Upload documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation
+          path: build/docs/html

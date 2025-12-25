@@ -1,0 +1,6 @@
+[submodule "external/DFTpy"]
+	path = external/DFTpy
+	url = https://github.com/Quantum-MultiScale/DFTpy.git
+[submodule "external/GPUMD"]
+	path = external/GPUMD
+	url = https://github.com/brucefan1983/GPUMD.git

@@ -1,0 +1,56 @@
+name: Performance Benchmarks
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    # Run weekly on Monday at 00:00 UTC
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: [self-hosted, gpu]  # Requires self-hosted runner with GPU
+    if: github.repository == 'your-org/DFTcu'  # Update this
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install numpy scipy matplotlib
+
+      - name: Build DFTcu
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+
+      - name: Run benchmarks
+        run: |
+          export PYTHONPATH=$PWD/build:$PYTHONPATH
+          python benchmarks/run_all.py
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmarks/results/
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const results = fs.readFileSync('benchmarks/results/summary.txt', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '## Benchmark Results\n\n```\n' + results + '\n```'
+            });

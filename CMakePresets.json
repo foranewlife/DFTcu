@@ -1,0 +1,170 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default Config",
+      "description": "Default build configuration",
+      "binaryDir": "${sourceDir}/build",
+      "generator": "Unix Makefiles",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CUDA_ARCHITECTURES": "86",
+        "BUILD_TESTING": "ON",
+        "BUILD_DOCS": "ON"
+      }
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug",
+      "description": "Debug build with symbols",
+      "inherits": "default",
+      "binaryDir": "${sourceDir}/build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CUDA_ARCHITECTURES": "86"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release",
+      "description": "Optimized release build",
+      "inherits": "default",
+      "binaryDir": "${sourceDir}/build-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CUDA_ARCHITECTURES": "86",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
+      "name": "relwithdebinfo",
+      "displayName": "Release with Debug Info",
+      "description": "Optimized build with debug symbols",
+      "inherits": "default",
+      "binaryDir": "${sourceDir}/build-relwithdebinfo",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CUDA_ARCHITECTURES": "86"
+      }
+    },
+    {
+      "name": "profile",
+      "displayName": "Profiling",
+      "description": "Build with profiling enabled",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build-profile",
+      "cacheVariables": {
+        "ENABLE_PROFILING": "ON"
+      }
+    },
+    {
+      "name": "rtx4090",
+      "displayName": "RTX 4090 (sm_89)",
+      "description": "Optimized for RTX 4090",
+      "inherits": "release",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "89"
+      }
+    },
+    {
+      "name": "rtx3090",
+      "displayName": "RTX 3090 (sm_86)",
+      "description": "Optimized for RTX 3090",
+      "inherits": "release",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "86"
+      }
+    },
+    {
+      "name": "a100",
+      "displayName": "A100 (sm_80)",
+      "description": "Optimized for A100",
+      "inherits": "release",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "80"
+      }
+    },
+    {
+      "name": "v100",
+      "displayName": "V100 (sm_70)",
+      "description": "Optimized for V100",
+      "inherits": "release",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "70"
+      }
+    },
+    {
+      "name": "multi-gpu",
+      "displayName": "Multi-GPU",
+      "description": "Support multiple GPU architectures",
+      "inherits": "release",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "70;80;86;89"
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "CI Build",
+      "description": "Configuration for CI/CD",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build-ci",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "70",
+        "BUILD_TESTING": "ON",
+        "BUILD_DOCS": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "jobs": 0
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "jobs": 0
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "jobs": 0
+    },
+    {
+      "name": "profile",
+      "configurePreset": "profile",
+      "jobs": 0
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true,
+        "verbosity": "verbose"
+      }
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
