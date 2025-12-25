@@ -55,6 +55,15 @@ echo "  - Create uv.lock for reproducible builds"
 uv sync --all-extras
 
 echo ""
+echo "Installing DFTpy from submodule for comparison tests..."
+if [ -d "external/DFTpy" ]; then
+    .venv/bin/pip install -e external/DFTpy --no-deps
+    echo "✓ DFTpy installed from submodule"
+else
+    echo "⚠ DFTpy submodule not found (run: git submodule update --init)"
+fi
+
+echo ""
 echo "✓ Python environment ready"
 
 # Install pre-commit hooks (only if in a git repo)
