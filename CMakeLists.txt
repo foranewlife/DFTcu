@@ -160,7 +160,7 @@ endif()
 
 # Installation
 install(TARGETS dftcu
-    LIBRARY DESTINATION ${Python3_SITEARCH}
+    LIBRARY DESTINATION .
 )
 
 # Testing
