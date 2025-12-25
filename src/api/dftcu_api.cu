@@ -30,7 +30,9 @@ PYBIND11_MODULE(dftcu, m) {
         .def_readwrite("charge", &dftcu::Atom::charge)
         .def_readwrite("type", &dftcu::Atom::type);
 
-    py::class_<dftcu::Atoms>(m, "Atoms").def(py::init<const std::vector<dftcu::Atom>&>());
+    py::class_<dftcu::Atoms>(m, "Atoms")
+        .def(py::init<const std::vector<dftcu::Atom>&>())
+        .def("nat", &dftcu::Atoms::nat);
 
     py::class_<dftcu::RealField>(m, "RealField")
         .def(py::init<const dftcu::Grid&, int>())

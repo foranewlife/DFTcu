@@ -40,7 +40,8 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
     // Copy Complex to Real
     complex_to_real(nnr, rho_g.data(), vh.data());
 
-    energy = 0.0;
+    // Hartree energy: E_H = 0.5 * integral( rho(r) * v_h(r) ) dV
+    energy = 0.5 * dot_product(nnr, rho.data(), vh.data()) * grid_.dv();
 }
 
 }  // namespace dftcu
