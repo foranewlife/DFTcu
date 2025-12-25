@@ -7,6 +7,8 @@
 #include "model/atoms.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
+#include "solver/evaluator.cuh"
+#include "solver/optimizer.cuh"
 #include "utilities/kernels.cuh"
 
 #include <pybind11/numpy.h>
@@ -79,7 +81,9 @@ PYBIND11_MODULE(dftcu, m) {
         .def("compute", &dftcu::LocalPseudo::compute);
 
     // KEDF functionals
-    py::class_<dftcu::ThomasFermi>(m, "ThomasFermi")
+    py::class_<dftcu::KEDF_Base>(m, "KEDF_Base");
+
+    py::class_<dftcu::ThomasFermi, dftcu::KEDF_Base>(m, "ThomasFermi")
         .def(py::init<double>(), py::arg("coeff") = 1.0)
         .def(
             "compute",
@@ -94,7 +98,7 @@ PYBIND11_MODULE(dftcu, m) {
             "Returns:\n"
             "  energy: Total Thomas-Fermi kinetic energy");
 
-    py::class_<dftcu::vonWeizsacker>(m, "vonWeizsacker")
+    py::class_<dftcu::vonWeizsacker, dftcu::KEDF_Base>(m, "vonWeizsacker")
         .def(py::init<double>(), py::arg("coeff") = 1.0)
         .def(
             "compute",
@@ -109,9 +113,9 @@ PYBIND11_MODULE(dftcu, m) {
             "Returns:\n"
             "  energy: Total von Weizsacker kinetic energy");
 
-    py::class_<dftcu::WangTeter>(m, "WangTeter")
-        .def(py::init<double, double, double>(), 
-             py::arg("coeff") = 1.0, py::arg("alpha") = 5.0/6.0, py::arg("beta") = 5.0/6.0)
+    py::class_<dftcu::WangTeter, dftcu::KEDF_Base>(m, "WangTeter")
+        .def(py::init<double, double, double>(), py::arg("coeff") = 1.0,
+             py::arg("alpha") = 5.0 / 6.0, py::arg("beta") = 5.0 / 6.0)
         .def(
             "compute",
             [](dftcu::WangTeter& self, const dftcu::RealField& rho, dftcu::RealField& v_kedf) {
@@ -139,4 +143,29 @@ PYBIND11_MODULE(dftcu, m) {
             "  v_xc: Output potential field (δE/δρ)\n\n"
             "Returns:\n"
             "  energy: Total XC energy");
+
+    py::class_<dftcu::Evaluator>(m, "Evaluator")
+        .def(py::init<const dftcu::Grid&>())
+        .def("set_kedf", &dftcu::Evaluator::set_kedf)
+        .def("set_xc", &dftcu::Evaluator::set_xc)
+        .def("set_hartree", &dftcu::Evaluator::set_hartree)
+        .def("set_pseudo", &dftcu::Evaluator::set_pseudo)
+        .def("compute", &dftcu::Evaluator::compute);
+
+    py::class_<dftcu::OptimizationOptions>(m, "OptimizationOptions")
+        .def(py::init<>())
+        .def_readwrite("max_iter", &dftcu::OptimizationOptions::max_iter)
+        .def_readwrite("econv", &dftcu::OptimizationOptions::econv)
+        .def_readwrite("ncheck", &dftcu::OptimizationOptions::ncheck)
+        .def_readwrite("step_size", &dftcu::OptimizationOptions::step_size);
+
+    py::class_<dftcu::SimpleOptimizer>(m, "SimpleOptimizer")
+        .def(py::init<const dftcu::Grid&, dftcu::OptimizationOptions>(), py::arg("grid"),
+             py::arg("options") = dftcu::OptimizationOptions())
+        .def("solve", &dftcu::SimpleOptimizer::solve);
+
+    py::class_<dftcu::CGOptimizer>(m, "CGOptimizer")
+        .def(py::init<const dftcu::Grid&, dftcu::OptimizationOptions>(), py::arg("grid"),
+             py::arg("options") = dftcu::OptimizationOptions())
+        .def("solve", &dftcu::CGOptimizer::solve);
 }
