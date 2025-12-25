@@ -40,11 +40,22 @@ class Grid {
     double dv() const { return dv_; }
     double volume() const { return volume_; }
     const int* nr() const { return nr_; }
-    const double (*lattice())[3] { return lattice_; }
+    const double (*lattice() const)[3] { return lattice_; }
     const double* gg() const { return gg_.data(); }
     const double* gx() const { return gx_.data(); }
     const double* gy() const { return gy_.data(); }
     const double* gz() const { return gz_.data(); }
+    const double (*rec_lattice() const)[3] { return rec_lattice_; }
+
+    double g2max() const {
+        double g2max = 0;
+        std::vector<double> h_gg(nnr_);
+        cudaMemcpy(h_gg.data(), gg_.data(), nnr_ * sizeof(double), cudaMemcpyDeviceToHost);
+        for (double g : h_gg)
+            if (g > g2max)
+                g2max = g;
+        return g2max;
+    }
 
   private:
     void compute_reciprocal_lattice() {

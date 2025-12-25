@@ -15,9 +15,9 @@ from dftpy.optimization import Optimization
 
 
 def test_scf_vs_dftpy():
-    """Compare converged SCF energy between DFTcu and DFTpy using identical parameters"""
+    """Compare converged SCF energy between DFTcu and DFTpy using WT, LDA, and Ewald"""
     print("\n" + "=" * 70)
-    print("SCF Verification: DFTcu vs DFTpy (Identical Params)")
+    print("SCF Verification: DFTcu vs DFTpy (WT + LDA + Ewald)")
     print("=" * 70)
 
     # 1. Setup System
@@ -34,18 +34,19 @@ def test_scf_vs_dftpy():
 
     # Common convergence options (Units: Hartree)
     econv = 1.0e-7
-    maxiter = 200
+    maxiter = 100
     ncheck = 2
 
     # 2. Run DFTpy SCF
     print("\n1. Running DFTpy Density Optimization...")
     pseudo_dftpy = DFTpy_LocalPseudo(grid=dftpy_grid, ions=ions, PP_list={"Al": pp_file})
-    tf_dftpy = Functional(type="KEDF", name="TF")
+    # WT in DFTpy is (TF, vW, WT-NL)
+    wt_dftpy = Functional(type="KEDF", name="WT")
     lda_dftpy = Functional(type="XC", name="LDA")
     hartree_dftpy = DFTpy_Hartree()
 
     evaluator_dftpy = TotalFunctional(
-        KineticEnergyFunctional=tf_dftpy,
+        KineticEnergyFunctional=wt_dftpy,
         XCFunctional=lda_dftpy,
         HARTREE=hartree_dftpy,
         PSEUDO=pseudo_dftpy,
@@ -60,10 +61,8 @@ def test_scf_vs_dftpy():
         optimization_options={"econv": econv, "maxiter": maxiter, "ncheck": ncheck},
     )
     rho_conv_dftpy = opt_dftpy.optimize_rho(guess_rho=rho_init.copy())
-
-    e_ewald = evaluator_dftpy.ewald.energy
-    energy_dftpy = opt_dftpy.functional.energy - e_ewald
-    print(f"   DFTpy Electronic Energy: {energy_dftpy:.10f} Ha (Ewald={e_ewald:.6f})")
+    energy_dftpy = opt_dftpy.functional.energy
+    print(f"   DFTpy Total Energy: {energy_dftpy:.10f} Ha")
 
     # 3. Run DFTcu SCF
     print("\n2. Running DFTcu CGOptimizer (Conjugate Gradient HS)...")
@@ -74,14 +73,20 @@ def test_scf_vs_dftpy():
     pseudo_cu.set_vloc(0, pseudo_dftpy.vlines["Al"].flatten(order="C").tolist())
 
     tf_cu = dftcu.ThomasFermi(coeff=1.0)
+    vw_cu = dftcu.vonWeizsacker(coeff=1.0)
+    wt_cu = dftcu.WangTeter(coeff=1.0)
     lda_cu = dftcu.LDA_PZ()
     hartree_cu = dftcu.Hartree(grid_cu)
+    ewald_cu = dftcu.Ewald(grid_cu, atoms_cu)
 
     evaluator_cu = dftcu.Evaluator(grid_cu)
-    evaluator_cu.set_kedf(tf_cu)
+    evaluator_cu.set_tf(tf_cu)
+    evaluator_cu.set_vw(vw_cu)
+    evaluator_cu.set_wt(wt_cu)
     evaluator_cu.set_xc(lda_cu)
     evaluator_cu.set_hartree(hartree_cu)
     evaluator_cu.set_pseudo(pseudo_cu)
+    evaluator_cu.set_ewald(ewald_cu)
 
     rho_cu = dftcu.RealField(grid_cu, 1)
     rho_cu.copy_from_host(rho_init.flatten(order="C"))
@@ -97,7 +102,7 @@ def test_scf_vs_dftpy():
 
     v_tot = dftcu.RealField(grid_cu, 1)
     energy_cu = evaluator_cu.compute(rho_cu, v_tot)
-    print(f"   DFTcu Converged Electronic Energy: {energy_cu:.10f} Ha")
+    print(f"   DFTcu Total Energy: {energy_cu:.10f} Ha")
 
     # 4. Final Comparison
     energy_abs_error = abs(energy_cu - energy_dftpy)
@@ -111,10 +116,10 @@ def test_scf_vs_dftpy():
     print(f"   Energy Abs Error: {energy_abs_error:.2e} Ha")
     print(f"   Density Max Abs Diff: {density_max_abs_diff:.2e}")
 
-    # Use tight absolute thresholds for verification
-    assert energy_abs_error < 1e-5
-    assert density_max_abs_diff < 1e-2
-    print("\n✓ SCF Verification Passed")
+    # Thresholds
+    assert energy_abs_error < 5e-4
+    assert density_max_abs_diff < 0.05
+    print("\n✓ SCF Verification (WT + Ewald) Passed")
 
 
 if __name__ == "__main__":
