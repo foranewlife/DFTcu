@@ -4,6 +4,9 @@
 #include "utilities/gpu_vector.cuh"
 
 namespace dftcu {
+class Grid;
+
+double dot_product(size_t size, const double* a, const double* b);
 
 template <typename T>
 class Field {
@@ -21,6 +24,16 @@ class Field {
     size_t size() const { return data_.size(); }
     int rank() const { return rank_; }
     const Grid& grid() const { return grid_; }
+
+    double dot(const Field<double>& other) const {
+        return dot_product(size(), data(), other.data());
+    }
+
+    double integral() const {
+        Field<double> ones(grid_);
+        ones.fill(1.0);
+        return dot(ones) * grid_.dv();
+    }
 
   private:
     const Grid& grid_;
