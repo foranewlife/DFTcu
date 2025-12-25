@@ -2,14 +2,14 @@
 """
 Test Wang-Teter KEDF implementation against DFTpy
 """
+import dftcu
 import numpy as np
 import pytest
-import dftcu
-from dftpy.field import DirectField
+from dftpy.density import DensityGenerator
 from dftpy.functional.kedf.wt import WT as DFTpy_WT
 from dftpy.grid import DirectGrid
 from dftpy.ions import Ions
-from dftpy.density import DensityGenerator
+
 
 @pytest.mark.comparison
 def test_wt_kedf():
@@ -21,7 +21,7 @@ def test_wt_kedf():
 
     # Create test density from atomic charges
     pos = np.array([[5.0, 5.0, 5.0]])
-    ions = Ions(symbols=['Al'], positions=pos, cell=lattice)
+    ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
     ions.set_charges(3.0)
     generator = DensityGenerator()
     rho_dftpy = generator.guess_rho(ions, grid=dftpy_grid)
@@ -51,6 +51,7 @@ def test_wt_kedf():
     # Thresholds
     assert energy_rel_error < 1e-5
     assert potential_max_diff < 1e-4
+
 
 if __name__ == "__main__":
     test_wt_kedf()

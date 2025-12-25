@@ -14,11 +14,11 @@ sys.path.insert(0, "/workplace/chenys/project/DFTcu/external/DFTpy/src")
 
 try:
     import dftcu  # noqa: E402
+    from dftpy.density import DensityGenerator  # noqa: E402
     from dftpy.field import DirectField  # noqa: E402
     from dftpy.functional.kedf.tf import TF as DFTpy_TF  # noqa: E402
     from dftpy.grid import DirectGrid  # noqa: E402
     from dftpy.ions import Ions  # noqa: E402
-    from dftpy.density import DensityGenerator  # noqa: E402
 
     DFTPY_AVAILABLE = True
 except ImportError:
@@ -43,7 +43,7 @@ class TestTFKEDFBenchmark:
         dftpy_grid = DirectGrid(lattice, nr=list(nr), full=True)
         # Add atoms to generate non-uniform density
         pos = np.array([[5.0, 5.0, 5.0]])
-        ions = Ions(symbols=['Al'], positions=pos, cell=lattice)
+        ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
         ions.set_charges(3.0)
         generator = DensityGenerator()
         rho = generator.guess_rho(ions, grid=dftpy_grid)
@@ -103,7 +103,9 @@ class TestTFKEDFBenchmark:
 
         potential_diff = np.abs(result_dftcu["potential"] - result_dftpy["potential"])
         potential_max_diff = potential_diff.max()
-        potential_rel_error = potential_max_diff / max(np.abs(result_dftpy["potential"]).max(), 1e-12)
+        potential_rel_error = potential_max_diff / max(
+            np.abs(result_dftpy["potential"]).max(), 1e-12
+        )
 
         # Assertions
         assert energy_rel_error < 1e-10, f"Energy error too large: {energy_rel_error}"
