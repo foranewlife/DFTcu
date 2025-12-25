@@ -10,10 +10,20 @@ double Evaluator::compute(const RealField& rho, RealField& v_tot) {
     double energy = 0.0;
     size_t n = rho.size();
 
-    // 1. KEDF
-    if (kedf_) {
+    // 1. KEDF components
+    if (tf_) {
         RealField v_tmp(grid_);
-        energy += kedf_->compute(rho, v_tmp);
+        energy += tf_->compute(rho, v_tmp);
+        v_add(n, v_tot.data(), v_tmp.data(), v_tot.data());
+    }
+    if (vw_) {
+        RealField v_tmp(grid_);
+        energy += vw_->compute(rho, v_tmp);
+        v_add(n, v_tot.data(), v_tmp.data(), v_tot.data());
+    }
+    if (wt_) {
+        RealField v_tmp(grid_);
+        energy += wt_->compute(rho, v_tmp);
         v_add(n, v_tot.data(), v_tmp.data(), v_tot.data());
     }
 
@@ -40,6 +50,11 @@ double Evaluator::compute(const RealField& rho, RealField& v_tot) {
         // Energy E_ext = integral( rho * v_ext )
         energy += dot_product(n, rho.data(), v_tmp.data()) * grid_.dv();
         v_add(n, v_tot.data(), v_tmp.data(), v_tot.data());
+    }
+
+    // 5. Ewald (Ion-Ion interaction, constant w.r.t rho)
+    if (ewald_) {
+        energy += ewald_->compute();
     }
 
     return energy;

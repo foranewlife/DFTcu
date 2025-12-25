@@ -1,3 +1,4 @@
+#include "functional/ewald.cuh"
 #include "functional/hartree.cuh"
 #include "functional/kedf/tf.cuh"
 #include "functional/kedf/vw.cuh"
@@ -75,6 +76,11 @@ PYBIND11_MODULE(dftcu, m) {
             return energy;
         });
 
+    py::class_<dftcu::Ewald>(m, "Ewald")
+        .def(py::init<const dftcu::Grid&, const dftcu::Atoms&, double, int>(), py::arg("grid"),
+             py::arg("atoms"), py::arg("precision") = 1e-8, py::arg("bspline_order") = 10)
+        .def("compute", &dftcu::Ewald::compute, py::arg("use_pme") = false);
+
     py::class_<dftcu::LocalPseudo>(m, "LocalPseudo")
         .def(py::init<const dftcu::Grid&, const dftcu::Atoms&>())
         .def("set_vloc", &dftcu::LocalPseudo::set_vloc)
@@ -146,10 +152,13 @@ PYBIND11_MODULE(dftcu, m) {
 
     py::class_<dftcu::Evaluator>(m, "Evaluator")
         .def(py::init<const dftcu::Grid&>())
-        .def("set_kedf", &dftcu::Evaluator::set_kedf)
+        .def("set_tf", &dftcu::Evaluator::set_tf)
+        .def("set_vw", &dftcu::Evaluator::set_vw)
+        .def("set_wt", &dftcu::Evaluator::set_wt)
         .def("set_xc", &dftcu::Evaluator::set_xc)
         .def("set_hartree", &dftcu::Evaluator::set_hartree)
         .def("set_pseudo", &dftcu::Evaluator::set_pseudo)
+        .def("set_ewald", &dftcu::Evaluator::set_ewald)
         .def("compute", &dftcu::Evaluator::compute);
 
     py::class_<dftcu::OptimizationOptions>(m, "OptimizationOptions")

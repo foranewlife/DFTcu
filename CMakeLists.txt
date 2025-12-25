@@ -49,6 +49,7 @@ find_package(pybind11 REQUIRED)
 set(DFTCU_CORE_SOURCES
     src/model/grid.cu
     src/functional/hartree.cu
+    src/functional/ewald.cu
     src/functional/pseudo.cu
     src/functional/kedf/tf.cu
     src/functional/kedf/vw.cu
