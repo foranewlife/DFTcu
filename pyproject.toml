@@ -39,6 +39,7 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pytest-xdist>=3.0.0",
+    "pytest-benchmark>=4.0.0",
     # Code quality
     "black>=23.0.0",
     "flake8>=6.0.0",
@@ -46,6 +47,8 @@ dev = [
     "mypy>=1.0.0",
     # Pre-commit hooks
     "pre-commit>=3.0.0",
+    # DFTpy for comparison tests (install from submodule)
+    # Install with: pip install -e external/DFTpy
 ]
 docs = [
     "sphinx>=6.0.0",
