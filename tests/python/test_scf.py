@@ -50,7 +50,7 @@ def test_simple_scf():
 
     # 3. Setup Evaluator
     evaluator = dftcu.Evaluator(grid_cu)
-    evaluator.set_kedf(tf)
+    evaluator.set_tf(tf)
     evaluator.set_xc(lda)
     evaluator.set_hartree(hartree)
     evaluator.set_pseudo(pseudo_cu)
