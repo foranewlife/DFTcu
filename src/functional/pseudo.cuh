@@ -10,16 +10,18 @@ namespace dftcu {
 
 class LocalPseudo {
   public:
-    LocalPseudo(const Grid& grid, const Atoms& atoms) : grid_(grid), atoms_(atoms), solver_(grid) {}
+    LocalPseudo(const Grid& grid, const Atoms& atoms);
+    ~LocalPseudo() = default;
 
     void set_vloc(int type, const std::vector<double>& vloc_g);
-    void compute(RealField& vh);
+    void compute(RealField& v);
 
   private:
     const Grid& grid_;
     const Atoms& atoms_;
     FFTSolver solver_;
-    std::map<int, GPU_Vector<double>> vlines_;  // vloc(G) for each atom type
+    GPU_Vector<double> vloc_types_;  // Contiguous vloc(G) for each atom type
+    int num_types_;
 };
 
 }  // namespace dftcu
