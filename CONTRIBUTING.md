@@ -1,404 +1,194 @@
 # Contributing to DFTcu
 
-Thank you for your interest in contributing to DFTcu! This document provides guidelines and instructions for contributing.
+DFTcu 欢迎各种形式的贡献！本文档提供开发指南和最佳实践。
 
-## Table of Contents
+## 📋 目录
 
-- [Development Setup](#development-setup)
-- [Code Style](#code-style)
-- [Building the Project](#building-the-project)
-- [Running Tests](#running-tests)
-- [Submitting Changes](#submitting-changes)
-- [Adding New Functionals](#adding-new-functionals)
+- [快速开始](#快速开始)
+- [开发工具](#开发工具)
+- [依赖管理](#依赖管理)
+- [构建和测试](#构建和测试)
+- [代码规范](#代码规范)
+- [提交流程](#提交流程)
 
----
+## 🚀 快速开始
 
-## Development Setup
+### 环境设置
 
-### Prerequisites
+**一键设置（推荐）**:
+```bash
+make setup
+source .venv/bin/activate
+```
 
-- **CUDA Toolkit** (12.0+) with nvcc compiler
-- **CMake** (3.18+)
-- **Python** (3.9+)
-- **Git**
-- **clang-format** (for code formatting)
-- **Doxygen** (optional, for documentation)
+这会自动完成：
+- ✅ 检查 CUDA、CMake、Python 环境
+- ✅ 安装 uv（快速 Python 包管理器）
+- ✅ 创建虚拟环境并安装所有依赖
+- ✅ 设置 pre-commit 钩子
 
-### Clone the Repository
+### 构建项目
 
 ```bash
-git clone https://github.com/your-org/DFTcu.git
-cd DFTcu
-git submodule update --init --recursive
+# 配置并构建
+make build
+
+# 或使用 CMake presets
+cmake --preset=debug
+cmake --build --preset=debug
 ```
 
-### Python Environment Setup
-
-We recommend using `uv` for fast Python environment management:
+### 运行测试
 
 ```bash
-# Install uv (if not already installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+# 运行所有测试
+make test
 
-# Create virtual environment
-uv venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+# 仅 C++ 测试
+make test-cpp
 
-# Install dependencies
-uv pip install numpy scipy pybind11 pytest black flake8 isort
+# 仅 Python 测试
+make test-python
 ```
 
-### Install Pre-commit Hooks
+## 🛠️ 开发工具
+
+### uv - 快速 Python 包管理
+
+DFTcu 使用 [uv](https://docs.astral.sh/uv/) 管理 Python 依赖，比 pip 快 10-100 倍。
+
+**添加依赖**:
+```bash
+# 添加核心依赖
+uv add matplotlib
+
+# 添加开发依赖
+uv add --dev pytest-asyncio
+```
+
+**删除依赖**:
+```bash
+uv remove matplotlib
+```
+
+**同步依赖**:
+```bash
+# 当 pyproject.toml 或 uv.lock 更新后
+uv sync --all-extras
+```
+
+**依赖配置**: 所有依赖在 \`pyproject.toml\` 中管理。
+
+### CMake Presets
+
+使用 CMake presets 快速配置不同构建：
 
 ```bash
-pip install pre-commit
-pre-commit install
+# 列出所有 presets
+cmake --list-presets
+
+# 使用 preset 配置
+cmake --preset=rtx4090    # RTX 4090 (sm_89)
+cmake --preset=debug      # Debug 构建
+cmake --preset=release    # Release 构建
 ```
 
-This will automatically format and check your code before each commit.
+可用 presets: `default`, `debug`, `release`, `rtx4090`, `rtx3090`, `a100`, `v100`, `multi-gpu`
 
----
-
-## Code Style
-
-### C++/CUDA Code
-
-We use **clang-format** with a custom configuration (`.clang-format`).
-
-**Key conventions:**
-- **Indentation**: 4 spaces
-- **Line length**: 100 characters maximum
-- **Naming**:
-  - Classes: `PascalCase` (e.g., `ThomasFermi`)
-  - Functions/methods: `snake_case` (e.g., `compute_energy`)
-  - Variables: `snake_case` with trailing underscore for members (e.g., `grid_`, `coeff_`)
-  - Constants: `UPPER_SNAKE_CASE`
-- **Braces**: Same line for classes/functions (Google style)
-
-**Format your code:**
-```bash
-# Format all C++/CUDA files
-find src -name "*.cu" -o -name "*.cuh" | xargs clang-format -i
-
-# Or use the Makefile target
-make format
-```
-
-### Python Code
-
-We use **black** for formatting and **flake8** for linting.
+### Makefile 快捷命令
 
 ```bash
-# Format Python code
-black .
-
-# Check linting
-flake8 . --max-line-length=100
+make setup        # 完整环境设置
+make build        # 构建项目
+make test         # 运行所有测试
+make format       # 格式化代码
+make clean        # 清理构建
+make help         # 显示所有命令
 ```
 
-### Documentation
+## 📝 代码规范
 
-- **C++/CUDA**: Use Doxygen-style comments
-  ```cpp
-  /**
-   * @brief Compute Thomas-Fermi kinetic energy
-   * @param rho Input density field
-   * @param v_kedf Output potential field
-   * @return Total kinetic energy in Hartree
-   */
-  double compute(const RealField& rho, RealField& v_kedf);
-  ```
+### C++/CUDA 代码
 
-- **Python**: Use docstrings (Google style)
-  ```python
-  def compute_energy(density: np.ndarray) -> float:
-      """
-      Compute the kinetic energy.
+使用 \`.clang-format\` 自动格式化：
+```bash
+make format-cpp
+```
 
-      Args:
-          density: Electron density array
+**规范**: 缩进 4 空格，行宽 100 字符，命名 snake_case
 
-      Returns:
-          Total energy in Hartree
-      """
-  ```
+### Python 代码
 
----
+使用 black + isort + flake8：
+```bash
+make format-python
+```
 
-## Building the Project
+**规范**: 遵循 PEP 8，行宽 100 字符
 
-### Using CMake (Recommended)
+### Pre-commit 钩子
 
 ```bash
-# Configure
-cmake -B build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CUDA_ARCHITECTURES=89 \  # Adjust for your GPU
-    -DBUILD_TESTING=ON \
-    -DBUILD_DOCS=ON
-
-# Build
-cmake --build build -j$(nproc)
-
-# Install (optional)
-cmake --install build --prefix ~/.local
+pre-commit install      # 安装钩子
+pre-commit run --all-files  # 手动运行检查
 ```
 
-### Using Make (Legacy)
+## 🔄 提交流程
+
+1. **创建分支**: `git checkout -b feature/your-feature`
+2. **开发和测试**: 编写代码，运行 `make test`
+3. **格式化代码**: `make format`
+4. **提交更改**: `git commit -m "feat: add feature"`
+5. **推送并创建 PR**
+
+### 提交信息规范
+
+使用 [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>: <subject>
+
+feat: 新功能
+fix: Bug 修复
+docs: 文档更新
+style: 代码格式
+refactor: 重构
+test: 测试相关
+chore: 构建/工具
+```
+
+## 🐛 调试技巧
 
 ```bash
-make clean
-make -j4
+# CUDA 调试
+cuda-gdb --args ./test_program
+cuda-memcheck ./test_program
+
+# Python 调试
+python -m pdb tests/python/test_tf_kedf.py
 ```
 
-### GPU Architecture
+## 💡 常见问题
 
-Set `CMAKE_CUDA_ARCHITECTURES` based on your GPU:
-- **RTX 40 series**: 89
-- **RTX 30 series**: 86
-- **A100**: 80
-- **V100**: 70
-
-Check your GPU: `nvidia-smi`
-
----
-
-## Running Tests
-
-### C++ Unit Tests (Google Test)
-
+**Q: 虚拟环境损坏？**
 ```bash
-cd build
-ctest --output-on-failure
-
-# Or run individual tests
-./tests/test_kedf_tf
+rm -rf .venv && make setup
 ```
 
-### Python Tests (pytest)
-
+**Q: 更新依赖？**
 ```bash
-export PYTHONPATH=$PWD/build:$PYTHONPATH
-pytest tests/ -v
+uv lock --upgrade && uv sync --all-extras
 ```
 
-### Adding New Tests
-
-**C++ test example** (`tests/test_new_feature.cu`):
-```cpp
-#include <gtest/gtest.h>
-#include "test_utils.h"
-
-namespace dftcu {
-namespace testing {
-
-TEST(NewFeatureTest, BasicFunctionality) {
-    // Your test code
-    EXPECT_EQ(1 + 1, 2);
-}
-
-} // namespace testing
-} // namespace dftcu
-```
-
-**Python test example** (`tests/test_new_feature.py`):
-```python
-import numpy as np
-import dftcu
-
-def test_new_feature():
-    # Your test code
-    assert True
-```
-
----
-
-## Submitting Changes
-
-### Workflow
-
-1. **Fork** the repository on GitHub
-2. **Create a branch** for your feature:
-   ```bash
-   git checkout -b feature/my-new-feature
-   ```
-3. **Make changes** and commit:
-   ```bash
-   git add .
-   git commit -m "Add new feature: ..."
-   ```
-4. **Run tests** to ensure nothing broke:
-   ```bash
-   make test  # or ctest in build/
-   ```
-5. **Push** to your fork:
-   ```bash
-   git push origin feature/my-new-feature
-   ```
-6. **Open a Pull Request** on GitHub
-
-### Commit Messages
-
-Follow conventional commits format:
-
-```
-type(scope): Short description
-
-Longer explanation if needed.
-
-Fixes #123
-```
-
-**Types:**
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation changes
-- `style`: Code style (formatting, no logic change)
-- `refactor`: Code refactoring
-- `test`: Adding/updating tests
-- `perf`: Performance improvements
-- `ci`: CI/CD changes
-
-**Examples:**
-```
-feat(kedf): Add von Weizsäcker functional
-
-Implements the vW kinetic energy functional with FFT-based
-gradient computation. Validated against DFTpy.
-
-Closes #42
-```
-
----
-
-## Adding New Functionals
-
-### Step 1: Create Files
-
-For a new KEDF functional (e.g., von Weizsäcker):
-
+**Q: 构建失败？**
 ```bash
-src/functional/kedf/
-├── vw.cuh   # Header file
-└── vw.cu    # Implementation
+make clean && make rebuild
 ```
 
-### Step 2: Implement the Functional
+## 📚 资源
 
-**Header (`vw.cuh`):**
-```cpp
-#pragma once
-#include "kedf_base.cuh"
+- [CUDA C++ Programming Guide](https://docs.nvidia.com/cuda/cuda-c-programming-guide/)
+- [pybind11 Documentation](https://pybind11.readthedocs.io/)
+- [uv Documentation](https://docs.astral.sh/uv/)
 
-namespace dftcu {
-
-class VonWeizsacker : public KEDF_Base {
-public:
-    VonWeizsacker(double coeff = 1.0);
-    double compute(const RealField& rho, RealField& v_kedf) override;
-    const char* name() const override { return "von Weizsäcker"; }
-
-private:
-    double coeff_;
-};
-
-} // namespace dftcu
-```
-
-**Implementation (`vw.cu`):**
-```cpp
-#include "vw.cuh"
-#include "utilities/gradient.cuh"
-
-namespace dftcu {
-
-VonWeizsacker::VonWeizsacker(double coeff) : coeff_(coeff) {}
-
-double VonWeizsacker::compute(const RealField& rho, RealField& v_kedf) {
-    // Your implementation here
-    // 1. Compute gradients
-    // 2. Calculate energy and potential
-    // 3. Return energy
-}
-
-} // namespace dftcu
-```
-
-### Step 3: Add to Build System
-
-Edit `CMakeLists.txt`:
-```cmake
-set(DFTCU_SOURCES
-    # ... existing files ...
-    src/functional/kedf/vw.cu
-)
-```
-
-### Step 4: Add Python Bindings
-
-Edit `src/api/dftcu_api.cu`:
-```cpp
-#include "functional/kedf/vw.cuh"
-
-// In PYBIND11_MODULE:
-py::class_<dftcu::VonWeizsacker>(m, "VonWeizsacker")
-    .def(py::init<double>(), py::arg("coeff") = 1.0)
-    .def("compute", &dftcu::VonWeizsacker::compute);
-```
-
-### Step 5: Add Tests
-
-Create `tests/test_kedf_vw.cu` and `tests/test_vw.py`.
-
-### Step 6: Update Documentation
-
-- Add docstrings to your code
-- Update `ARCHITECTURE_ANALYSIS.md` if needed
-- Mention in your PR description
-
----
-
-## Documentation
-
-### Building Documentation
-
-```bash
-cd build
-make doc
-```
-
-View in browser:
-```bash
-firefox docs/html/index.html
-```
-
-### Writing Good Documentation
-
-- **Public APIs**: Must have Doxygen comments
-- **Complex algorithms**: Add implementation notes
-- **Usage examples**: Include in docstrings
-- **Math formulas**: Use LaTeX in Doxygen (`\f$ E = mc^2 \f$`)
-
----
-
-## Getting Help
-
-- **Issues**: [GitHub Issues](https://github.com/your-org/DFTcu/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/DFTcu/discussions)
-- **Email**: dftcu-dev@example.com
-
----
-
-## Code of Conduct
-
-Be respectful and constructive. We follow the [Contributor Covenant](https://www.contributor-covenant.org/).
-
----
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the same license as the project (see `LICENSE` file).
-
----
-
-Thank you for contributing to DFTcu! 🚀
+感谢您的贡献！🎉
