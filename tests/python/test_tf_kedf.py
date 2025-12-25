@@ -2,14 +2,14 @@
 """
 Test Thomas-Fermi KEDF implementation against DFTpy
 """
+import dftcu
 import numpy as np
 import pytest
-import dftcu
-from dftpy.field import DirectField
+from dftpy.density import DensityGenerator
 from dftpy.functional.kedf.tf import TF as DFTpy_TF
 from dftpy.grid import DirectGrid
 from dftpy.ions import Ions
-from dftpy.density import DensityGenerator
+
 
 @pytest.mark.comparison
 def test_tf_kedf():
@@ -21,7 +21,7 @@ def test_tf_kedf():
 
     # Create test density from atomic charges
     pos = np.array([[5.0, 5.0, 5.0]])
-    ions = Ions(symbols=['Al'], positions=pos, cell=lattice)
+    ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
     ions.set_charges(3.0)
     generator = DensityGenerator()
     rho_dftpy = generator.guess_rho(ions, grid=dftpy_grid)
@@ -46,10 +46,13 @@ def test_tf_kedf():
 
     # Comparison
     energy_rel_error = abs(energy_cu - energy_dftpy) / max(abs(energy_dftpy), 1e-12)
-    potential_rel_error = np.abs(potential_cu - potential_dftpy).max() / max(np.abs(potential_dftpy).max(), 1e-12)
+    potential_rel_error = np.abs(potential_cu - potential_dftpy).max() / max(
+        np.abs(potential_dftpy).max(), 1e-12
+    )
 
     assert energy_rel_error < 1e-12
     assert potential_rel_error < 1e-12
+
 
 if __name__ == "__main__":
     test_tf_kedf()

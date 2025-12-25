@@ -13,12 +13,13 @@ UV := uv
 CMAKE := cmake
 CMAKE_BUILD_TYPE ?= Release
 CUDA_ARCH ?= 52 # 52 triggers auto-detection in CMakeLists.txt
-DISPLAY_ARCH := $(CUDA_ARCH)
-ifeq ($(CUDA_ARCH),52)
+STRIPPED_ARCH := $(strip $(CUDA_ARCH))
+DISPLAY_ARCH := $(STRIPPED_ARCH)
+ifeq ($(STRIPPED_ARCH),52)
   DISPLAY_ARCH := auto
 endif
 CMAKE_FLAGS := -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE) \
-               -DCMAKE_CUDA_ARCHITECTURES=$(CUDA_ARCH) \
+               -DCMAKE_CUDA_ARCHITECTURES=$(STRIPPED_ARCH) \
                -DBUILD_TESTING=ON \
                -DBUILD_DOCS=ON
 

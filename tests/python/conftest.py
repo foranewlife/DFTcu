@@ -1,6 +1,7 @@
 """
 Pytest configuration for DFTcu Python tests
 """
+
 import os
 import sys
 
