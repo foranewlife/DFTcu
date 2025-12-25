@@ -1,27 +1,82 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
-# Project definition
+# 1. Initialize C++ first to ensure feature detection works correctly for GTest
 project(DFTcu
     VERSION 0.1.0
-    LANGUAGES CXX CUDA
+    LANGUAGES CXX
     DESCRIPTION "CUDA-accelerated DFT calculations compatible with DFTpy"
 )
 
+# 2. Optimized CUDA Architecture Detection
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES MATCHES "^(52|70)$")
+    find_program(DETECT_NVCC NAMES nvcc PATHS /usr/local/cuda/bin /usr/bin)
+
+    if(DETECT_NVCC)
+        message(STATUS "Probing GPU architecture using: ${DETECT_NVCC}")
+
+        # Try nvidia-smi first
+        execute_process(COMMAND nvidia-smi --query-gpu=compute_cap --format=csv,noheader
+                        OUTPUT_VARIABLE SMI_ARCH RESULT_VARIABLE SMI_RES ERROR_QUIET)
+        if(SMI_RES EQUAL 0)
+            string(REPLACE "." "" CLEAN_SMI_ARCH "${SMI_ARCH}")
+            string(REGEX MATCHALL "[0-9]+" CLEAN_SMI_ARCH "${CLEAN_SMI_ARCH}")
+            if(CLEAN_SMI_ARCH)
+                list(GET CLEAN_SMI_ARCH 0 PROBED_ARCH)
+            endif()
+        endif()
+
+        # Fallback to probe script
+        if(NOT PROBED_ARCH)
+            set(arch_file "${CMAKE_BINARY_DIR}/detect_arch.cu")
+            file(WRITE ${arch_file} [[
+                #include <cuda_runtime.h>
+                #include <stdio.h>
+                int main() {
+                    int count = 0;
+                    if (cudaGetDeviceCount(&count) != cudaSuccess || count == 0) return 1;
+                    cudaDeviceProp prop;
+                    if (cudaGetDeviceProperties(&prop, 0) != cudaSuccess) return 1;
+                    printf("%d%d", prop.major, prop.minor);
+                    return 0;
+                }
+            ]])
+            execute_process(COMMAND ${DETECT_NVCC} ${arch_file} -o "${arch_file}.exe"
+                            RESULT_VARIABLE PROBE_COMPILE_RES ERROR_QUIET)
+            if(PROBE_COMPILE_RES EQUAL 0)
+                execute_process(COMMAND "${arch_file}.exe" OUTPUT_VARIABLE PROBED_ARCH
+                                RESULT_VARIABLE PROBE_EXE_RES ERROR_QUIET)
+            endif()
+        endif()
+
+        # Verify arch support
+        if(PROBED_ARCH)
+            set(test_file "${CMAKE_BINARY_DIR}/verif_arch.cu")
+            file(WRITE ${test_file} "int main(){return 0;}")
+            execute_process(COMMAND ${DETECT_NVCC} -arch=sm_${PROBED_ARCH} ${test_file} -o "${test_file}.exe"
+                            RESULT_VARIABLE VERIF_RES OUTPUT_QUIET ERROR_QUIET)
+            if(VERIF_RES EQUAL 0)
+                set(DETECTED_OPTIMAL_ARCH ${PROBED_ARCH})
+            endif()
+        endif()
+    endif()
+endif()
+
+# Set the architecture before enabling CUDA language
+if(DETECTED_OPTIMAL_ARCH)
+    set(CMAKE_CUDA_ARCHITECTURES ${DETECTED_OPTIMAL_ARCH} CACHE STRING "CUDA architectures" FORCE)
+    message(STATUS "Optimized CUDA architecture detected and verified: ${DETECTED_OPTIMAL_ARCH}")
+elseif(NOT CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES 70 CACHE STRING "CUDA architectures" FORCE)
+endif()
+
+# 3. Enable CUDA language
+enable_language(CUDA)
+
 # C++ and CUDA standards
 set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED OFF)  # More flexible
+set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 set(CMAKE_CUDA_STANDARD 14)
 set(CMAKE_CUDA_STANDARD_REQUIRED OFF)
-
-# CUDA architecture (adjust based on your GPU)
-# RTX 40 series: 89
-# RTX 30 series: 86
-# A100: 80
-# V100: 70
-# Default to 70 for broader compatibility
-if(NOT CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES 70 CACHE STRING "CUDA architectures")
-endif()
 
 # Build type
 if(NOT CMAKE_BUILD_TYPE)
@@ -45,7 +100,7 @@ execute_process(
 )
 find_package(pybind11 REQUIRED)
 
-# Core library sources (without Python bindings)
+# Core library sources
 set(DFTCU_CORE_SOURCES
     src/model/grid.cu
     src/functional/hartree.cu
