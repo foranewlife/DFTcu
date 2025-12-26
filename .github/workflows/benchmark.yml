@@ -3,6 +3,8 @@ name: Performance Benchmarks
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   schedule:
     # Run weekly on Monday at 00:00 UTC
     - cron: '0 0 * * 1'
@@ -15,25 +17,34 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        env:
+          UV_INSTALL_DIR: /usr/local/bin
 
       - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+        run: uv python install 3.11
 
       - name: Install dependencies
         run: |
-          pip install numpy scipy matplotlib
+          uv sync --all-extras
 
       - name: Build DFTcu
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build -j
+          uv run cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          uv run cmake --build build -j
 
       - name: Run benchmarks
         run: |
-          export PYTHONPATH=$PWD/build:$PYTHONPATH
-          python benchmarks/run_all.py
+          if [ -d "benchmarks" ]; then
+            uv run python benchmarks/run_all.py
+          else
+            echo "No benchmarks directory found, running benchmark tests instead"
+            uv run pytest tests/python/*benchmark.py
+          fi
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4

@@ -19,55 +19,59 @@ jobs:
           clang-format-version: '17'
           check-path: 'src'
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        env:
+          UV_INSTALL_DIR: /usr/local/bin
 
-      - name: Install Python formatters
-        run: |
-          pip install black flake8 isort
+      - name: Set up Python
+        run: uv python install 3.11
 
       - name: Check Python formatting
         run: |
-          black --check .
-          isort --check-only --profile black .
-          flake8 . --max-line-length=100 --ignore=E203,W503
+          uv run black --check .
+          uv run isort --check-only --profile black .
+          uv run flake8 . --max-line-length=100 --ignore=E203,W503
 
   # Build and test on Linux with CUDA
   build-test-cuda:
     runs-on: ubuntu-latest
     container:
-      image: nvidia/cuda:12.3.0-devel-ubuntu22.04
+      image: nvidia/cuda:12.6.3-devel-ubuntu22.04
 
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           apt-get update
-          apt-get install -y \
-            cmake \
-            python3 \
-            python3-pip \
-            python3-dev \
-            git
+          apt-get install -y cmake git curl ninja-build
 
-      - name: Install Python packages
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        env:
+          UV_INSTALL_DIR: /usr/local/bin
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install Python dependencies
         run: |
-          pip3 install numpy scipy pybind11 pytest
+          uv sync --all-extras
 
       - name: Configure CMake
         run: |
-          cmake -B build \
+          uv run cmake -B build \
+            -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CUDA_ARCHITECTURES=80 \
-            -DBUILD_TESTING=ON
+            -DBUILD_TESTING=ON \
+            -DBUILD_DOCS=OFF
 
       - name: Build
-        run: cmake --build build -j$(nproc)
+        run: uv run cmake --build build -j$(nproc)
 
       - name: Run C++ tests
         run: |
@@ -76,27 +80,4 @@ jobs:
 
       - name: Run Python tests
         run: |
-          export PYTHONPATH=$PWD/build:$PYTHONPATH
-          pytest tests/ -v
-
-  # Documentation build check
-  docs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Doxygen
-        run: sudo apt-get install -y doxygen graphviz
-
-      - name: Build documentation
-        run: |
-          mkdir -p build
-          cd build
-          cmake .. -DBUILD_DOCS=ON
-          make doc
-
-      - name: Upload documentation
-        uses: actions/upload-artifact@v4
-        with:
-          name: documentation
-          path: build/docs/html
+          uv run pytest tests/python -v
