@@ -2,6 +2,8 @@
 # Install: pip install pre-commit
 # Setup: pre-commit install
 
+exclude: ^external/
+
 repos:
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -27,7 +29,7 @@ repos:
     rev: 7.0.0
     hooks:
       - id: flake8
-        args: ['--max-line-length=100', '--ignore=E203,W503']
+        # Uses configuration from .flake8
 
   # C++/CUDA formatting with clang-format
   - repo: https://github.com/pre-commit/mirrors-clang-format
@@ -42,14 +44,6 @@ repos:
     rev: 5.13.2
     hooks:
       - id: isort
-        args: ['--profile', 'black']
-
-  # Markdown linting (disabled due to compatibility issues)
-  # - repo: https://github.com/markdownlint/markdownlint
-  #   rev: v0.12.0
-  #   hooks:
-  #     - id: markdownlint
-  #       args: ['--fix']
 
   # Shell script checking
   - repo: https://github.com/shellcheck-py/shellcheck-py

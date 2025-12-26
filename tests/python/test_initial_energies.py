@@ -112,7 +112,8 @@ def test_initial_energy_components():
 
     print("\n" + "=" * 98)
     print(
-        f"{'Component':<22} | {'DFTpy (Ha)':>18} | {'DFTcu (Ha)':>18} | {'Abs Diff':>12} | {'Status':>8}"
+        f"{'Component':<22} | {'DFTpy (Ha)':>18} | {'DFTcu (Ha)':>18} | "
+        f"{'Abs Diff':>12} | {'Status':>8}"
     )
     print("-" * 98)
     components = [
@@ -136,13 +137,15 @@ def test_initial_energy_components():
     diff_total = abs(total_py - total_cu)
     status_total = "✓" if diff_total < 1e-4 else "⚠"
     print(
-        f"{'TOTAL (Sum)':<22} | {total_py:>18.10f} | {total_cu:>18.10f} | {diff_total:>12.2e} | {status_total:>8}"
+        f"{'TOTAL (Sum)':<22} | {total_py:>18.10f} | {total_cu:>18.10f} | "
+        f"{diff_total:>12.2e} | {status_total:>8}"
     )
 
     diff_eval = abs(e_total_evaluator - total_cu)
     status_eval = "✓" if diff_eval < 1e-10 else "⚠"
     print(
-        f"{'TOTAL (Evaluator)':<22} | {'':<18} | {e_total_evaluator:>18.10f} | {diff_eval:>12.2e} | {status_eval:>8}"
+        f"{'TOTAL (Evaluator)':<22} | {'':<18} | {e_total_evaluator:>18.10f} | "
+        f"{diff_eval:>12.2e} | {status_eval:>8}"
     )
     print("=" * 98)
     print(f"Time DFTpy (All): {t_py:.4f} s")
