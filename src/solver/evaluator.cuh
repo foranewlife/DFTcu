@@ -1,29 +1,28 @@
 #pragma once
-#include "functional/ewald.cuh"
-#include "functional/hartree.cuh"
-#include "functional/kedf/tf.cuh"
-#include "functional/kedf/vw.cuh"
-#include "functional/kedf/wt.cuh"
-#include "functional/pseudo.cuh"
-#include "functional/xc/lda_pz.cuh"
+#include <vector>
+
+#include "functional/functional.cuh"
 
 namespace dftcu {
 
 /**
- * @brief Aggregates different energy and potential terms.
+ * @brief Aggregates different energy and potential terms using a composition-based design.
  */
 class Evaluator {
   public:
-    Evaluator(const Grid& grid);
+    Evaluator(std::shared_ptr<Grid> grid);
     ~Evaluator() = default;
 
-    void set_tf(ThomasFermi* tf) { tf_ = tf; }
-    void set_vw(vonWeizsacker* vw) { vw_ = vw; }
-    void set_wt(WangTeter* wt) { wt_ = wt; }
-    void set_xc(LDA_PZ* xc) { xc_ = xc; }
-    void set_hartree(Hartree* hartree) { hartree_ = hartree; }
-    void set_pseudo(LocalPseudo* pseudo) { pseudo_ = pseudo; }
-    void set_ewald(Ewald* ewald) { ewald_ = ewald; }
+    /**
+     * @brief Add a functional component to the evaluator.
+     * @param f A functional object (TF, vW, Hartree, etc.)
+     */
+    void add_functional(Functional f) { components_.push_back(std::move(f)); }
+
+    /**
+     * @brief Clear all functional components.
+     */
+    void clear() { components_.clear(); }
 
     /**
      * @brief Compute total energy and potential
@@ -34,14 +33,8 @@ class Evaluator {
     double compute(const RealField& rho, RealField& v_tot);
 
   private:
-    const Grid& grid_;
-    ThomasFermi* tf_ = nullptr;
-    vonWeizsacker* vw_ = nullptr;
-    WangTeter* wt_ = nullptr;
-    LDA_PZ* xc_ = nullptr;
-    Hartree* hartree_ = nullptr;
-    LocalPseudo* pseudo_ = nullptr;
-    Ewald* ewald_ = nullptr;
+    std::shared_ptr<Grid> grid_;
+    std::vector<Functional> components_;
 };
 
 }  // namespace dftcu

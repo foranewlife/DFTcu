@@ -48,13 +48,13 @@ class Grid {
     const double (*rec_lattice() const)[3] { return rec_lattice_; }
 
     double g2max() const {
-        double g2max = 0;
+        double g2max_val = 0;
         std::vector<double> h_gg(nnr_);
-        cudaMemcpy(h_gg.data(), gg_.data(), nnr_ * sizeof(double), cudaMemcpyDeviceToHost);
+        gg_.copy_to_host(h_gg.data());
         for (double g : h_gg)
-            if (g > g2max)
-                g2max = g;
-        return g2max;
+            if (g > g2max_val)
+                g2max_val = g;
+        return g2max_val;
     }
 
   private:
@@ -91,6 +91,12 @@ class Grid {
     double volume_;
     double dv_;
     GPU_Vector<double> gg_, gx_, gy_, gz_;
+
+    // Prevent copying
+    Grid(const Grid&) = delete;
+    Grid& operator=(const Grid&) = delete;
+    Grid(Grid&&) = delete;
+    Grid& operator=(Grid&&) = delete;
 };
 
 }  // namespace dftcu

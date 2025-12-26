@@ -26,11 +26,11 @@ __global__ void update_phi_kernel(size_t n, double* phi, const double* g, double
 }
 }  // namespace
 
-SimpleOptimizer::SimpleOptimizer(const Grid& grid, OptimizationOptions options)
+SimpleOptimizer::SimpleOptimizer(std::shared_ptr<Grid> grid, OptimizationOptions options)
     : grid_(grid), options_(options) {}
 
 void SimpleOptimizer::solve(RealField& rho, Evaluator& evaluator) {
-    size_t n = grid_.nnr();
+    size_t n = grid_->nnr();
     RealField phi(grid_);
     RealField v_tot(grid_);
     RealField g(grid_);
@@ -55,7 +55,7 @@ void SimpleOptimizer::solve(RealField& rho, Evaluator& evaluator) {
         double energy = evaluator.compute(rho, v_tot);
 
         // Compute chemical potential mu = integral(rho * v_tot) / Ne
-        double mu = rho.dot(v_tot) * grid_.dv() / ne;
+        double mu = rho.dot(v_tot) * grid_->dv() / ne;
 
         double de = energy - prev_energy;
         std::cout << std::setw(8) << iter << std::fixed << std::setprecision(10) << std::setw(20)
@@ -77,7 +77,7 @@ void SimpleOptimizer::solve(RealField& rho, Evaluator& evaluator) {
         GPU_CHECK_KERNEL
 
         // Re-normalize phi to maintain Ne: integral(phi^2) = Ne
-        double current_ne = phi.dot(phi) * grid_.dv();
+        double current_ne = phi.dot(phi) * grid_->dv();
         v_scale(n, sqrt(ne / current_ne), phi.data(), phi.data());
 
         // Update rho = phi^2
@@ -90,11 +90,11 @@ void SimpleOptimizer::solve(RealField& rho, Evaluator& evaluator) {
 // CGOptimizer Implementation
 // -----------------------------------------------------------------------------
 
-CGOptimizer::CGOptimizer(const Grid& grid, OptimizationOptions options)
+CGOptimizer::CGOptimizer(std::shared_ptr<Grid> grid, OptimizationOptions options)
     : grid_(grid), options_(options) {}
 
 void CGOptimizer::solve(RealField& rho, Evaluator& evaluator) {
-    size_t n = grid_.nnr();
+    size_t n = grid_->nnr();
     RealField phi(grid_);
     RealField v_tot(grid_);
     RealField g(grid_);
@@ -126,7 +126,7 @@ void CGOptimizer::solve(RealField& rho, Evaluator& evaluator) {
         energy_history.push_back(energy);
 
         // 2. Compute chemical potential mu
-        double mu = rho.dot(v_tot) * grid_.dv() / ne;
+        double mu = rho.dot(v_tot) * grid_->dv() / ne;
 
         double de = (iter > 0) ? (energy - energy_history[iter - 1]) : energy;
         std::cout << std::setw(8) << iter << std::fixed << std::setprecision(10) << std::setw(20)
@@ -172,9 +172,9 @@ void CGOptimizer::solve(RealField& rho, Evaluator& evaluator) {
         }
 
         // Orthogonalization: Project p to be orthogonal to phi and normalize it to sqrt(ne)
-        double p_dot_phi = p.dot(phi) * grid_.dv();
+        double p_dot_phi = p.dot(phi) * grid_->dv();
         v_axpy(n, -p_dot_phi / ne, phi.data(), p.data());
-        double p_norm = sqrt(p.dot(p) * grid_.dv());
+        double p_norm = sqrt(p.dot(p) * grid_->dv());
         if (p_norm > 1e-15) {
             v_scale(n, sqrt(ne) / p_norm, p.data(), p.data());
         }
@@ -186,16 +186,16 @@ void CGOptimizer::solve(RealField& rho, Evaluator& evaluator) {
         // DFTpy: phi(theta) = phi*cos(theta) + p*sin(theta)
         // E'(0) = grad . (p * cos(0) - phi * sin(0)) = grad . p
         double e0 = energy;
-        double de0 = g.dot(p) * grid_.dv();  // Gradient w.r.t theta at theta=0
+        double de0 = g.dot(p) * grid_->dv();  // Gradient w.r.t theta at theta=0
 
         if (de0 > 0) {
             // Not a descent direction! Reset to SD
             v_scale(n, -1.0, g.data(), p.data());
-            double p_dot_phi_sd = p.dot(phi) * grid_.dv();
+            double p_dot_phi_sd = p.dot(phi) * grid_->dv();
             v_axpy(n, -p_dot_phi_sd / ne, phi.data(), p.data());
-            double p_norm_sd = sqrt(p.dot(p) * grid_.dv());
+            double p_norm_sd = sqrt(p.dot(p) * grid_->dv());
             v_scale(n, sqrt(ne) / p_norm_sd, p.data(), p.data());
-            de0 = g.dot(p) * grid_.dv();
+            de0 = g.dot(p) * grid_->dv();
         }
 
         double theta_trial = 0.05;  // Small angle trial

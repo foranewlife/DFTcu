@@ -163,6 +163,26 @@ install(TARGETS dftcu
     LIBRARY DESTINATION .
 )
 
+# Option to auto-install Python package after build
+option(AUTO_PIP_INSTALL "Automatically run 'uv pip install -e .' after build" OFF)
+
+if(AUTO_PIP_INSTALL)
+    # Find uv executable
+    find_program(UV_EXECUTABLE uv PATHS $ENV{HOME}/.cargo/bin)
+    if(UV_EXECUTABLE)
+        add_custom_target(pip_install ALL
+            COMMAND ${CMAKE_COMMAND} -E echo "Installing Python package with uv..."
+            COMMAND ${UV_EXECUTABLE} pip install -e ${CMAKE_SOURCE_DIR} --no-deps
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            DEPENDS dftcu
+            COMMENT "Running uv pip install -e ."
+        )
+        message(STATUS "AUTO_PIP_INSTALL enabled - will run 'uv pip install -e .' after build")
+    else()
+        message(WARNING "uv executable not found - skipping auto pip install")
+    endif()
+endif()
+
 # Testing
 if(BUILD_TESTING)
     enable_testing()

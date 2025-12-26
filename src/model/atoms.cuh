@@ -46,8 +46,11 @@ class Atoms {
     const double* pos_x() const { return d_pos_x_.data(); }
     const double* pos_y() const { return d_pos_y_.data(); }
     const double* pos_z() const { return d_pos_z_.data(); }
-    const double* charge() const { return d_charge_.data(); }
+    const double* charge_data() const { return d_charge_.data(); }
     const int* type() const { return d_type_.data(); }
+
+    const std::vector<double>& h_charge() const { return h_charge_; }
+    const GPU_Vector<double>& d_charge() const { return d_charge_; }
 
   private:
     size_t nat_;
@@ -55,6 +58,12 @@ class Atoms {
     std::vector<int> h_type_;
     GPU_Vector<double> d_pos_x_, d_pos_y_, d_pos_z_, d_charge_;
     GPU_Vector<int> d_type_;
+
+    // Prevent copying
+    Atoms(const Atoms&) = delete;
+    Atoms& operator=(const Atoms&) = delete;
+    Atoms(Atoms&&) = delete;
+    Atoms& operator=(Atoms&&) = delete;
 };
 
 }  // namespace dftcu

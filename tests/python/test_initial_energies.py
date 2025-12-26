@@ -60,7 +60,7 @@ def test_initial_energy_components():
     e_wtnl_py = wtnl_py(rho_init).energy
     e_lda_py = lda_py(rho_init).energy
     e_h_py = hartree_py(rho_init).energy
-    e_ps_py = pseudo_py.compute(rho_init, calcType={"E": ""}).energy
+    e_ps_py = pseudo_py.compute(rho_init, calcType={"E"}).energy
     e_ii_py = ewald_py.energy
     t_py = time.time() - t0
 
@@ -80,27 +80,41 @@ def test_initial_energy_components():
     pseudo_cu = dftcu.LocalPseudo(grid_cu, atoms_cu)
     pseudo_cu.set_vloc(0, pseudo_py.vlines["Al"].flatten(order="C").tolist())
     ewald_cu = dftcu.Ewald(grid_cu, atoms_cu)
+    ewald_cu.set_eta(ewald_py.eta)
 
     v_tmp = dftcu.RealField(grid_cu, 1)
-    v_ps = dftcu.RealField(grid_cu, 1)
 
     # Warmup
     tf_cu.compute(rho_cu, v_tmp)
 
     t0 = time.time()
+    # Test individual components directly
     e_tf_cu = tf_cu.compute(rho_cu, v_tmp)
     e_vw_cu = vw_cu.compute(rho_cu, v_tmp)
     e_wt_cu = wt_cu.compute(rho_cu, v_tmp)
     e_lda_cu = lda_cu.compute(rho_cu, v_tmp)
     e_h_cu = hartree_cu.compute(rho_cu, v_tmp)
-    pseudo_cu.compute(v_ps)
-    e_ps_cu = rho_cu.dot(v_ps) * grid_cu.dv()
-    e_ii_cu = ewald_cu.compute()
+    e_ps_cu = pseudo_cu.compute(rho_cu, v_tmp)
+    e_ii_cu = ewald_cu.compute(False)  # Exact
     t_cu = time.time() - t0
 
-    print("\n" + "=" * 90)
-    print(f"{ 'Component':<20} | { 'DFTpy (Ha)':<20} | { 'DFTcu (Ha)':<20} | { 'Abs Diff':<12}")
-    print("-" * 90)
+    # Also verify the Evaluator (Composition)
+    evaluator_cu = dftcu.Evaluator(grid_cu)
+    evaluator_cu.add_functional(tf_cu)
+    evaluator_cu.add_functional(vw_cu)
+    evaluator_cu.add_functional(wt_cu)
+    evaluator_cu.add_functional(lda_cu)
+    evaluator_cu.add_functional(hartree_cu)
+    evaluator_cu.add_functional(pseudo_cu)
+    evaluator_cu.add_functional(ewald_cu)
+    v_tot = dftcu.RealField(grid_cu, 1)
+    e_total_evaluator = evaluator_cu.compute(rho_cu, v_tot)
+
+    print("\n" + "=" * 98)
+    print(
+        f"{'Component':<22} | {'DFTpy (Ha)':>18} | {'DFTcu (Ha)':>18} | {'Abs Diff':>12} | {'Status':>8}"
+    )
+    print("-" * 98)
     components = [
         ("Thomas-Fermi", e_tf_py, e_tf_cu),
         ("von Weizsacker", e_vw_py, e_vw_cu),
@@ -113,20 +127,32 @@ def test_initial_energy_components():
 
     for name, py, cu in components:
         diff = abs(py - cu)
-        print(f"{name:<20} | {py:<20.10f} | {cu:<20.10f} | {diff:<12.2e}")
+        status = "✓" if diff < 1e-6 else "⚠"
+        print(f"{name:<22} | {py:>18.10f} | {cu:>18.10f} | {diff:>12.2e} | {status:>8}")
 
     total_py = sum(c[1] for c in components)
     total_cu = sum(c[2] for c in components)
-    print("-" * 90)
+    print("-" * 98)
     diff_total = abs(total_py - total_cu)
-    print(f"{ 'TOTAL':<20} | {total_py:<20.10f} | {total_cu:<20.10f} | {diff_total:<12.2e}")
-    print("=" * 90)
+    status_total = "✓" if diff_total < 1e-4 else "⚠"
+    print(
+        f"{'TOTAL (Sum)':<22} | {total_py:>18.10f} | {total_cu:>18.10f} | {diff_total:>12.2e} | {status_total:>8}"
+    )
+
+    diff_eval = abs(e_total_evaluator - total_cu)
+    status_eval = "✓" if diff_eval < 1e-10 else "⚠"
+    print(
+        f"{'TOTAL (Evaluator)':<22} | {'':<18} | {e_total_evaluator:>18.10f} | {diff_eval:>12.2e} | {status_eval:>8}"
+    )
+    print("=" * 98)
     print(f"Time DFTpy (All): {t_py:.4f} s")
     print(f"Time DFTcu (All): {t_cu:.4f} s")
     print(f"Speedup:          {t_py/t_cu:.2f}x")
-    print("=" * 90)
+    print("=" * 98)
 
-    assert abs(total_py - total_cu) < 1e-4
+    # Validate energy consistency
+    assert abs(total_py - total_cu) < 1e-10, "DFTpy vs DFTcu total energy mismatch"
+    assert abs(e_total_evaluator - total_cu) < 1e-10, "Evaluator total energy mismatch"
 
 
 if __name__ == "__main__":

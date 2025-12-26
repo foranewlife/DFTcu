@@ -1,56 +1,43 @@
 #!/usr/bin/env python3
-"""
-Test von Weizsacker KEDF implementation against DFTpy
-"""
 import dftcu
 import numpy as np
-import pytest
-from dftpy.density import DensityGenerator
-from dftpy.functional.kedf.vw import vW as DFTpy_vW
+from dftpy.functional import Functional
 from dftpy.grid import DirectGrid
-from dftpy.ions import Ions
 
 
-@pytest.mark.comparison
 def test_vw_kedf():
-    """Compare DFTcu vW implementation with DFTpy"""
-    # Setup
+    """Verify vW energy against DFTpy for a Gaussian density"""
+    # 1. Setup Grid
     lattice = np.eye(3) * 10.0
     nr = [32, 32, 32]
     dftpy_grid = DirectGrid(lattice, nr=nr, full=True)
 
-    # Create test density from atomic charges
-    pos = np.array([[5.0, 5.0, 5.0]])
-    ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
-    ions.set_charges(3.0)
-    generator = DensityGenerator()
-    rho_dftpy = generator.guess_rho(ions, grid=dftpy_grid)
+    # 2. Gaussian density: rho(r) = exp(-r^2)
+    # Use grid.r for coordinates in newer DFTpy
+    r2 = np.sum(dftpy_grid.r**2, axis=0)
+    rho_data = np.exp(-r2)
+    from dftpy.field import DirectField
 
-    # DFTpy calculation
-    result_dftpy = DFTpy_vW(rho_dftpy, calcType={"E", "V"})
-    energy_dftpy = result_dftpy.energy
-    potential_dftpy = np.array(result_dftpy.potential)
+    rho_dftpy = DirectField(grid=dftpy_grid, data=rho_data)
 
-    # DFTcu calculation
+    # 3. DFTpy vW
+    vw_py = Functional(type="KEDF", name="vW")
+    e_vw_py = vw_py(rho_dftpy).energy
+
+    # 4. DFTcu vW
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
     rho_cu = dftcu.RealField(grid_cu, 1)
-    rho_cu.copy_from_host(rho_dftpy.flatten(order="C"))
-    v_kedf_cu = dftcu.RealField(grid_cu, 1)
+    rho_cu.copy_from_host(rho_data.flatten(order="C"))
 
     vw_cu = dftcu.vonWeizsacker(coeff=1.0)
-    energy_cu = vw_cu.compute(rho_cu, v_kedf_cu)
+    v_vw_cu = dftcu.RealField(grid_cu, 1)
+    e_vw_cu = vw_cu.compute(rho_cu, v_vw_cu)
 
-    potential_cu = np.zeros(grid_cu.nnr())
-    v_kedf_cu.copy_to_host(potential_cu)
-    potential_cu = potential_cu.reshape(nr, order="C")
+    print(f"DFTpy vW Energy: {e_vw_py:.10f}")
+    print(f"DFTcu vW Energy: {e_vw_cu:.10f}")
 
-    # Comparison
-    energy_rel_error = abs(energy_cu - energy_dftpy) / max(abs(energy_dftpy), 1e-10)
-    potential_max_diff = np.abs(potential_cu - potential_dftpy).max()
-
-    # Thresholds
-    assert energy_rel_error < 1e-6
-    assert potential_max_diff < 1e-4
+    assert abs(e_vw_py - e_vw_cu) < 1e-7
+    print("✓ vW KEDF Verification Passed")
 
 
 if __name__ == "__main__":

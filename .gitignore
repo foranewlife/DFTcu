@@ -3,42 +3,20 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-*.egg
-*.egg-info/
-dist/
-build*/
+.Python
+env/
 .venv/
 venv/
-*.ipynb_checkpoints
+ENV/
+*.egg-info/
+dist/
+*.egg
 
-# CUDA compiled files
+# Build directories - keep structure for incremental compilation
+# Note: build/ artifacts are preserved locally for faster rebuilds
+build/
 *.o
 *.a
-*.lib
-*.ptx
-*.cubin
-*.fatbin
-
-# Shared libraries
-*.so
-*.dylib
-*.dll
-
-# Executables
-*.exe
-*.out
-*.app
-dftcu.cpython-*
-
-# CMake
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-Makefile.cmake
-*.cmake
-!CMakeLists.txt
-build/
-cmake-build-*/
 
 # IDE
 .vscode/
@@ -46,32 +24,28 @@ cmake-build-*/
 *.swp
 *.swo
 *~
-.DS_Store
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.cmake
 
 # Documentation
 docs/_build/
-docs/html/
-docs/latex/
-*.log
+*.html
+*.pdf
 
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
-*.gcov
-*.gcda
-*.gcno
+.tox/
 
-# Profiling
-*.nvvp
-*.nvprof
-*.qdrep
-*.sqlite
+# OS
+.DS_Store
+Thumbs.db
 
-# Claude
-.claude/
-
-# Temporary files
-*.tmp
-*.bak
-*.backup
+# CUDA
+*.ptx
+*.cubin
