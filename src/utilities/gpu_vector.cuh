@@ -3,6 +3,13 @@
 #include "error.cuh"
 #include "gpu_macro.cuh"
 
+/**
+ * @brief CUDA kernel to fill a device array with a constant value.
+ * @tparam T Data type of the array elements.
+ * @param size Number of elements in the array.
+ * @param value The value to fill the array with.
+ * @param data Pointer to the device memory.
+ */
 template <typename T>
 static void __global__ gpu_fill(const size_t size, const T value, T* data) {
     const int i = blockDim.x * blockIdx.x + threadIdx.x;
@@ -10,15 +17,28 @@ static void __global__ gpu_fill(const size_t size, const T value, T* data) {
         data[i] = value;
 }
 
+/**
+ * @brief Types of GPU memory allocations.
+ */
 enum class Memory_Type {
-    global = 0,  // global memory, also called (linear) device memory
-    managed      // managed memory, also called unified memory
+    global = 0, /**< Standard device memory (gpuMalloc) */
+    managed     /**< Unified Memory (gpuMallocManaged), accessible from both CPU and GPU */
 };
 
+/**
+ * @brief A lightweight container for GPU-resident vectors.
+ *
+ * Provides basic RAII management for CUDA memory, move semantics,
+ * and convenient data transfer between host and device.
+ *
+ * @tparam T Element type (e.g., double, cuDoubleComplex).
+ */
 template <typename T>
 class GPU_Vector {
   public:
-    // default constructor
+    /**
+     * @brief Constructs an empty GPU_Vector.
+     */
     GPU_Vector() {
         size_ = 0;
         memory_ = 0;
@@ -26,13 +46,19 @@ class GPU_Vector {
         allocated_ = false;
     }
 
-    // only allocate memory
+    /**
+     * @brief Constructs a GPU_Vector and allocates memory.
+     * @param size Number of elements to allocate.
+     * @param memory_type Type of memory (global or managed).
+     */
     GPU_Vector(const size_t size, const Memory_Type memory_type = Memory_Type::global) {
         allocated_ = false;
         resize(size, memory_type);
     }
 
-    // deallocate memory
+    /**
+     * @brief Destructor. Automatically frees GPU memory.
+     */
     ~GPU_Vector() {
         if (allocated_) {
             CHECK(gpuFree(data_));
@@ -40,11 +66,13 @@ class GPU_Vector {
         }
     }
 
-    // Disable copy
+    // Disable copy to prevent accidental expensive transfers or double-frees
     GPU_Vector(const GPU_Vector&) = delete;
     GPU_Vector& operator=(const GPU_Vector&) = delete;
 
-    // Enable move
+    /**
+     * @brief Move constructor. Transfers ownership of the GPU memory.
+     */
     GPU_Vector(GPU_Vector&& other) noexcept
         : allocated_(other.allocated_),
           size_(other.size_),
@@ -56,6 +84,9 @@ class GPU_Vector {
         other.size_ = 0;
     }
 
+    /**
+     * @brief Move assignment operator. Transfers ownership of the GPU memory.
+     */
     GPU_Vector& operator=(GPU_Vector&& other) noexcept {
         if (this != &other) {
             if (allocated_)
@@ -72,7 +103,14 @@ class GPU_Vector {
         return *this;
     }
 
-    // only allocate memory
+    /**
+     * @brief Reallocates memory for the vector.
+     *
+     * Frees existing memory if already allocated.
+     *
+     * @param size New number of elements.
+     * @param memory_type Type of memory (global or managed).
+     */
     void resize(const size_t size, const Memory_Type memory_type = Memory_Type::global) {
         size_ = size;
         memory_ = size_ * sizeof(T);
@@ -92,14 +130,21 @@ class GPU_Vector {
         }
     }
 
-    // copy data from host with the default size
+    /**
+     * @brief Copies data from host memory to device memory.
+     * @param h_data Pointer to host memory.
+     */
     void copy_from_host(const T* h_data) {
         if (size_ == 0)
             return;
         CHECK(gpuMemcpy(data_, h_data, memory_, gpuMemcpyHostToDevice));
     }
 
-    // copy data from host with a given size
+    /**
+     * @brief Copies a specific number of elements from host memory to device memory.
+     * @param h_data Pointer to host memory.
+     * @param size Number of elements to copy.
+     */
     void copy_from_host(const T* h_data, const size_t size) {
         if (size == 0)
             return;
@@ -107,14 +152,20 @@ class GPU_Vector {
         CHECK(gpuMemcpy(data_, h_data, memory, gpuMemcpyHostToDevice));
     }
 
-    // copy data to host with the default size
+    /**
+     * @brief Copies data from device memory to host memory.
+     * @param h_data Pointer to host memory.
+     */
     void copy_to_host(T* h_data) const {
         if (size_ == 0)
             return;
         CHECK(gpuMemcpy(h_data, data_, memory_, gpuMemcpyDeviceToHost));
     }
 
-    // give "value" to each element
+    /**
+     * @brief Fills the entire vector with a constant value on the GPU.
+     * @param value The value to fill with.
+     */
     void fill(const T value) {
         if (size_ == 0)
             return;
@@ -130,15 +181,25 @@ class GPU_Vector {
         }
     }
 
-    // getters
+    /**
+     * @brief Returns the number of elements in the vector.
+     */
     size_t size() const { return size_; }
+
+    /**
+     * @brief Returns a const pointer to the device data.
+     */
     T const* data() const { return data_; }
+
+    /**
+     * @brief Returns a pointer to the device data.
+     */
     T* data() { return data_; }
 
   private:
-    bool allocated_;
-    size_t size_;
-    size_t memory_;
-    Memory_Type memory_type_;
-    T* data_;
+    bool allocated_;          /**< True if memory is currently allocated */
+    size_t size_;             /**< Number of elements */
+    size_t memory_;           /**< Total memory in bytes */
+    Memory_Type memory_type_; /**< Type of memory (global/managed) */
+    T* data_;                 /**< Device memory pointer */
 };
