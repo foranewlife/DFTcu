@@ -1,4 +1,6 @@
 #pragma once
+#include <memory>
+
 #include "grid.cuh"
 #include "utilities/gpu_macro.cuh"
 #include "utilities/gpu_vector.cuh"
@@ -11,7 +13,8 @@ double dot_product(size_t size, const double* a, const double* b);
 template <typename T>
 class Field {
   public:
-    Field(const Grid& grid, int rank = 1) : grid_(grid), rank_(rank), data_(grid.nnr() * rank) {}
+    Field(std::shared_ptr<Grid> grid, int rank = 1)
+        : grid_(grid), rank_(rank), data_(grid->nnr() * rank) {}
 
     void fill(T value) { data_.fill(value); }
 
@@ -23,7 +26,8 @@ class Field {
     const T* data() const { return data_.data(); }
     size_t size() const { return data_.size(); }
     int rank() const { return rank_; }
-    const Grid& grid() const { return grid_; }
+    const Grid& grid() const { return *grid_; }
+    std::shared_ptr<Grid> grid_ptr() const { return grid_; }
 
     double dot(const Field<double>& other) const {
         return dot_product(size(), data(), other.data());
@@ -32,13 +36,19 @@ class Field {
     double integral() const {
         Field<double> ones(grid_);
         ones.fill(1.0);
-        return dot(ones) * grid_.dv();
+        return dot(ones) * grid_->dv();
     }
 
   private:
-    const Grid& grid_;
+    std::shared_ptr<Grid> grid_;
     int rank_;
     GPU_Vector<T> data_;
+
+    // Prevent copying
+    Field(const Field&) = delete;
+    Field& operator=(const Field&) = delete;
+    Field(Field&&) = delete;
+    Field& operator=(Field&&) = delete;
 };
 
 using RealField = Field<double>;

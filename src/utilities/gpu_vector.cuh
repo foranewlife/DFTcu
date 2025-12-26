@@ -40,6 +40,38 @@ class GPU_Vector {
         }
     }
 
+    // Disable copy
+    GPU_Vector(const GPU_Vector&) = delete;
+    GPU_Vector& operator=(const GPU_Vector&) = delete;
+
+    // Enable move
+    GPU_Vector(GPU_Vector&& other) noexcept
+        : allocated_(other.allocated_),
+          size_(other.size_),
+          memory_(other.memory_),
+          memory_type_(other.memory_type_),
+          data_(other.data_) {
+        other.allocated_ = false;
+        other.data_ = nullptr;
+        other.size_ = 0;
+    }
+
+    GPU_Vector& operator=(GPU_Vector&& other) noexcept {
+        if (this != &other) {
+            if (allocated_)
+                CHECK(gpuFree(data_));
+            allocated_ = other.allocated_;
+            size_ = other.size_;
+            memory_ = other.memory_;
+            memory_type_ = other.memory_type_;
+            data_ = other.data_;
+            other.allocated_ = false;
+            other.data_ = nullptr;
+            other.size_ = 0;
+        }
+        return *this;
+    }
+
     // only allocate memory
     void resize(const size_t size, const Memory_Type memory_type = Memory_Type::global) {
         size_ = size;
@@ -76,7 +108,7 @@ class GPU_Vector {
     }
 
     // copy data to host with the default size
-    void copy_to_host(T* h_data) {
+    void copy_to_host(T* h_data) const {
         if (size_ == 0)
             return;
         CHECK(gpuMemcpy(h_data, data_, memory_, gpuMemcpyDeviceToHost));

@@ -3,58 +3,21 @@
 
 namespace dftcu {
 
-Evaluator::Evaluator(const Grid& grid) : grid_(grid) {}
+Evaluator::Evaluator(std::shared_ptr<Grid> grid) : grid_(grid) {}
 
 double Evaluator::compute(const RealField& rho, RealField& v_tot) {
     v_tot.fill(0.0);
     double energy = 0.0;
     size_t n = rho.size();
 
-    // 1. KEDF components
-    if (tf_) {
-        RealField v_tmp(grid_);
-        energy += tf_->compute(rho, v_tmp);
-        v_add(n, v_tot.data(), v_tmp.data(), v_tot.data());
-    }
-    if (vw_) {
-        RealField v_tmp(grid_);
-        energy += vw_->compute(rho, v_tmp);
-        v_add(n, v_tot.data(), v_tmp.data(), v_tot.data());
-    }
-    if (wt_) {
-        RealField v_tmp(grid_);
-        energy += wt_->compute(rho, v_tmp);
-        v_add(n, v_tot.data(), v_tmp.data(), v_tot.data());
-    }
+    // Use a single temporary field to accumulate contributions
+    // and avoid repeated allocations.
+    RealField v_tmp(grid_);
 
-    // 2. Hartree
-    if (hartree_) {
-        RealField v_tmp(grid_);
-        double e_h = 0.0;
-        hartree_->compute(rho, v_tmp, e_h);
-        energy += e_h;
+    for (const auto& comp : components_) {
+        v_tmp.fill(0.0);
+        energy += comp.compute(rho, v_tmp);
         v_add(n, v_tot.data(), v_tmp.data(), v_tot.data());
-    }
-
-    // 3. XC
-    if (xc_) {
-        RealField v_tmp(grid_);
-        energy += xc_->compute(rho, v_tmp);
-        v_add(n, v_tot.data(), v_tmp.data(), v_tot.data());
-    }
-
-    // 4. Local Pseudo
-    if (pseudo_) {
-        RealField v_tmp(grid_);
-        pseudo_->compute(v_tmp);
-        // Energy E_ext = integral( rho * v_ext )
-        energy += dot_product(n, rho.data(), v_tmp.data()) * grid_.dv();
-        v_add(n, v_tot.data(), v_tmp.data(), v_tot.data());
-    }
-
-    // 5. Ewald (Ion-Ion interaction, constant w.r.t rho)
-    if (ewald_) {
-        energy += ewald_->compute();
     }
 
     return energy;

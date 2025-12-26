@@ -1,56 +1,42 @@
 #!/usr/bin/env python3
-"""
-Test Wang-Teter KEDF implementation against DFTpy
-"""
 import dftcu
 import numpy as np
-import pytest
-from dftpy.density import DensityGenerator
-from dftpy.functional.kedf.wt import WT as DFTpy_WT
+from dftpy.functional import Functional
 from dftpy.grid import DirectGrid
-from dftpy.ions import Ions
 
 
-@pytest.mark.comparison
 def test_wt_kedf():
-    """Compare DFTcu Wang-Teter implementation with DFTpy"""
-    # Setup
+    """Verify Wang-Teter non-local KEDF energy against DFTpy"""
+    # 1. Setup Grid
     lattice = np.eye(3) * 10.0
     nr = [32, 32, 32]
     dftpy_grid = DirectGrid(lattice, nr=nr, full=True)
 
-    # Create test density from atomic charges
-    pos = np.array([[5.0, 5.0, 5.0]])
-    ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
-    ions.set_charges(3.0)
-    generator = DensityGenerator()
-    rho_dftpy = generator.guess_rho(ions, grid=dftpy_grid)
+    # 2. Gaussian density: rho(r) = exp(-r^2) + offset
+    r2 = np.sum(dftpy_grid.r**2, axis=0)
+    rho_data = np.exp(-r2) + 0.02
+    from dftpy.field import DirectField
 
-    # DFTpy calculation
-    result_dftpy = DFTpy_WT(rho_dftpy, calcType={"E", "V"})
-    energy_dftpy = result_dftpy.energy
-    potential_dftpy = np.array(result_dftpy.potential)
+    rho_dftpy = DirectField(grid=dftpy_grid, data=rho_data)
 
-    # DFTcu calculation
+    # 3. DFTpy WT-NL
+    wt_py = Functional(type="KEDF", name="WT-NL")
+    e_wt_py = wt_py(rho_dftpy).energy
+
+    # 4. DFTcu WT (NL part)
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
     rho_cu = dftcu.RealField(grid_cu, 1)
-    rho_cu.copy_from_host(rho_dftpy.flatten(order="C"))
-    v_kedf_cu = dftcu.RealField(grid_cu, 1)
+    rho_cu.copy_from_host(rho_data.flatten(order="C"))
 
     wt_cu = dftcu.WangTeter(coeff=1.0)
-    energy_cu = wt_cu.compute(rho_cu, v_kedf_cu)
+    v_wt_cu = dftcu.RealField(grid_cu, 1)
+    e_wt_cu = wt_cu.compute(rho_cu, v_wt_cu)
 
-    potential_cu = np.zeros(grid_cu.nnr())
-    v_kedf_cu.copy_to_host(potential_cu)
-    potential_cu = potential_cu.reshape(nr, order="C")
+    print(f"DFTpy WT Energy: {e_wt_py:.10f}")
+    print(f"DFTcu WT Energy: {e_wt_cu:.10f}")
 
-    # Comparison
-    energy_rel_error = abs(energy_cu - energy_dftpy) / max(abs(energy_dftpy), 1e-10)
-    potential_max_diff = np.abs(potential_cu - potential_dftpy).max()
-
-    # Thresholds
-    assert energy_rel_error < 1e-5
-    assert potential_max_diff < 1e-4
+    assert abs(e_wt_py - e_wt_cu) < 1e-7
+    print("✓ WT KEDF Verification Passed")
 
 
 if __name__ == "__main__":

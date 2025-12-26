@@ -83,12 +83,12 @@
 
 // FFT
 #define gpufftHandle cufftHandle
-#define gpufftComplex cufftComplex
-#define gpufftExecC2C cufftExecC2C
+#define gpufftComplex cufftDoubleComplex
+#define gpufftExecZ2Z cufftExecZ2Z
 #define gpufftPlan3d cufftPlan3d
 #define gpufftPlanMany cufftPlanMany
 #define gpufftDestroy cufftDestroy
 #define GPUFFT_SUCCESS CUFFT_SUCCESS
-#define GPUFFT_C2C CUFFT_C2C
+#define GPUFFT_Z2Z CUFFT_Z2Z
 #define GPUFFT_FORWARD CUFFT_FORWARD
 #define GPUFFT_INVERSE CUFFT_INVERSE

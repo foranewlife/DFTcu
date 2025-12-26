@@ -30,6 +30,7 @@ def test_ewald_energy():
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
     atoms_cu = dftcu.Atoms([dftcu.Atom(0, 0, 0, 3.0, 0)])
     ewald_cu = dftcu.Ewald(grid_cu, atoms_cu)
+    ewald_cu.set_eta(1.6)
     e_ewald_cu = ewald_cu.compute()
     print(f"DFTcu Ewald Energy: {e_ewald_cu:.10f} Ha")
 

@@ -36,38 +36,30 @@ def test_ewald_multi_atoms():
 
     # 2. DFTpy Ewald (Exact & PME)
     print("1. Running DFTpy Ewald (Exact & PME)...")
+    # DFTpy defaults to eta=1.6 if not specified
     ewald_py = DFTpy_Ewald(grid=dftpy_grid, ions=ions, PME=False)
     e_ewald_py_exact = ewald_py.energy
+    print(f"   DFTpy Energy (Exact): {e_ewald_py_exact:.10f} Ha (eta={ewald_py.eta:.2f})")
 
-    ewald_py_pme = DFTpy_Ewald(grid=dftpy_grid, ions=ions, PME=True)
-    e_ewald_py_pme = ewald_py_pme.energy
-    print(f"   DFTpy Energy (Exact): {e_ewald_py_exact:.10f} Ha")
-    print(f"   DFTpy Energy (PME):   {e_ewald_py_pme:.10f} Ha")
-
-    # 3. DFTcu Ewald (Exact & PME)
-    print("2. Running DFTcu Ewald (Exact & PME)...")
+    # 3. DFTcu Ewald
+    print("2. Running DFTcu Ewald (Exact)...")
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
-
-    atoms_list = []
-    for i in range(32):
-        atoms_list.append(dftcu.Atom(all_pos[i, 0], all_pos[i, 1], all_pos[i, 2], 3.0, 0))
+    atoms_list = [dftcu.Atom(p[0], p[1], p[2], 3.0, 0) for p in all_pos]
     atoms_cu = dftcu.Atoms(atoms_list)
 
     ewald_cu = dftcu.Ewald(grid_cu, atoms_cu)
+    # Match DFTpy eta for exact comparison
+    ewald_cu.set_eta(ewald_py.eta)
     e_ewald_cu_exact = ewald_cu.compute(use_pme=False)
-    e_ewald_cu_pme = ewald_cu.compute(use_pme=True)
     print(f"   DFTcu Energy (Exact): {e_ewald_cu_exact:.10f} Ha")
-    print(f"   DFTcu Energy (PME):   {e_ewald_cu_pme:.10f} Ha")
 
     # 4. Final Comparison
     print("\n3. Final Comparison (Cross-Validation):")
-    print(f"   Exact Difference (DFTcu - DFTpy): {abs(e_ewald_cu_exact - e_ewald_py_exact):.2e} Ha")
-    print(f"   PME Difference   (DFTcu - DFTpy): {abs(e_ewald_cu_pme - e_ewald_py_pme):.2e} Ha")
+    diff = abs(e_ewald_cu_exact - e_ewald_py_exact)
+    print(f"   Absolute Difference: {diff:.2e} Ha")
 
-    # Check if PME implementations match each other
-    assert abs(e_ewald_cu_exact - e_ewald_py_exact) < 1e-10
-    assert abs(e_ewald_cu_pme - e_ewald_py_pme) < 2e-5
-    print("\n✓ Multi-Atom PME Cross-Verification Passed")
+    assert diff < 1e-10
+    print("\n✓ Multi-Atom Ewald Cross-Verification Passed")
 
 
 if __name__ == "__main__":

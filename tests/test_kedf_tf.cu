@@ -1,4 +1,5 @@
 #include <cmath>
+#include <memory>
 #include <vector>
 
 #include "functional/kedf/tf.cuh"
@@ -17,18 +18,16 @@ class ThomasFermiTest : public ::testing::Test {
         // Create a simple cubic grid
         std::vector<double> lattice = {10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0};
         std::vector<int> nr = {16, 16, 16};
-        grid_ = new Grid(lattice, nr);
+        grid_ = std::make_shared<Grid>(lattice, nr);
     }
 
-    void TearDown() override { delete grid_; }
-
-    Grid* grid_;
+    std::shared_ptr<Grid> grid_;
 };
 
 TEST_F(ThomasFermiTest, UniformDensity) {
     // Test with uniform density
-    RealField rho(*grid_);
-    RealField v_kedf(*grid_);
+    RealField rho(grid_);
+    RealField v_kedf(grid_);
 
     const double rho0 = 0.01;  // uniform density
     rho.fill(rho0);
@@ -58,9 +57,9 @@ TEST_F(ThomasFermiTest, UniformDensity) {
 
 TEST_F(ThomasFermiTest, ScalingCoefficient) {
     // Test coefficient scaling
-    RealField rho(*grid_);
-    RealField v_kedf1(*grid_);
-    RealField v_kedf2(*grid_);
+    RealField rho(grid_);
+    RealField v_kedf1(grid_);
+    RealField v_kedf2(grid_);
 
     const double rho0 = 0.02;
     rho.fill(rho0);
@@ -92,8 +91,8 @@ TEST_F(ThomasFermiTest, NonUniformDensity) {
     std::vector<double> rho_host(grid_->nnr());
     create_test_density(rho_host.data(), 16, 16, 16, 0.01);
 
-    RealField rho(*grid_);
-    RealField v_kedf(*grid_);
+    RealField rho(grid_);
+    RealField v_kedf(grid_);
     rho.copy_from_host(rho_host.data());
 
     ThomasFermi tf(1.0);
