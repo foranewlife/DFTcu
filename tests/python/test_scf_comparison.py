@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import time
 
 import dftcu
@@ -13,7 +14,7 @@ from dftpy.optimization.optimization import Optimization
 
 
 def test_scf_comparison_dftpy():
-    """Compare a full SCF cycle convergence between DFTpy and DFTcu"""
+    """Compare a full SCF cycle convergence between DFTpy and DFTcu including Local Pseudo"""
     # 1. Setup System
     a0 = 7.65
     lattice = np.eye(3) * a0
@@ -23,11 +24,18 @@ def test_scf_comparison_dftpy():
     ions.set_charges(3.0)
 
     dftpy_grid = DirectGrid(lattice, nr=nr, full=True)
-    generator = DensityGenerator()
+
+    # 2. Setup DFTpy Components
+    print("\n1. Running DFTpy SCF...")
+    pp_file = os.path.join("external", "DFTpy", "examples", "DATA", "al.lda.upf")
+    from dftpy.functional.pseudo import LocalPseudo as DFTpy_LocalPseudo
+
+    pseudo_py = DFTpy_LocalPseudo(grid=dftpy_grid, ions=ions, PP_list={"Al": pp_file})
+
+    # Initial density guess
+    generator = DensityGenerator(pseudo=pseudo_py, direct=False)
     rho_init = generator.guess_rho(ions, grid=dftpy_grid)
 
-    # 2. DFTpy Optimization
-    print("\n1. Running DFTpy SCF...")
     tf_py = Functional(type="KEDF", name="TF")
     lda_py = Functional(type="XC", name="LDA")
     hartree_py = DFTpy_Hartree()
@@ -47,13 +55,13 @@ def test_scf_comparison_dftpy():
                 total.potential += res.potential
             return total
 
-    evaluator_py = MultiFunctional([tf_py, lda_py, hartree_py])
+    evaluator_py = MultiFunctional([tf_py, lda_py, hartree_py, pseudo_py])
     opt_py = Optimization(
         EnergyEvaluator=evaluator_py,
-        optimization_options={"max_iter": 50, "econv": 1e-7, "ncheck": 2},
+        optimization_options={"max_iter": 200, "econv": 1e-7, "ncheck": 2},
     )
 
-    # Extract energy from potential field or scalar result
+    # Run DFTpy Optimization
     res_py = opt_py.optimize_rho(guess_rho=rho_init)
 
     # Robustly get energy from MultiFunctional output
@@ -72,6 +80,8 @@ def test_scf_comparison_dftpy():
     tf_cu = dftcu.ThomasFermi()
     lda_cu = dftcu.LDA_PZ()
     hartree_cu = dftcu.Hartree(grid_cu)
+    pseudo_cu = dftcu.LocalPseudo(grid_cu, atoms_cu)
+    pseudo_cu.set_vloc(0, pseudo_py.vlines["Al"].flatten(order="C").tolist())
     ewald_cu = dftcu.Ewald(grid_cu, atoms_cu)
     ewald_cu.set_eta(ewald_py.eta)
 
@@ -79,13 +89,14 @@ def test_scf_comparison_dftpy():
     evaluator_cu.add_functional(tf_cu)
     evaluator_cu.add_functional(lda_cu)
     evaluator_cu.add_functional(hartree_cu)
+    evaluator_cu.add_functional(pseudo_cu)
     evaluator_cu.add_functional(ewald_cu)
 
     rho_cu = dftcu.RealField(grid_cu, 1)
     rho_cu.copy_from_host(rho_init.flatten(order="C"))
 
     options = dftcu.OptimizationOptions()
-    options.max_iter = 50
+    options.max_iter = 200
     options.econv = 1e-7
     options.step_size = 0.1
     optimizer = dftcu.CGOptimizer(grid_cu, options)
