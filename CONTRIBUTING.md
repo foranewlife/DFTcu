@@ -29,26 +29,44 @@ source .venv/bin/activate
 
 ### 构建项目
 
+**推荐开发工作流（增量编译）**:
 ```bash
-# 配置并构建
+# 首次安装（editable mode）
+make install-dev
+
+# 修改 .cu 文件后快速重建（~21s）
+make rebuild
+
+# 运行测试
+make test-python
+```
+
+**传统构建工作流**:
+```bash
+# 仅构建 C++ 库（2-5s 增量编译）
 make build
 
 # 或使用 CMake presets
 cmake --preset=debug
 cmake --build --preset=debug
+
+# 完整安装（~26s）
+make install
 ```
+
+详见 [DEVELOPMENT.md](DEVELOPMENT.md) 了解增量编译机制。
 
 ### 运行测试
 
 ```bash
-# 运行所有测试
+# 运行 Python 测试（推荐，使用 venv 安装的包）
+make test-python
+
+# 运行所有测试（C++ + Python）
 make test
 
 # 仅 C++ 测试
-make test-cpp
-
-# 仅 Python 测试
-make test-python
+cd build && ctest
 ```
 
 ## 🛠️ 开发工具
@@ -98,12 +116,30 @@ cmake --preset=release    # Release 构建
 ### Makefile 快捷命令
 
 ```bash
+# 设置和安装
 make setup        # 完整环境设置
-make build        # 构建项目
-make test         # 运行所有测试
-make format       # 格式化代码
+make install-dev  # 开发模式安装（推荐）⭐
+make rebuild      # 快速增量重建（~21s）⭐
+make install      # 标准安装（全量编译）
+
+# 构建
+make build        # 仅构建 C++ 库（2-5s）⭐
+make build-install # 构建 C++ + 自动安装 Python
+make configure    # 配置 CMake
 make clean        # 清理构建
+
+# 测试
+make test         # 运行所有测试
+make test-python  # 仅 Python 测试（推荐）⭐
+make test-cpp     # 仅 C++ 测试
+
+# 代码质量
+make format       # 格式化代码
+make lint         # 运行 linters
+
+# 其他
 make help         # 显示所有命令
+make info         # 项目信息
 ```
 
 ## 📝 代码规范
@@ -170,6 +206,16 @@ python -m pdb tests/python/test_tf_kedf.py
 
 ## 💡 常见问题
 
+**Q: 如何实现最快的开发迭代？**
+```bash
+# 首次设置
+make install-dev
+
+# 之后每次修改 .cu 文件
+make rebuild  # 仅需 ~21s，复用构建产物
+make test-python
+```
+
 **Q: 虚拟环境损坏？**
 ```bash
 rm -rf .venv && make setup
@@ -183,6 +229,15 @@ uv lock --upgrade && uv sync --all-extras
 **Q: 构建失败？**
 ```bash
 make clean && make rebuild
+```
+
+**Q: 增量编译不工作？**
+```bash
+# 确保使用了 editable 模式安装
+make install-dev
+
+# 如果还是不行，清理重建
+make clean && make install-dev
 ```
 
 ## 📚 资源
