@@ -4,9 +4,9 @@ namespace dftcu {
 
 /**
  * @brief Inverse Lindhard function used in non-local KEDFs
- * 
+ *
  * F(eta) = 1 / (0.5 + 0.25 * (1 - eta^2) / eta * log|(1+eta)/(1-eta)|) - 3*mu*eta^2 - lbda
- * 
+ *
  * @param eta q / (2 * k_F)
  * @param lbda Weight for TF part (usually 1.0)
  * @param mu Weight for vW part (usually 1.0)
@@ -35,4 +35,4 @@ __device__ inline double lindhard_function(double eta, double lbda, double mu) {
     }
 }
 
-} // namespace dftcu
+}  // namespace dftcu

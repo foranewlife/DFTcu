@@ -6,7 +6,7 @@ namespace dftcu {
 
 /**
  * @brief Perdew-Zunger LDA exchange-correlation functional
- * 
+ *
  * Perdew and Zunger, Phys. Rev. B 23, 5048 (1981)
  */
 class LDA_PZ {

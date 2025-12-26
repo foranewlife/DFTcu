@@ -1,8 +1,8 @@
 #pragma once
+#include "fft/fft_solver.cuh"
 #include "kedf_base.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
-#include "fft/fft_solver.cuh"
 
 namespace dftcu {
 
@@ -16,7 +16,7 @@ namespace dftcu {
  */
 class WangTeter : public KEDF_Base {
   public:
-    WangTeter(double coeff = 1.0, double alpha = 5.0/6.0, double beta = 5.0/6.0);
+    WangTeter(double coeff = 1.0, double alpha = 5.0 / 6.0, double beta = 5.0 / 6.0);
     ~WangTeter() = default;
 
     double compute(const RealField& rho, RealField& v_kedf) override;

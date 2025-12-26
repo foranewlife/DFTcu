@@ -1,8 +1,8 @@
 #pragma once
+#include "fft/fft_solver.cuh"
 #include "kedf_base.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
-#include "fft/fft_solver.cuh"
 
 namespace dftcu {
 

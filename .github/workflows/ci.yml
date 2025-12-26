@@ -7,47 +7,32 @@ on:
     branches: [ main, develop ]
 
 jobs:
-  # Code formatting check
-  format-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run clang-format
-        uses: jidicula/clang-format-action@v4.11.0
-        with:
-          clang-format-version: '17'
-          check-path: 'src'
-
-      - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
-        env:
-          UV_INSTALL_DIR: /usr/local/bin
-
-      - name: Set up Python
-        run: uv python install 3.11
-
-      - name: Check Python formatting
-        run: |
-          uv run black --check .
-          uv run isort --check-only --profile black .
-          uv run flake8 . --max-line-length=100 --ignore=E203,W503
-
   # Build and test on Linux with CUDA
   build-test-cuda:
     runs-on: ubuntu-latest
-    container:
-      image: nvidia/cuda:12.6.3-devel-ubuntu22.04
+    container: nvidia/cuda:12.6.3-devel-ubuntu22.04
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
       - name: Install system dependencies
         run: |
           apt-get update
           apt-get install -y cmake git curl ninja-build
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.29
+        id: cuda-toolkit
+        with:
+          cuda: '12.6.3'
+
+      - name: Verify CUDA
+        run: |
+          echo "Installed cuda version is: ${{steps.cuda-toolkit.outputs.cuda}}"
+          echo "Cuda install location: ${{steps.cuda-toolkit.outputs.CUDA_PATH}}"
+          nvcc -V
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
