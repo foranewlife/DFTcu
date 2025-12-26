@@ -14,15 +14,29 @@ namespace dftcu {
  */
 class vonWeizsacker : public KEDF_Base {
   public:
+    struct Parameters {
+        double rho_threshold = 1e-30;
+        double phi_threshold = 1e-15;
+    };
+
     vonWeizsacker(double coeff = 1.0);
-    ~vonWeizsacker() = default;
+    virtual ~vonWeizsacker() = default;
 
-    double compute(const RealField& rho, RealField& v_kedf) override;
+    /**
+     * @brief Compute von Weizsäcker energy and potential
+     * @param rho Input density
+     * @param v_kedf Output potential
+     * @return Energy contribution
+     */
+    virtual double compute(const RealField& rho, RealField& v_kedf) override;
 
-    const char* name() const override { return "von Weizsacker"; }
+    const char* name() const override { return "vW"; }
+
+    void set_parameters(const Parameters& params) { params_ = params; }
 
   private:
     double coeff_;
+    Parameters params_;
 };
 
 }  // namespace dftcu

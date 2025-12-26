@@ -12,6 +12,23 @@ namespace dftcu {
  */
 class PBE {
   public:
+    struct Parameters {
+        double kappa = 0.804;
+        double mu_x = 0.2195149727645171;
+        double rho_threshold = 1e-16;
+        double sigma_threshold = 1e-20;
+
+        // Correlation constants
+        double a = 0.0310907;
+        double alpha1 = 0.21370;
+        double beta1 = 7.5957;
+        double beta2 = 3.5876;
+        double beta3 = 1.6382;
+        double beta4 = 0.49294;
+        double pbe_beta = 0.06672455060314922;
+        double pbe_gamma = 0.031090690869654894;
+    };
+
     PBE(std::shared_ptr<Grid> grid);
     ~PBE() = default;
 
@@ -25,9 +42,12 @@ class PBE {
 
     const char* name() const { return "PBE"; }
 
+    void set_parameters(const Parameters& params) { params_ = params; }
+
   private:
     std::shared_ptr<Grid> grid_;
     std::unique_ptr<FFTSolver> fft_;
+    Parameters params_;
 };
 
 }  // namespace dftcu

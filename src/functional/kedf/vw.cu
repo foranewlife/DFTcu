@@ -1,6 +1,7 @@
 #include <cmath>
 
 #include "utilities/common.cuh"
+#include "utilities/constants.cuh"
 #include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
 #include "vw.cuh"
@@ -8,10 +9,11 @@
 namespace dftcu {
 
 namespace {
-__global__ void vw_sqrt_kernel(size_t size, const double* rho, double* phi) {
+__global__ void vw_sqrt_kernel(size_t size, const double* rho, double* phi,
+                               vonWeizsacker::Parameters params) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < size) {
-        phi[i] = (rho[i] > 1e-30) ? sqrt(rho[i]) : 0.0;
+        phi[i] = (rho[i] > params.rho_threshold) ? sqrt(rho[i]) : 0.0;
     }
 }
 
@@ -26,10 +28,10 @@ __global__ void vw_laplacian_kernel(size_t size, gpufftComplex* phi_g, const dou
 }
 
 __global__ void vw_potential_kernel(size_t size, const double* lap_phi, const double* phi,
-                                    double* v_vw, double coeff) {
+                                    double* v_vw, double coeff, vonWeizsacker::Parameters params) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < size) {
-        if (phi[i] > 1e-15) {
+        if (phi[i] > params.phi_threshold) {
             v_vw[i] = coeff * lap_phi[i] / phi[i];
         } else {
             v_vw[i] = 0.0;
@@ -46,7 +48,7 @@ double vonWeizsacker::compute(const RealField& rho, RealField& v_kedf) {
     FFTSolver solver(grid);
 
     GPU_Vector<double> phi(nnr);
-    vw_sqrt_kernel<<<(nnr + 255) / 256, 256>>>(nnr, rho.data(), phi.data());
+    vw_sqrt_kernel<<<(nnr + 255) / 256, 256>>>(nnr, rho.data(), phi.data(), params_);
     CHECK(cudaDeviceSynchronize());
 
     ComplexField phi_g(grid);
@@ -56,17 +58,14 @@ double vonWeizsacker::compute(const RealField& rho, RealField& v_kedf) {
     vw_laplacian_kernel<<<(nnr + 255) / 256, 256>>>(nnr, phi_g.data(), grid->gg());
     CHECK(cudaDeviceSynchronize());
 
-    // Inverse FFT: result is (1/N) * sum( -G^2 * phi_G * exp(iGr) )
-    // This is mathematically Laplacian(phi) ONLY if we align with physical units.
     solver.backward(phi_g);
     GPU_Vector<double> lap_phi(nnr);
     complex_to_real(nnr, phi_g.data(), lap_phi.data());
 
     vw_potential_kernel<<<(nnr + 255) / 256, 256>>>(nnr, lap_phi.data(), phi.data(), v_kedf.data(),
-                                                    coeff_);
+                                                    coeff_, params_);
     CHECK(cudaDeviceSynchronize());
 
-    // Energy = coeff * integral(rho * V_vW) dV
     double energy = dot_product(nnr, rho.data(), v_kedf.data()) * grid->dv();
 
     return energy;

@@ -4,6 +4,8 @@
 #include "ewald.cuh"
 #include "fft/fft_solver.cuh"
 #include "utilities/common.cuh"
+#include "utilities/constants.cuh"
+#include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
 
 namespace dftcu {
@@ -107,7 +109,7 @@ double Ewald::compute_recip_exact() {
 
     double h_energy;
     energy.copy_to_host(&h_energy);
-    return 2.0 * PI / grid_->volume() * h_energy;
+    return 2.0 * constants::D_PI / grid_->volume() * h_energy;
 }
 
 double Ewald::compute_real() {
@@ -139,8 +141,8 @@ double Ewald::compute_corr() {
         charge_sq_sum += c * c;
     }
 
-    double e_self = -sqrt(eta_ / PI) * charge_sq_sum;
-    double e_bg = -0.5 * PI * charge_sum * charge_sum / (eta_ * grid_->volume());
+    double e_self = -sqrt(eta_ / constants::D_PI) * charge_sq_sum;
+    double e_bg = -0.5 * constants::D_PI * charge_sum * charge_sum / (eta_ * grid_->volume());
 
     return e_self + e_bg;
 }

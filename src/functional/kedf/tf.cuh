@@ -15,26 +15,30 @@ namespace dftcu {
  */
 class ThomasFermi : public KEDF_Base {
   public:
-    /**
-     * @brief Constructor
-     * @param coeff Scaling coefficient (default 1.0)
-     */
+    struct Parameters {
+        double rho_threshold = 1e-30;
+    };
+
     ThomasFermi(double coeff = 1.0);
+    virtual ~ThomasFermi() = default;
 
     /**
-     * @brief Compute TF kinetic energy and potential
-     * @param rho Input density field
-     * @param v_kedf Output potential field
-     * @return Total kinetic energy
+     * @brief Compute TF energy and potential
+     * @param rho Input density
+     * @param v_kedf Output potential
+     * @return Energy contribution
      */
-    double compute(const RealField& rho, RealField& v_kedf) override;
+    virtual double compute(const RealField& rho, RealField& v_kedf) override;
 
-    const char* name() const override { return "Thomas-Fermi"; }
+    const char* name() const override { return "TF"; }
+
+    void set_parameters(const Parameters& params) { params_ = params; }
 
   private:
-    double coeff_;     // Overall scaling coefficient
-    double c_tf_;      // Thomas-Fermi constant: (3/10)*(3π²)^(2/3)
-    double c_tf_pot_;  // Potential prefactor: (5/3)*C_TF
+    double coeff_;
+    double c_tf_;
+    double c_tf_pot_;
+    Parameters params_;
 };
 
 }  // namespace dftcu
