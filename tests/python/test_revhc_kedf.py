@@ -45,8 +45,8 @@ def test_revhc_functional():
     print(f"DFTcu Energy: {energy_cu:.12f} Ha")
     print(f"Diff:         {abs(res_py.energy - energy_cu):.2e} Ha")
 
-    # With 50k kernel table, precision reaches ~10^-13 Ha (near double precision limit)
-    assert abs(res_py.energy - energy_cu) < 1e-11
+    # After performance and formula optimization, precision reaches 10^-12 Ha
+    assert abs(res_py.energy - energy_cu) < 1e-12
 
 
 if __name__ == "__main__":
