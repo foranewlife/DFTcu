@@ -24,7 +24,7 @@ def test_lda_xc():
     ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
     ions.set_charges(3.0)
     generator = DensityGenerator()
-    rho_dftpy = generator.guess_rho(ions, grid=dftpy_grid)
+    rho_dftpy = generator.get_3d_value_recipe(ions, grid=dftpy_grid)
 
     # DFTpy calculation
     result_dftpy = DFTpy_LDA(rho_dftpy, calcType={"E", "V"})

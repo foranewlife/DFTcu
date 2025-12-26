@@ -39,7 +39,7 @@ def test_initial_energy_components():
 
     # Use reciprocal-space generator (direct=False) for smooth non-uniform density
     generator = DensityGenerator(pseudo=pseudo_py, direct=False)
-    rho_init = generator.guess_rho(ions, grid=dftpy_grid)
+    rho_init = generator.get_3d_value_recipe(ions, grid=dftpy_grid)
 
     print(
         f"Density Stats: Min={rho_init.min():.2e}, Max={rho_init.max():.2e}, "

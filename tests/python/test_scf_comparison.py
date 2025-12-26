@@ -34,7 +34,7 @@ def test_scf_comparison_dftpy():
 
     # Initial density guess
     generator = DensityGenerator(pseudo=pseudo_py, direct=False)
-    rho_init = generator.guess_rho(ions, grid=dftpy_grid)
+    rho_init = generator.get_3d_value_recipe(ions, grid=dftpy_grid)
 
     tf_py = Functional(type="KEDF", name="TF")
     lda_py = Functional(type="XC", name="LDA")

@@ -110,6 +110,7 @@ set(DFTCU_CORE_SOURCES
     src/functional/kedf/vw.cu
     src/functional/kedf/wt.cu
     src/functional/xc/lda_pz.cu
+    src/functional/xc/pbe.cu
     src/solver/evaluator.cu
     src/solver/optimizer.cu
     src/utilities/kernels.cu
