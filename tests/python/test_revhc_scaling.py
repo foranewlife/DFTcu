@@ -50,8 +50,8 @@ def test_revhc_scaling():
         diff = abs(res_py.energy - energy_cu)
         print(f"{scale:<8.1f} | {res_py.energy:<15.8f} | {energy_cu:<15.8f} | {diff:<12.2e}")
 
-        # Assert precision holds across scales (50k kernel table → 10^-13 Ha precision)
-        assert diff < 1e-11
+        # Assert high precision holds across scales after optimization
+        assert diff < 1e-12
 
 
 if __name__ == "__main__":

@@ -35,35 +35,29 @@ __device__ inline double evaluate_spline(double x, const double* y, const double
     double B = t;
     double h2_6 = h * h / 6.0;
 
-    return A * y[i] + B * y[i + 1] + h2_6 * ((A * A * A - A) * y2[i] + (B * B * B - B) * y2[i + 1]);
+    // Optimized Horner-like form for spline evaluation
+    return A * (y[i] + h2_6 * (A * A - 1.0) * y2[i]) +
+           B * (y[i + 1] + h2_6 * (B * B - 1.0) * y2[i + 1]);
 }
 
-__global__ void compute_s_kernel(size_t n, const double* rho, const double* grad_x,
-                                 const double* grad_y, const double* grad_z, double* s) {
+__global__ void compute_s_and_kf_kernel(size_t n, const double* rho, const double* grad_x,
+                                        const double* grad_y, const double* grad_z, double* s,
+                                        double* kf_eff, double kappa, double mu) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < n) {
         double r = rho[i];
         if (r < DFT_ZERO) {
             s[i] = 0.0;
-        } else {
-            double g2 = grad_x[i] * grad_x[i] + grad_y[i] * grad_y[i] + grad_z[i] * grad_z[i];
-            s[i] = sqrt(g2) / pow(r, 4.0 / 3.0);
-        }
-    }
-}
-
-__global__ void compute_kf_eff_kernel(size_t n, const double* rho, const double* s, double* kf_eff,
-                                      double kappa, double mu) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
-    if (i < n) {
-        double r = rho[i];
-        if (r < DFT_ZERO) {
             kf_eff[i] = 0.0;
         } else {
+            double g2 = grad_x[i] * grad_x[i] + grad_y[i] * grad_y[i] + grad_z[i] * grad_z[i];
+            double s_val = sqrt(g2) / pow(r, 4.0 / 3.0);
+            s[i] = s_val;
+
             const double pi = 3.14159265358979323846;
             double ckf = pow(3.0 * pi * pi, 1.0 / 3.0);
             double kf_std = ckf * pow(r, 1.0 / 3.0);
-            double ss = s[i] / (2.0 * ckf);
+            double ss = s_val / (2.0 * ckf);
             double F = 1.0 + mu * ss * ss / (1.0 + kappa * ss * ss);
             kf_eff[i] = F * kf_std;
         }
@@ -183,8 +177,16 @@ __global__ void finalize_potential_kernel(size_t n, const double* rho, const dou
 
 revHC::revHC(std::shared_ptr<Grid> grid, double alpha, double beta)
     : grid_(grid), fft_(std::make_unique<FFTSolver>(grid)), alpha_(alpha), beta_(beta) {
-    kappa_ = 0.1;
-    mu_ = 0.45;
+    // Load pre-computed kernel tables to device once
+    d_k_.resize(HC_KERNEL_SIZE);
+    d_k2_.resize(HC_KERNEL_SIZE);
+    d_d_.resize(HC_KERNEL_SIZE);
+    d_d2_.resize(HC_KERNEL_SIZE);
+
+    d_k_.copy_from_host(HC_K_DATA);
+    d_k2_.copy_from_host(HC_K2_DATA);
+    d_d_.copy_from_host(HC_D_DATA);
+    d_d2_.copy_from_host(HC_D2_DATA);
 }
 
 double revHC::compute(const RealField& rho, RealField& v_kedf) {
@@ -197,6 +199,7 @@ double revHC::compute(const RealField& rho, RealField& v_kedf) {
     ComplexField rho_g(grid_);
     real_to_complex(n, rho.data(), rho_g.data());
     fft_->forward(rho_g);
+
     RealField gx(grid_), gy(grid_), gz(grid_);
     ComplexField tmp_g(grid_);
     multiply_ig_kernel<<<grid_size, block_size>>>(n, grid_->gx(), rho_g.data(), tmp_g.data());
@@ -209,34 +212,36 @@ double revHC::compute(const RealField& rho, RealField& v_kedf) {
     fft_->backward(tmp_g);
     complex_to_real(n, tmp_g.data(), gz.data());
 
-    // 2. s and kf
+    // 2. s and kf (merged kernel)
     GPU_Vector<double> s(n), kf_eff(n);
-    compute_s_kernel<<<grid_size, block_size>>>(n, rho.data(), gx.data(), gy.data(), gz.data(),
-                                                s.data());
-    compute_kf_eff_kernel<<<grid_size, block_size>>>(n, rho.data(), s.data(), kf_eff.data(), kappa_,
-                                                     mu_);
+    compute_s_and_kf_kernel<<<grid_size, block_size>>>(n, rho.data(), gx.data(), gy.data(),
+                                                       gz.data(), s.data(), kf_eff.data(),
+                                                       params_.kappa, params_.mu);
 
-    // 3. Range
+    // 3. Determine kf_eff range using DFTpy's snapped range logic
     thrust::device_ptr<const double> kf_ptr(kf_eff.data());
     double kf_raw_min = *thrust::min_element(kf_ptr, kf_ptr + n);
     double kf_raw_max = *thrust::max_element(kf_ptr, kf_ptr + n);
+
     double ratio = 1.15;
     double kf0 = 1.0;
-    double kf_min_v = std::max(kf_raw_min, 1e-3);
+    double kf_min_v = std::max(kf_raw_min, params_.kf_min_clamp);
     int n_min = (int)std::floor(std::log(kf_min_v / kf0) / std::log(ratio)) - 1;
     double kf_min = kf0 * std::pow(ratio, (double)n_min);
-    double kf_max_v = std::min(kf_raw_max, 100.0);
+
+    double kf_max_v = std::min(kf_raw_max, params_.kf_max_clamp);
     int n_max = (int)std::ceil(std::log(kf_max_v / kf0) / std::log(ratio)) + 1;
 
     kf_min -= SAVE_TOL;
     int current_nsp = n_max - n_min + 1;
-    if (current_nsp > 128)
-        current_nsp = 128;
+    if (current_nsp > params_.max_nsp)
+        current_nsp = params_.max_nsp;
 
     // 4. Convolutions
     GPU_Vector<double> rho_beta(n), rho_alpha(n);
     power_kernel<<<grid_size, block_size>>>(n, rho.data(), rho_beta.data(), beta_);
     power_kernel<<<grid_size, block_size>>>(n, rho.data(), rho_alpha.data(), alpha_);
+
     ComplexField rb_g(grid_), ra_g(grid_);
     real_to_complex(n, rho_beta.data(), rb_g.data());
     real_to_complex(n, rho_alpha.data(), ra_g.data());
@@ -246,57 +251,43 @@ double revHC::compute(const RealField& rho, RealField& v_kedf) {
     GPU_Vector<double> pots1(n * current_nsp), pots2(n * current_nsp);
     GPU_Vector<double> mders1(n * current_nsp), mders2(n * current_nsp);
 
-    GPU_Vector<double> d_k(HC_KERNEL_SIZE), d_k2(HC_KERNEL_SIZE), d_d(HC_KERNEL_SIZE),
-        d_d2(HC_KERNEL_SIZE);
-    d_k.copy_from_host(HC_K_DATA);
-    d_k2.copy_from_host(HC_K2_DATA);
-    d_d.copy_from_host(HC_D_DATA);
-    d_d2.copy_from_host(HC_D2_DATA);
+    // Reuse ComplexField buffers to eliminate redundant cudaMemcpy
+    ComplexField tb_g(grid_), ta_g(grid_);
 
     for (int i = 0; i < current_nsp; ++i) {
         double kf_ref = (kf_min + SAVE_TOL) * pow(ratio, (double)i);
-        GPU_Vector<gpufftComplex> tv_b(n), tv_a(n);
-        ComplexField tb_g(grid_), ta_g(grid_);
 
-        // K convolution
-        CHECK(cudaMemcpy(tv_b.data(), rb_g.data(), n * sizeof(gpufftComplex),
+        // K convolution (Directly on tb_g, ta_g)
+        CHECK(cudaMemcpy(tb_g.data(), rb_g.data(), n * sizeof(gpufftComplex),
                          cudaMemcpyDeviceToDevice));
         multiply_kernel_spline_kernel<<<grid_size, block_size>>>(
-            n, tv_b.data(), grid_->gg(), kf_ref, d_k.data(), d_k2.data(), d_d.data(), d_d2.data(),
-            HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, false);
-        CHECK(cudaMemcpy(tb_g.data(), tv_b.data(), n * sizeof(gpufftComplex),
-                         cudaMemcpyDeviceToDevice));
+            n, tb_g.data(), grid_->gg(), kf_ref, d_k_.data(), d_k2_.data(), d_d_.data(),
+            d_d2_.data(), HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, false);
         fft_->backward(tb_g);
         complex_to_real(n, tb_g.data(), pots1.data() + i * n);
 
-        CHECK(cudaMemcpy(tv_a.data(), ra_g.data(), n * sizeof(gpufftComplex),
+        CHECK(cudaMemcpy(ta_g.data(), ra_g.data(), n * sizeof(gpufftComplex),
                          cudaMemcpyDeviceToDevice));
         multiply_kernel_spline_kernel<<<grid_size, block_size>>>(
-            n, tv_a.data(), grid_->gg(), kf_ref, d_k.data(), d_k2.data(), d_d.data(), d_d2.data(),
-            HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, false);
-        CHECK(cudaMemcpy(ta_g.data(), tv_a.data(), n * sizeof(gpufftComplex),
-                         cudaMemcpyDeviceToDevice));
+            n, ta_g.data(), grid_->gg(), kf_ref, d_k_.data(), d_k2_.data(), d_d_.data(),
+            d_d2_.data(), HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, false);
         fft_->backward(ta_g);
         complex_to_real(n, ta_g.data(), pots2.data() + i * n);
 
         // dK/dkf convolution
-        CHECK(cudaMemcpy(tv_b.data(), rb_g.data(), n * sizeof(gpufftComplex),
+        CHECK(cudaMemcpy(tb_g.data(), rb_g.data(), n * sizeof(gpufftComplex),
                          cudaMemcpyDeviceToDevice));
         multiply_kernel_spline_kernel<<<grid_size, block_size>>>(
-            n, tv_b.data(), grid_->gg(), kf_ref, d_k.data(), d_k2.data(), d_d.data(), d_d2.data(),
-            HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, true);
-        CHECK(cudaMemcpy(tb_g.data(), tv_b.data(), n * sizeof(gpufftComplex),
-                         cudaMemcpyDeviceToDevice));
+            n, tb_g.data(), grid_->gg(), kf_ref, d_k_.data(), d_k2_.data(), d_d_.data(),
+            d_d2_.data(), HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, true);
         fft_->backward(tb_g);
         complex_to_real(n, tb_g.data(), mders1.data() + i * n);
 
-        CHECK(cudaMemcpy(tv_a.data(), ra_g.data(), n * sizeof(gpufftComplex),
+        CHECK(cudaMemcpy(ta_g.data(), ra_g.data(), n * sizeof(gpufftComplex),
                          cudaMemcpyDeviceToDevice));
         multiply_kernel_spline_kernel<<<grid_size, block_size>>>(
-            n, tv_a.data(), grid_->gg(), kf_ref, d_k.data(), d_k2.data(), d_d.data(), d_d2.data(),
-            HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, true);
-        CHECK(cudaMemcpy(ta_g.data(), tv_a.data(), n * sizeof(gpufftComplex),
-                         cudaMemcpyDeviceToDevice));
+            n, ta_g.data(), grid_->gg(), kf_ref, d_k_.data(), d_k2_.data(), d_d_.data(),
+            d_d2_.data(), HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, true);
         fft_->backward(ta_g);
         complex_to_real(n, ta_g.data(), mders2.data() + i * n);
     }

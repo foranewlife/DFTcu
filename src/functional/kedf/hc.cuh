@@ -28,18 +28,29 @@ class revHC : public KEDF_Base {
 
     const char* name() const override { return "revHC"; }
 
+    struct Parameters {
+        double kappa = 0.1;
+        double mu = 0.45;
+        double kf_min_clamp = 1e-3;
+        double kf_max_clamp = 100.0;
+        int max_nsp = 128;
+    };
+
+    void set_parameters(const Parameters& params) { params_ = params; }
+
   private:
     std::shared_ptr<Grid> grid_;
     std::unique_ptr<FFTSolver> fft_;
     double alpha_;
     double beta_;
 
-    // Parameters for the GGA factor F(s) - PBE2 variant
-    double kappa_ = 1.245;
-    double mu_ = 0.23889;
+    Parameters params_;
 
-    // Discretization for multi-kernel interpolation
-    int nsp_ = 20;
+    // Pre-computed kernel tables on device
+    GPU_Vector<double> d_k_;
+    GPU_Vector<double> d_k2_;
+    GPU_Vector<double> d_d_;
+    GPU_Vector<double> d_d2_;
 };
 
 }  // namespace dftcu
