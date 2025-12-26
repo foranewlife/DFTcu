@@ -16,7 +16,8 @@ jobs:
         uses: jidicula/clang-format-action@v4.11.0
         with:
           clang-format-version: '17'
-          check-path: 'src'
+          check-path: '.'
+
 
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -28,6 +29,6 @@ jobs:
 
       - name: Check Python formatting
         run: |
-          uv run --no-project --with black black --check .
-          uv run --no-project --with isort isort --check-only --profile black .
-          uv run --no-project --with flake8 flake8 . --max-line-length=100 --ignore=E203,W503
+          uv run --no-project --with black black --check src tests
+          uv run --no-project --with isort isort --check-only src tests
+          uv run --no-project --with flake8 flake8 src tests
