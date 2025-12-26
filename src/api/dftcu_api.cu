@@ -5,6 +5,7 @@
 #include "functional/kedf/wt.cuh"
 #include "functional/pseudo.cuh"
 #include "functional/xc/lda_pz.cuh"
+#include "functional/xc/pbe.cuh"
 #include "model/atoms.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
@@ -115,6 +116,10 @@ PYBIND11_MODULE(dftcu, m) {
         .def(py::init<>())
         .def("compute", &dftcu::LDA_PZ::compute, py::arg("rho"), py::arg("v_xc"));
 
+    py::class_<dftcu::PBE, std::shared_ptr<dftcu::PBE>>(m, "PBE")
+        .def(py::init<std::shared_ptr<dftcu::Grid>>())
+        .def("compute", &dftcu::PBE::compute, py::arg("rho"), py::arg("v_xc"));
+
     py::class_<dftcu::Evaluator>(m, "Evaluator")
         .def(py::init<std::shared_ptr<dftcu::Grid>>())
         .def("add_functional",
@@ -129,6 +134,8 @@ PYBIND11_MODULE(dftcu, m) {
                                   std::shared_ptr<dftcu::WangTeter> f) { self.add_functional(f); })
         .def("add_functional", [](dftcu::Evaluator& self,
                                   std::shared_ptr<dftcu::LDA_PZ> f) { self.add_functional(f); })
+        .def("add_functional",
+             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::PBE> f) { self.add_functional(f); })
         .def("add_functional", [](dftcu::Evaluator& self,
                                   std::shared_ptr<dftcu::Hartree> f) { self.add_functional(f); })
         .def("add_functional",

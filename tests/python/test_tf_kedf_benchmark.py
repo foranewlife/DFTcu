@@ -46,7 +46,7 @@ class TestTFKEDFBenchmark:
         ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
         ions.set_charges(3.0)
         generator = DensityGenerator()
-        rho = generator.guess_rho(ions, grid=dftpy_grid)
+        rho = generator.get_3d_value_recipe(ions, grid=dftpy_grid)
         return np.array(rho)
 
     def run_dftpy(self, lattice: np.ndarray, nr: Tuple[int, int, int], rho_np: np.ndarray):

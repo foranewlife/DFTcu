@@ -4,3 +4,6 @@
 [submodule "external/GPUMD"]
 	path = external/GPUMD
 	url = https://github.com/brucefan1983/GPUMD.git
+[submodule "external/libxc"]
+	path = external/libxc
+	url = https://gitlab.com/libxc/libxc.git
