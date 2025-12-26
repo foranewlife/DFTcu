@@ -3,6 +3,7 @@
 
 #include "pbe.cuh"
 #include "utilities/common.cuh"
+#include "utilities/constants.cuh"
 #include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
 
@@ -47,17 +48,13 @@ __global__ void multiply_ig_kernel(int n, const double* g_comp, const gpufftComp
 }
 
 __global__ void pbe_kernel(int n, const double* rho, const double* sigma, double* v1, double* v2,
-                           double* energy_density) {
+                           double* energy_density, PBE::Parameters params) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < n) {
         double r = rho[i];
         double s2 = sigma[i];
 
-        // Thresholds for numerical stability
-        const double rho_threshold = 1e-12;
-        const double sigma_threshold = 1e-20;
-
-        if (r <= rho_threshold || s2 <= sigma_threshold) {
+        if (r <= params.rho_threshold || s2 <= params.sigma_threshold) {
             v1[i] = 0.0;
             v2[i] = 0.0;
             energy_density[i] = 0.0;
@@ -65,73 +62,65 @@ __global__ void pbe_kernel(int n, const double* rho, const double* sigma, double
         }
 
         // --- Exchange ---
-        const double kappa = 0.804;
-        const double mu_x = 0.2195149727645171;
-
-        double pi = 3.14159265358979323846;
+        const double pi = constants::D_PI;
         double kf = pow(3.0 * pi * pi * r, 1.0 / 3.0);
 
         // s_param2 = |grad rho|^2 / (4 * kf^2 * rho^2)
         double s_param2 = s2 / (4.0 * kf * kf * r * r);
-        double ex_lda = -0.7385587663820223 * pow(r, 1.0 / 3.0);
+        double ex_lda = constants::EX_LDA_COEFF * pow(r, 1.0 / 3.0);
 
-        double denom_x = 1.0 + mu_x * s_param2 / kappa;
-        double fx = 1.0 + kappa - kappa / denom_x;
+        double denom_x = 1.0 + params.mu_x * s_param2 / params.kappa;
+        double fx = 1.0 + params.kappa - params.kappa / denom_x;
 
-        double dfx_ds2 = mu_x / (denom_x * denom_x);
+        double dfx_ds2 = params.mu_x / (denom_x * denom_x);
         double dfx_dr = dfx_ds2 * (-8.0 / 3.0) * s_param2 / r;
 
         double vx = ex_lda * (fx + r * dfx_dr + (1.0 / 3.0) * fx);
         double vxs = ex_lda * r * dfx_ds2 / (4.0 * kf * kf * r * r);
 
         // --- Correlation ---
-        // High precision constants from LibXC
-        const double a = 0.0310907;
-        const double alpha1 = 0.21370;
-        const double beta1 = 7.5957;
-        const double beta2 = 3.5876;
-        const double beta3 = 1.6382;
-        const double beta4 = 0.49294;
-        const double pbe_beta = 0.06672455060314922;
-        const double pbe_gamma = 0.031090690869654894;
         double rs = pow(3.0 / (4.0 * pi * r), 1.0 / 3.0);
         double rs_sqrt = sqrt(rs);
-        double zeta_p =
-            2.0 * a * (beta1 * rs_sqrt + beta2 * rs + beta3 * rs * rs_sqrt + beta4 * rs * rs);
+        double zeta_p = 2.0 * params.a *
+                        (params.beta1 * rs_sqrt + params.beta2 * rs + params.beta3 * rs * rs_sqrt +
+                         params.beta4 * rs * rs);
 
         // Avoid log(1+1/0)
         if (zeta_p < 1e-20)
             zeta_p = 1e-20;
 
-        double dzeta_drs =
-            2.0 * a * (0.5 * beta1 / rs_sqrt + beta2 + 1.5 * beta3 * rs_sqrt + 2.0 * beta4 * rs);
+        double dzeta_drs = 2.0 * params.a *
+                           (0.5 * params.beta1 / rs_sqrt + params.beta2 +
+                            1.5 * params.beta3 * rs_sqrt + 2.0 * params.beta4 * rs);
 
         double log_1_zeta = log(1.0 + 1.0 / zeta_p);
-        double eta = -2.0 * a * (1.0 + alpha1 * rs) * log_1_zeta;
+        double eta = -2.0 * params.a * (1.0 + params.alpha1 * rs) * log_1_zeta;
 
         double drs_dr = -1.0 / (3.0 * r) * rs;
-        double deta_dr = (-2.0 * a * alpha1 * log_1_zeta +
-                          2.0 * a * (1.0 + alpha1 * rs) / (1.0 + zeta_p) / zeta_p * dzeta_drs) *
-                         drs_dr;
+        double deta_dr =
+            (-2.0 * params.a * params.alpha1 * log_1_zeta +
+             2.0 * params.a * (1.0 + params.alpha1 * rs) / (1.0 + zeta_p) / zeta_p * dzeta_drs) *
+            drs_dr;
 
         double t2 = s2 / (r * r * (16.0 * kf / pi));
 
         // PBE Correlation H term
-        double exp_val = exp(-eta / pbe_gamma);
-        double aa = pbe_beta / pbe_gamma / (exp_val - 1.0);
+        double exp_val = exp(-eta / params.pbe_gamma);
+        double aa = params.pbe_beta / params.pbe_gamma / (exp_val - 1.0);
 
         double a_t2 = aa * t2;
         double poly = 1.0 + a_t2 + a_t2 * a_t2;
-        double h_pbe = pbe_gamma * log(1.0 + pbe_beta / pbe_gamma * t2 * (1.0 + a_t2) / poly);
+        double h_pbe = params.pbe_gamma *
+                       log(1.0 + params.pbe_beta / params.pbe_gamma * t2 * (1.0 + a_t2) / poly);
 
-        double denom_h = 1.0 + pbe_beta / pbe_gamma * t2 * (1.0 + a_t2) / poly;
-        double dh_dt2 = pbe_beta / denom_h *
+        double denom_h = 1.0 + params.pbe_beta / params.pbe_gamma * t2 * (1.0 + a_t2) / poly;
+        double dh_dt2 = params.pbe_beta / denom_h *
                         ((1.0 + 2.0 * a_t2) * poly - (1.0 + a_t2) * (aa + 2.0 * aa * a_t2)) /
                         (poly * poly);
-        double dh_daa = pbe_beta * t2 / denom_h *
+        double dh_daa = params.pbe_beta * t2 / denom_h *
                         (t2 * poly - (1.0 + a_t2) * (t2 + 2.0 * t2 * a_t2)) / (poly * poly);
 
-        double daa_deta = aa * aa / pbe_gamma * exp_val;
+        double daa_deta = aa * aa / params.pbe_gamma * exp_val;
         double dh_dr = dh_daa * daa_deta * deta_dr + dh_dt2 * t2 * (-7.0 / 3.0 / r);
 
         double vc = h_pbe + eta + r * (deta_dr + dh_dr);
@@ -211,7 +200,7 @@ double PBE::compute(const RealField& rho, RealField& v_xc) {
     // 4. Compute PBE terms
     GPU_Vector<double> v1(n), v2(n), energy_density(n);
     pbe_kernel<<<grid_size, block_size>>>(n, rho.data(), sigma.data(), v1.data(), v2.data(),
-                                          energy_density.data());
+                                          energy_density.data(), params_);
     GPU_CHECK_KERNEL
 
     // 5. Compute divergence term: div(2 * v2 * grad_rho)

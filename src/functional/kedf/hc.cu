@@ -4,6 +4,7 @@
 #include "hc.cuh"
 #include "hc_kernel_data.h"
 #include "utilities/common.cuh"
+#include "utilities/constants.cuh"
 #include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
 
@@ -14,7 +15,6 @@ namespace dftcu {
 
 namespace {
 
-const double DFT_ZERO = 1e-16;
 const double SAVE_TOL = 1e-16;
 
 __device__ inline double evaluate_spline(double x, const double* y, const double* y2, int n,
@@ -42,11 +42,11 @@ __device__ inline double evaluate_spline(double x, const double* y, const double
 
 __global__ void compute_s_and_kf_kernel(size_t n, const double* rho, const double* grad_x,
                                         const double* grad_y, const double* grad_z, double* s,
-                                        double* kf_eff, double kappa, double mu) {
+                                        double* kf_eff, double kappa, double mu, double threshold) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < n) {
         double r = rho[i];
-        if (r < DFT_ZERO) {
+        if (r < threshold) {
             s[i] = 0.0;
             kf_eff[i] = 0.0;
         } else {
@@ -54,7 +54,7 @@ __global__ void compute_s_and_kf_kernel(size_t n, const double* rho, const doubl
             double s_val = sqrt(g2) / pow(r, 4.0 / 3.0);
             s[i] = s_val;
 
-            const double pi = 3.14159265358979323846;
+            const double pi = constants::D_PI;
             double ckf = pow(3.0 * pi * pi, 1.0 / 3.0);
             double kf_std = ckf * pow(r, 1.0 / 3.0);
             double ss = s_val / (2.0 * ckf);
@@ -143,10 +143,10 @@ __global__ void ldw_kernel(size_t n, const double* rho, double* v, double rhov) 
     }
 }
 
-__global__ void power_kernel(size_t n, const double* in, double* out, double p) {
+__global__ void power_kernel(size_t n, const double* in, double* out, double p, double threshold) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < n) {
-        out[i] = (in[i] > DFT_ZERO) ? pow(in[i], p) : 0.0;
+        out[i] = (in[i] > threshold) ? pow(in[i], p) : 0.0;
     }
 }
 
@@ -161,11 +161,11 @@ __global__ void multiply_ig_kernel(int n, const double* g_comp, const gpufftComp
 
 __global__ void finalize_potential_kernel(size_t n, const double* rho, const double* pot1,
                                           const double* pot2, double alpha, double beta,
-                                          double* v_out) {
+                                          double* v_out, double threshold) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < n) {
         double r = rho[i];
-        if (r > DFT_ZERO) {
+        if (r > threshold) {
             v_out[i] = alpha * pow(r, alpha - 1.0) * pot1[i] + beta * pow(r, beta - 1.0) * pot2[i];
         } else {
             v_out[i] = 0.0;
@@ -214,9 +214,9 @@ double revHC::compute(const RealField& rho, RealField& v_kedf) {
 
     // 2. s and kf (merged kernel)
     GPU_Vector<double> s(n), kf_eff(n);
-    compute_s_and_kf_kernel<<<grid_size, block_size>>>(n, rho.data(), gx.data(), gy.data(),
-                                                       gz.data(), s.data(), kf_eff.data(),
-                                                       params_.kappa, params_.mu);
+    compute_s_and_kf_kernel<<<grid_size, block_size>>>(
+        n, rho.data(), gx.data(), gy.data(), gz.data(), s.data(), kf_eff.data(), params_.kappa,
+        params_.mu, constants::RHO_THRESHOLD);
 
     // 3. Determine kf_eff range using DFTpy's snapped range logic
     thrust::device_ptr<const double> kf_ptr(kf_eff.data());
@@ -239,8 +239,10 @@ double revHC::compute(const RealField& rho, RealField& v_kedf) {
 
     // 4. Convolutions
     GPU_Vector<double> rho_beta(n), rho_alpha(n);
-    power_kernel<<<grid_size, block_size>>>(n, rho.data(), rho_beta.data(), beta_);
-    power_kernel<<<grid_size, block_size>>>(n, rho.data(), rho_alpha.data(), alpha_);
+    power_kernel<<<grid_size, block_size>>>(n, rho.data(), rho_beta.data(), beta_,
+                                            constants::RHO_THRESHOLD);
+    power_kernel<<<grid_size, block_size>>>(n, rho.data(), rho_alpha.data(), alpha_,
+                                            constants::RHO_THRESHOLD);
 
     ComplexField rb_g(grid_), ra_g(grid_);
     real_to_complex(n, rho_beta.data(), rb_g.data());
@@ -302,7 +304,8 @@ double revHC::compute(const RealField& rho, RealField& v_kedf) {
 
     double energy = dot_product(n, rho_alpha.data(), pot1.data()) * dv;
     finalize_potential_kernel<<<grid_size, block_size>>>(n, rho.data(), pot1.data(), pot2.data(),
-                                                         alpha_, beta_, v_kedf.data());
+                                                         alpha_, beta_, v_kedf.data(),
+                                                         constants::RHO_THRESHOLD);
 
     thrust::device_ptr<const double> rho_ptr(rho.data());
     double rhov = *thrust::max_element(rho_ptr, rho_ptr + n);

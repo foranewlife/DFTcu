@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "utilities/common.cuh"
+#include "utilities/constants.cuh"
 #include "utilities/gpu_vector.cuh"
 
 namespace dftcu {
@@ -135,7 +136,7 @@ class Grid {
 
         for (int i = 0; i < 3; ++i) {
             for (int j = 0; j < 3; ++j) {
-                rec_lattice_[i][j] = 2.0 * PI * inv[j][i];
+                rec_lattice_[i][j] = 2.0 * constants::D_PI * inv[j][i];
             }
         }
     }

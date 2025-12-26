@@ -16,17 +16,31 @@ namespace dftcu {
  */
 class WangTeter : public KEDF_Base {
   public:
+    struct Parameters {
+        double rho_threshold = 1e-30;
+        double rho0_threshold = 1e-12;
+    };
+
     WangTeter(double coeff = 1.0, double alpha = 5.0 / 6.0, double beta = 5.0 / 6.0);
-    ~WangTeter() = default;
+    virtual ~WangTeter() = default;
 
-    double compute(const RealField& rho, RealField& v_kedf) override;
+    /**
+     * @brief Compute Wang-Teter energy and potential
+     * @param rho Input density
+     * @param v_kedf Output potential
+     * @return Energy contribution
+     */
+    virtual double compute(const RealField& rho, RealField& v_kedf) override;
 
-    const char* name() const override { return "Wang-Teter (NL)"; }
+    const char* name() const override { return "WT"; }
+
+    void set_parameters(const Parameters& params) { params_ = params; }
 
   private:
     double coeff_;
     double alpha_;
     double beta_;
+    Parameters params_;
 };
 
 }  // namespace dftcu
