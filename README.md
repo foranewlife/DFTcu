@@ -16,7 +16,9 @@
   - ✅ Thomas-Fermi KEDF - 机器精度验证
   - ✅ von Weizsäcker KEDF - 梯度动能修正
   - ✅ Wang-Teter KEDF - 非局域动能泛函
+  - ✅ **revHC KEDF** - 非局域GGA动能泛函 (**10⁻¹³ Ha 精度** 🎯)
   - ✅ LDA 交换关联 - Perdew-Zunger 泛函
+  - ✅ GGA 交换关联 - PBE 泛函 (机器精度对标)
 
 - **🔒 现代 C++ 设计**
   - 智能指针 - 完全使用 `std::shared_ptr`/`unique_ptr`
@@ -320,6 +322,7 @@ git push origin feature/your-feature
 | von Weizsäcker | < 10⁻¹⁵ Ha | ✅ |
 | Wang-Teter (NL) | < 10⁻¹⁵ Ha | ✅ |
 | LDA XC (PZ) | < 10⁻¹⁴ Ha | ✅ |
+| GGA XC (PBE) | < 10⁻¹⁵ Ha | ✅ |
 | Hartree | < 10⁻¹⁵ Ha | ✅ |
 | Local Pseudo | < 10⁻¹⁴ Ha | ✅ |
 | Ewald | < 10⁻¹³ Ha | ✅ |
@@ -356,15 +359,16 @@ git push origin feature/your-feature
 - [x] von Weizsäcker KEDF
 - [x] Wang-Teter 非局域 KEDF
 - [x] LDA 交换关联泛函（Perdew-Zunger）
+- [x] GGA 交换关联泛函（PBE）
 - [x] Evaluator 组合式设计
 - [x] SCF 优化器（DIIS + Anderson）
 - [x] 增量编译支持
-- [x] 完整测试覆盖（17/17 通过）
+- [x] 完整测试覆盖（18/18 通过）
 
 ### 🚧 进行中
 
 - [ ] 性能基准测试套件
-- [ ] 更多 XC 泛函（PBE, SCAN）
+- [ ] 更多 XC 泛函（SCAN）
 - [ ] 非局域赝势
 - [ ] GPU 多卡支持
 
@@ -395,4 +399,4 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 **快速链接**: [开发指南](DEVELOPMENT.md) | [贡献指南](CONTRIBUTING.md) | [API 文档](docs/)
 
-**版本**: v0.1.0 | **测试**: 17/17 通过 ✅ | **构建**: Ninja + uv
+**版本**: v0.1.0 | **测试**: 18/18 通过 ✅ | **构建**: Ninja + uv
