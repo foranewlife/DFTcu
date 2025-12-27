@@ -35,6 +35,9 @@ target_link_libraries(test_utils
 # Test executables - only build if source files exist
 set(TEST_SOURCES
     test_kedf_tf.cu
+    test_grid_pseudo.cu
+    test_linesearch.cu
+    test_ewald_fcc.cu
 )
 
 foreach(test_source ${TEST_SOURCES})

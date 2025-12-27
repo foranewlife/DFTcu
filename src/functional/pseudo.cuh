@@ -24,6 +24,14 @@ class LocalPseudo {
     void set_vloc(int type, const std::vector<double>& vloc_g);
 
     /**
+     * @brief Set local pseudopotential for an atom type using radial data.
+     * @param type Atom type index.
+     * @param q Radial grid points.
+     * @param v_q Pseudopotential values on radial grid.
+     */
+    void set_vloc_radial(int type, const std::vector<double>& q, const std::vector<double>& v_q);
+
+    /**
      * @brief Compute the local pseudopotential on the real space grid.
      * @param vloc_r Output real space potential field.
      */
@@ -32,11 +40,7 @@ class LocalPseudo {
     /**
      * @brief Unified interface for Evaluator.
      */
-    double compute(const RealField& rho, RealField& v_out) {
-        compute(v_out);
-        // Energy E_ext = integral( rho * v_ext )
-        return rho.dot(v_out) * grid_->dv();
-    }
+    double compute(const RealField& rho, RealField& v_out);
 
   private:
     std::shared_ptr<Grid> grid_;

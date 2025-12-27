@@ -55,8 +55,8 @@ class FFTSolver {
         CUFFT_CHECK(cufftExecZ2Z(plan_, (cufftDoubleComplex*)field.data(),
                                  (cufftDoubleComplex*)field.data(), CUFFT_INVERSE));
         // Scaling: cuFFT inverse is not normalized.
-        // DFTpy inverse scales by 1/dV.
-        // We need to scale by 1 / (N * dV)
+        // To match DFTpy's ifft (which is ifftn / dV), we need to scale by 1 / (N * dV) = 1 /
+        // Volume.
         size_t size = field.size();
         const int block_size = 256;
         const int grid_size = (size + block_size - 1) / block_size;

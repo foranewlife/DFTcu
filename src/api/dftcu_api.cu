@@ -1,3 +1,4 @@
+#include "fft/fft_solver.cuh"
 #include "functional/ewald.cuh"
 #include "functional/hartree.cuh"
 #include "functional/kedf/hc.cuh"
@@ -7,6 +8,7 @@
 #include "functional/pseudo.cuh"
 #include "functional/xc/lda_pz.cuh"
 #include "functional/xc/pbe.cuh"
+#include "math/linesearch.cuh"
 #include "model/atoms.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
@@ -14,6 +16,7 @@
 #include "solver/optimizer.cuh"
 #include "utilities/kernels.cuh"
 
+#include <pybind11/functional.h>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -27,7 +30,23 @@ PYBIND11_MODULE(dftcu, m) {
         }))
         .def("nnr", &dftcu::Grid::nnr)
         .def("dv", &dftcu::Grid::dv)
-        .def("volume", &dftcu::Grid::volume);
+        .def("volume", &dftcu::Grid::volume)
+        .def("g2max", &dftcu::Grid::g2max)
+        .def("lattice",
+             [](dftcu::Grid& self) {
+                 std::vector<std::vector<double>> lat(3, std::vector<double>(3));
+                 for (int i = 0; i < 3; ++i)
+                     for (int j = 0; j < 3; ++j)
+                         lat[i][j] = self.lattice()[i][j];
+                 return lat;
+             })
+        .def("rec_lattice", [](dftcu::Grid& self) {
+            std::vector<std::vector<double>> lat(3, std::vector<double>(3));
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    lat[i][j] = self.rec_lattice()[i][j];
+            return lat;
+        });
 
     py::class_<dftcu::Atom>(m, "Atom")
         .def(py::init<double, double, double, double, int>())
@@ -63,6 +82,36 @@ PYBIND11_MODULE(dftcu, m) {
         .def("integral", &dftcu::RealField::integral)
         .def("size", &dftcu::RealField::size);
 
+    py::class_<dftcu::ComplexField>(m, "ComplexField")
+        .def(py::init<std::shared_ptr<dftcu::Grid>, int>(), py::arg("grid"), py::arg("rank") = 1)
+        .def("fill",
+             [](dftcu::ComplexField& self, std::complex<double> val) {
+                 gpufftComplex gval;
+                 gval.x = val.real();
+                 gval.y = val.imag();
+                 // Need a kernel for this, but let's just skip for now or use copy_from_host
+             })
+        .def("copy_from_host",
+             [](dftcu::ComplexField& self, py::array_t<std::complex<double>> array) {
+                 auto buf = array.request();
+                 if (buf.size != self.size())
+                     throw std::runtime_error("Size mismatch");
+                 self.copy_from_host((gpufftComplex*)buf.ptr);
+             })
+        .def("copy_to_host",
+             [](dftcu::ComplexField& self, py::array_t<std::complex<double>> array) {
+                 auto buf = array.request();
+                 if (buf.size != self.size())
+                     throw std::runtime_error("Size mismatch");
+                 self.copy_to_host((gpufftComplex*)buf.ptr);
+             })
+        .def("size", &dftcu::ComplexField::size);
+
+    py::class_<dftcu::FFTSolver>(m, "FFTSolver")
+        .def(py::init<std::shared_ptr<dftcu::Grid>>())
+        .def("forward", &dftcu::FFTSolver::forward)
+        .def("backward", &dftcu::FFTSolver::backward);
+
     py::class_<dftcu::Hartree, std::shared_ptr<dftcu::Hartree>>(m, "Hartree")
         .def(py::init<std::shared_ptr<dftcu::Grid>>())
         .def("compute",
@@ -90,6 +139,7 @@ PYBIND11_MODULE(dftcu, m) {
     py::class_<dftcu::LocalPseudo, std::shared_ptr<dftcu::LocalPseudo>>(m, "LocalPseudo")
         .def(py::init<std::shared_ptr<dftcu::Grid>, std::shared_ptr<dftcu::Atoms>>())
         .def("set_vloc", &dftcu::LocalPseudo::set_vloc)
+        .def("set_vloc_radial", &dftcu::LocalPseudo::set_vloc_radial)
         .def("compute", [](dftcu::LocalPseudo& self, dftcu::RealField& v) { self.compute(v); })
         .def("compute", [](dftcu::LocalPseudo& self, const dftcu::RealField& rho,
                            dftcu::RealField& v_out) { return self.compute(rho, v_out); });
@@ -130,28 +180,40 @@ PYBIND11_MODULE(dftcu, m) {
         .def(py::init<std::shared_ptr<dftcu::Grid>>())
         .def("add_functional",
              [](dftcu::Evaluator& self, std::shared_ptr<dftcu::ThomasFermi> f) {
-                 self.add_functional(f);
+                 self.add_functional(dftcu::Functional(f));
              })
         .def("add_functional",
              [](dftcu::Evaluator& self, std::shared_ptr<dftcu::vonWeizsacker> f) {
-                 self.add_functional(f);
+                 self.add_functional(dftcu::Functional(f));
              })
-        .def("add_functional", [](dftcu::Evaluator& self,
-                                  std::shared_ptr<dftcu::WangTeter> f) { self.add_functional(f); })
-        .def("add_functional", [](dftcu::Evaluator& self,
-                                  std::shared_ptr<dftcu::revHC> f) { self.add_functional(f); })
-        .def("add_functional", [](dftcu::Evaluator& self,
-                                  std::shared_ptr<dftcu::LDA_PZ> f) { self.add_functional(f); })
         .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::PBE> f) { self.add_functional(f); })
-        .def("add_functional", [](dftcu::Evaluator& self,
-                                  std::shared_ptr<dftcu::Hartree> f) { self.add_functional(f); })
+             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::WangTeter> f) {
+                 self.add_functional(dftcu::Functional(f));
+             })
+        .def("add_functional",
+             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::revHC> f) {
+                 self.add_functional(dftcu::Functional(f));
+             })
+        .def("add_functional",
+             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::LDA_PZ> f) {
+                 self.add_functional(dftcu::Functional(f));
+             })
+        .def("add_functional",
+             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::PBE> f) {
+                 self.add_functional(dftcu::Functional(f));
+             })
+        .def("add_functional",
+             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::Hartree> f) {
+                 self.add_functional(dftcu::Functional(f));
+             })
         .def("add_functional",
              [](dftcu::Evaluator& self, std::shared_ptr<dftcu::LocalPseudo> f) {
-                 self.add_functional(f);
+                 self.add_functional(dftcu::Functional(f));
              })
-        .def("add_functional", [](dftcu::Evaluator& self,
-                                  std::shared_ptr<dftcu::Ewald> f) { self.add_functional(f); })
+        .def("add_functional",
+             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::Ewald> f) {
+                 self.add_functional(dftcu::Functional(f));
+             })
         .def("clear", &dftcu::Evaluator::clear)
         .def("compute", &dftcu::Evaluator::compute);
 
@@ -171,4 +233,23 @@ PYBIND11_MODULE(dftcu, m) {
         .def(py::init<std::shared_ptr<dftcu::Grid>, dftcu::OptimizationOptions>(), py::arg("grid"),
              py::arg("options") = dftcu::OptimizationOptions())
         .def("solve", &dftcu::CGOptimizer::solve);
+
+    py::class_<dftcu::TNOptimizer>(m, "TNOptimizer")
+        .def(py::init<std::shared_ptr<dftcu::Grid>, dftcu::OptimizationOptions>(), py::arg("grid"),
+             py::arg("options") = dftcu::OptimizationOptions())
+        .def("solve", &dftcu::TNOptimizer::solve);
+
+    m.def(
+        "scalar_search_wolfe1",
+        [](std::function<double(double)> phi, std::function<double(double)> derphi, double phi0,
+           double derphi0, double phi0_old, double c1, double c2, double amax, double amin,
+           double xtol) {
+            double alpha_star = 0, phi_star = 0;
+            bool conv = dftcu::scalar_search_wolfe1(phi, derphi, phi0, derphi0, phi0_old, c1, c2,
+                                                    amax, amin, xtol, alpha_star, phi_star);
+            return std::make_tuple(conv, alpha_star, phi_star);
+        },
+        py::arg("phi"), py::arg("derphi"), py::arg("phi0"), py::arg("derphi0"),
+        py::arg("phi0_old") = 1e10, py::arg("c1") = 1e-4, py::arg("c2") = 0.9,
+        py::arg("amax") = 100.0, py::arg("amin") = 1e-8, py::arg("xtol") = 1e-14);
 }
