@@ -1,11 +1,8 @@
-#!/usr/bin/env python3
-import os
-
 import dftcu
 import numpy as np
 from dftpy.density import DensityGenerator
 from dftpy.grid import DirectGrid
-from dftpy.ions import Ions
+from test_utils import get_pp_path, get_system
 
 
 def pbe_reference_implementation(rho, sigma):
@@ -97,18 +94,14 @@ def pbe_reference_implementation(rho, sigma):
 
 def test_pbe_precision_compare():
     """Compare DFTcu PBE with Python reference and DFTpy (pylibxc)"""
-    a_bohr = 10.0
-    lattice = np.eye(3) * a_bohr
     nr = [32, 32, 32]
+    ions = get_system("Al_single", a=10.0)
+    lattice = ions.cell.array
+
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
 
-    # Generate non-uniform density
-    pos = np.array([[5.0, 5.0, 5.0]])
-    ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
-    # ions.set_charges(3.0)
-
     dftpy_grid = DirectGrid(lattice, nr=nr, full=True)
-    pp_file = os.path.join("external", "DFTpy", "examples", "DATA", "al.lda.upf")
+    pp_file = get_pp_path("al.lda.upf")
     from dftpy.functional.pseudo import LocalPseudo as DFTpy_LocalPseudo
 
     pseudo_py = DFTpy_LocalPseudo(grid=dftpy_grid, ions=ions, PP_list={"Al": pp_file})

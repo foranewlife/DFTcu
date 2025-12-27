@@ -1,43 +1,30 @@
-#!/usr/bin/env python3
-import os
 import time
 
 import dftcu
-import numpy as np
 from dftpy.density import DensityGenerator
 from dftpy.ewald import ewald as DFTpy_Ewald
 from dftpy.functional import Functional
 from dftpy.functional import Hartree as DFTpy_Hartree
 from dftpy.grid import DirectGrid
-from dftpy.ions import Ions
+from test_utils import get_pp_path, get_system, setup_pseudo, to_dftcu_atoms
 
 
 def test_initial_energy_components():
     """High precision comparison of all energy components using overlapping atomic densities"""
-    # 1. Setup System (FCC Al from fcc.vasp)
-    # 4.05 Angstrom converted to Bohr
-    a_bohr = 4.05 / 0.529177249
-    lattice = np.eye(3) * a_bohr
+    # 1. Setup System
     nr = [32, 32, 32]
-
-    # 4 atoms in cubic cell
-    pos_dir = np.array([[0.0, 0.0, 0.0], [0.5, 0.5, 0.0], [0.5, 0.0, 0.5], [0.0, 0.5, 0.5]])
-    all_pos = pos_dir * a_bohr
-
-    ions = Ions(symbols=["Al"] * 4, positions=all_pos, cell=lattice)
-    ions.set_charges(3.0)
+    ions = get_system("Al_fcc", a=4.05, cubic=True)
+    lattice = ions.cell.array
 
     dftpy_grid = DirectGrid(lattice, nr=nr, full=True)
 
     # 2. Setup DFTpy Components and Overlapping Atomic Density
     print("\n1. Calculating DFTpy Components...")
-    # Use UPF for atomic density data
-    pp_file = os.path.join("external", "DFTpy", "examples", "DATA", "al.lda.upf")
+    pp_file = get_pp_path("al.lda.upf")
     from dftpy.functional.pseudo import LocalPseudo as DFTpy_LocalPseudo
 
     pseudo_py = DFTpy_LocalPseudo(grid=dftpy_grid, ions=ions, PP_list={"Al": pp_file})
 
-    # Use reciprocal-space generator (direct=False) for smooth non-uniform density
     generator = DensityGenerator(pseudo=pseudo_py, direct=False)
     rho_init = generator.get_3d_value_recipe(ions, grid=dftpy_grid)
 
@@ -67,8 +54,7 @@ def test_initial_energy_components():
     # 3. DFTcu Components
     print("2. Calculating DFTcu Components (CUDA)...")
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
-    atoms_list = [dftcu.Atom(p[0], p[1], p[2], 3.0, 0) for p in all_pos]
-    atoms_cu = dftcu.Atoms(atoms_list)
+    atoms_cu = to_dftcu_atoms(ions)
     rho_cu = dftcu.RealField(grid_cu, 1)
     rho_cu.copy_from_host(rho_init.flatten(order="C"))
 
@@ -77,8 +63,7 @@ def test_initial_energy_components():
     wt_cu = dftcu.WangTeter(coeff=1.0)
     lda_cu = dftcu.LDA_PZ()
     hartree_cu = dftcu.Hartree(grid_cu)
-    pseudo_cu = dftcu.LocalPseudo(grid_cu, atoms_cu)
-    pseudo_cu.set_vloc(0, pseudo_py.vlines["Al"].flatten(order="C").tolist())
+    pseudo_cu, _ = setup_pseudo(grid_cu, atoms_cu, "al.lda.upf", ions)
     ewald_cu = dftcu.Ewald(grid_cu, atoms_cu)
     ewald_cu.set_eta(ewald_py.eta)
 

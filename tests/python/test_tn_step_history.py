@@ -1,22 +1,18 @@
-import os
-
 import dftcu
 import numpy as np
 from dftpy.field import DirectField
 from dftpy.functional import Functional, TotalFunctional
 from dftpy.grid import DirectGrid
-from dftpy.ions import Ions
+from test_utils import get_pp_path, get_system, setup_pseudo, to_dftcu_atoms
 
 
 def test_tn_alignment_multi_steps():
-    a0 = 7.6
-    lattice = np.eye(3) * a0
     nr = [32, 32, 32]
-    pos = np.array([[0.0, 0.0, 0.0]])
-    ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
-    ions.set_charges(3.0)
+    ions = get_system("Al_single", a=7.6)
+    lattice = ions.cell.array
+
     grid_py = DirectGrid(lattice, nr=nr, full=True)
-    pp_file = os.path.join("external", "DFTpy", "examples", "DATA", "al.lda.upf")
+    pp_file = get_pp_path("al.lda.upf")
     from dftpy.functional.pseudo import LocalPseudo as DFTpy_LocalPseudo
 
     pseudo_py = DFTpy_LocalPseudo(grid=grid_py, ions=ions, PP_list={"Al": pp_file})
@@ -29,11 +25,8 @@ def test_tn_alignment_multi_steps():
     rho_py = DirectField(grid=grid_py, data=np.full(nr, ions.nat * 3.0 / grid_py.volume))
 
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
-    atoms_cu = dftcu.Atoms([dftcu.Atom(0.0, 0.0, 0.0, 3.0, 0)])
-    pseudo_cu = dftcu.LocalPseudo(grid_cu, atoms_cu)
-    pseudo_cu.set_vloc_radial(
-        0, pseudo_py.readpp._gp["Al"].tolist(), pseudo_py.readpp._vp["Al"].tolist()
-    )
+    atoms_cu = to_dftcu_atoms(ions)
+    pseudo_cu, _ = setup_pseudo(grid_cu, atoms_cu, "al.lda.upf", ions)
     from dftpy.ewald import ewald as DFTpy_Ewald
 
     ewald_py = DFTpy_Ewald(grid=grid_py, ions=ions)
@@ -118,26 +111,13 @@ def test_tn_alignment_multi_steps():
         theta_taken, task, n_ls, vd = dftpy_ls(fun_ls, alpha0=theta_py_search, func0=func0)
         theta_last = theta_taken
 
-        # RE-CALCULATE p_cu exactly as in solver
-        # ...
-        # This is too complex to do here.
-        # Let's just compare the direction from DFTpy with the one DFTcu would use.
-        # g_cu = (v_tot_cu - mu_cu) * phi_cu
-        # p_cu = solves H p = -g_cu
-
         phi_py_next = phi_py_curr.data * np.cos(theta_taken) + p_py.data * np.sin(theta_taken)
         rho_py = DirectField(grid=grid_py, data=phi_py_next * phi_py_next)
 
         # 6. DFTcu step
-        # To match perfectly, we should probably use the SAME direction in both.
-        # But the goal is to align the algorithm.
-
         optimizer_cu.solve(rho_cu, evaluator_cu)
 
         print(f"  theta:  py={theta_taken:.10f}")
-
-        # Check if they are still orthogonal
-        # ...
 
 
 if __name__ == "__main__":

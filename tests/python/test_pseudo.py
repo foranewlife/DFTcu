@@ -1,23 +1,21 @@
 import dftcu
 import numpy as np
 from dftpy.field import DirectField
-from dftpy.functional.pseudo import LocalPseudo as LP
 from dftpy.grid import DirectGrid
-from dftpy.ions import Ions
+from test_utils import get_pp_path, get_system, setup_pseudo, to_dftcu_atoms
 
 
 def test_pseudo_fcc():
     """Compare LocalPseudo energy and potential with DFTpy in FCC cell"""
-    a0 = 7.6
     nr = [32, 32, 32]
-    lattice = np.array([[0, a0 / 2, a0 / 2], [a0 / 2, 0, a0 / 2], [a0 / 2, a0 / 2, 0]])
-    pos = np.array([[0.0, 0.0, 0.0]])
-    ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
-    ions.set_charges(3.0)
+    ions = get_system("Al_primitive", a=7.6)
+    lattice = ions.cell.array
 
     # 1. DFTpy Calculation
     grid_py = DirectGrid(lattice, nr=nr, full=True)
-    pp_file = "external/DFTpy/examples/DATA/al.lda.upf"
+    pp_file = get_pp_path("al.lda.upf")
+    from dftpy.functional.pseudo import LocalPseudo as LP
+
     pseudo_py = LP(grid=grid_py, ions=ions, PP_list={"Al": pp_file}, PME=False)
 
     rho_py = DirectField(grid=grid_py, data=np.full(nr, 1.0))
@@ -25,12 +23,9 @@ def test_pseudo_fcc():
 
     # 2. DFTcu Calculation
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
-    atoms_cu = dftcu.Atoms([dftcu.Atom(0, 0, 0, 3.0, 0)])
+    atoms_cu = to_dftcu_atoms(ions)
 
-    ps_cu = dftcu.LocalPseudo(grid_cu, atoms_cu)
-    ps_cu.set_vloc_radial(
-        0, pseudo_py.readpp._gp["Al"].tolist(), pseudo_py.readpp._vp["Al"].tolist()
-    )
+    ps_cu, _ = setup_pseudo(grid_cu, atoms_cu, "al.lda.upf", ions)
 
     rho_cu = dftcu.RealField(grid_cu)
     rho_cu.fill(1.0)

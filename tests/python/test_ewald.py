@@ -1,18 +1,14 @@
 import dftcu
-import numpy as np
 from dftpy.ewald import ewald as EwaldPy
 from dftpy.grid import DirectGrid
-from dftpy.ions import Ions
+from test_utils import get_system, to_dftcu_atoms
 
 
 def test_ewald_fcc():
     """Compare Ewald energy with DFTpy in FCC cell"""
-    a0 = 7.6
     nr = [32, 32, 32]
-    lattice = np.array([[0, a0 / 2, a0 / 2], [a0 / 2, 0, a0 / 2], [a0 / 2, a0 / 2, 0]])
-    pos = np.array([[0.0, 0.0, 0.0]])
-    ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
-    ions.set_charges(3.0)
+    ions = get_system("Al_primitive", a=7.6)
+    lattice = ions.cell.array
 
     # 1. DFTpy Calculation
     grid_py = DirectGrid(lattice, nr=nr, full=True)
@@ -21,7 +17,7 @@ def test_ewald_fcc():
 
     # 2. DFTcu Calculation
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
-    atoms_cu = dftcu.Atoms([dftcu.Atom(0, 0, 0, 3.0, 0)])
+    atoms_cu = to_dftcu_atoms(ions)
 
     ew_cu = dftcu.Ewald(grid_cu, atoms_cu)
     # Match eta

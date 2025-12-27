@@ -47,7 +47,8 @@ def test_dft_energy():
     from dftpy.ions import Ions
 
     # Setup
-    lattice, nr = 7.6, np.eye(3) * 7.6, [32, 32, 32]
+    lattice = np.eye(3) * 7.6
+    nr = [32, 32, 32]
     ions = Ions(symbols=["Al"], positions=np.array([[0.0, 0.0, 0.0]]), cell=lattice)
     ions.set_charges(3.0)
 
