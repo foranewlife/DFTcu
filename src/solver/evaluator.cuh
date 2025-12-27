@@ -16,9 +16,9 @@ class Evaluator {
   public:
     /**
      * @brief Constructs an Evaluator.
-     * @param grid Shared pointer to the simulation grid.
+     * @param grid Reference to the simulation grid.
      */
-    Evaluator(std::shared_ptr<Grid> grid);
+    Evaluator(Grid& grid);
 
     /** @brief Default destructor. */
     ~Evaluator() = default;
@@ -47,8 +47,9 @@ class Evaluator {
     double compute(const RealField& rho, RealField& v_tot);
 
   private:
-    std::shared_ptr<Grid> grid_;         /**< Associated simulation grid */
+    Grid& grid_;                         /**< Associated simulation grid reference */
     std::vector<Functional> components_; /**< List of functional components */
+    RealField v_tmp_;                    /**< Persistent buffer for intermediate potentials */
 };
 
 }  // namespace dftcu

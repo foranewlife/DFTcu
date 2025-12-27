@@ -43,30 +43,32 @@ __global__ void vw_potential_kernel(size_t size, const double* lap_phi, const do
 vonWeizsacker::vonWeizsacker(double coeff) : coeff_(coeff) {}
 
 double vonWeizsacker::compute(const RealField& rho, RealField& v_kedf) {
-    auto grid = rho.grid_ptr();
-    size_t nnr = grid->nnr();
+    Grid& grid = rho.grid();
+    size_t nnr = grid.nnr();
     FFTSolver solver(grid);
 
     GPU_Vector<double> phi(nnr);
-    vw_sqrt_kernel<<<(nnr + 255) / 256, 256>>>(nnr, rho.data(), phi.data(), params_);
-    CHECK(cudaDeviceSynchronize());
+    vw_sqrt_kernel<<<(nnr + 255) / 256, 256, 0, grid.stream()>>>(nnr, rho.data(), phi.data(),
+                                                                 params_);
+    GPU_CHECK_KERNEL;
 
     ComplexField phi_g(grid);
     real_to_complex(nnr, phi.data(), phi_g.data());
     solver.forward(phi_g);
 
-    vw_laplacian_kernel<<<(nnr + 255) / 256, 256>>>(nnr, phi_g.data(), grid->gg());
-    CHECK(cudaDeviceSynchronize());
+    vw_laplacian_kernel<<<(nnr + 255) / 256, 256, 0, grid.stream()>>>(nnr, phi_g.data(), grid.gg());
+    GPU_CHECK_KERNEL;
 
     solver.backward(phi_g);
     GPU_Vector<double> lap_phi(nnr);
     complex_to_real(nnr, phi_g.data(), lap_phi.data());
 
-    vw_potential_kernel<<<(nnr + 255) / 256, 256>>>(nnr, lap_phi.data(), phi.data(), v_kedf.data(),
-                                                    coeff_, params_);
-    CHECK(cudaDeviceSynchronize());
+    vw_potential_kernel<<<(nnr + 255) / 256, 256, 0, grid.stream()>>>(
+        nnr, lap_phi.data(), phi.data(), v_kedf.data(), coeff_, params_);
+    GPU_CHECK_KERNEL;
 
-    double energy = dot_product(nnr, rho.data(), v_kedf.data()) * grid->dv();
+    grid.synchronize();
+    double energy = dot_product(nnr, rho.data(), v_kedf.data()) * grid.dv();
 
     return energy;
 }

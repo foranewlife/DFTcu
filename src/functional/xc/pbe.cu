@@ -152,93 +152,101 @@ __global__ void reduce_sum_kernel(const int n, const double* data, double* parti
 
 }  // namespace
 
-PBE::PBE(std::shared_ptr<Grid> grid) : grid_(grid), fft_(std::make_unique<FFTSolver>(grid)) {}
+PBE::PBE(Grid& grid)
+    : grid_(grid),
+      fft_(grid),
+      grad_x_(grid),
+      grad_y_(grid),
+      grad_z_(grid),
+      rho_g_(grid),
+      tmp_g_(grid),
+      h_x_(grid),
+      h_y_(grid),
+      h_z_(grid),
+      hx_g_(grid),
+      hy_g_(grid),
+      hz_g_(grid),
+      div_g_(grid),
+      sigma_(grid.nnr()),
+      v1_(grid.nnr()),
+      v2_(grid.nnr()),
+      energy_density_(grid.nnr()) {}
 
 double PBE::compute(const RealField& rho, RealField& v_xc) {
-    size_t n = grid_->nnr();
-    double dv = grid_->dv();
+    size_t n = grid_.nnr();
+    double dv = grid_.dv();
 
     // 1. FFT of density
-    ComplexField rho_g(grid_);
-    rho_g.fill({0, 0});
-    real_to_complex(n, rho.data(), rho_g.data());
-    fft_->forward(rho_g);
-
-    // 2. Compute gradient components in real space
-    RealField grad_x(grid_), grad_y(grid_), grad_z(grid_);
-    ComplexField tmp_g(grid_);
+    real_to_complex(n, rho.data(), rho_g_.data());
+    fft_.forward(rho_g_);
 
     const int block_size = 256;
     const int grid_size = (n + block_size - 1) / block_size;
 
-    // X component
-    multiply_ig_kernel<<<grid_size, block_size>>>(n, grid_->gx(), rho_g.data(), tmp_g.data());
-    fft_->backward(tmp_g);
-    complex_to_real(n, tmp_g.data(), grad_x.data());
+    // 2. Compute gradient components in real space
+    multiply_ig_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, grid_.gx(), rho_g_.data(),
+                                                                     tmp_g_.data());
+    fft_.backward(tmp_g_);
+    complex_to_real(n, tmp_g_.data(), grad_x_.data());
 
-    // Y component
-    multiply_ig_kernel<<<grid_size, block_size>>>(n, grid_->gy(), rho_g.data(), tmp_g.data());
-    fft_->backward(tmp_g);
-    complex_to_real(n, tmp_g.data(), grad_y.data());
+    multiply_ig_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, grid_.gy(), rho_g_.data(),
+                                                                     tmp_g_.data());
+    fft_.backward(tmp_g_);
+    complex_to_real(n, tmp_g_.data(), grad_y_.data());
 
-    // Z component
-    multiply_ig_kernel<<<grid_size, block_size>>>(n, grid_->gz(), rho_g.data(), tmp_g.data());
-    fft_->backward(tmp_g);
-    complex_to_real(n, tmp_g.data(), grad_z.data());
+    multiply_ig_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, grid_.gz(), rho_g_.data(),
+                                                                     tmp_g_.data());
+    fft_.backward(tmp_g_);
+    complex_to_real(n, tmp_g_.data(), grad_z_.data());
 
     // 3. Compute sigma = |grad rho|^2
-    GPU_Vector<double> sigma(n);
-    v_mul(n, grad_x.data(), grad_x.data(), sigma.data());
+    v_mul(n, grad_x_.data(), grad_x_.data(), sigma_.data());
 
     GPU_Vector<double> tmp_v(n);
-    v_mul(n, grad_y.data(), grad_y.data(), tmp_v.data());
-    v_axpy(n, 1.0, tmp_v.data(), sigma.data());
+    v_mul(n, grad_y_.data(), grad_y_.data(), tmp_v.data());
+    v_axpy(n, 1.0, tmp_v.data(), sigma_.data());
 
-    v_mul(n, grad_z.data(), grad_z.data(), tmp_v.data());
-    v_axpy(n, 1.0, tmp_v.data(), sigma.data());
+    v_mul(n, grad_z_.data(), grad_z_.data(), tmp_v.data());
+    v_axpy(n, 1.0, tmp_v.data(), sigma_.data());
 
     // 4. Compute PBE terms
-    GPU_Vector<double> v1(n), v2(n), energy_density(n);
-    pbe_kernel<<<grid_size, block_size>>>(n, rho.data(), sigma.data(), v1.data(), v2.data(),
-                                          energy_density.data(), params_);
-    GPU_CHECK_KERNEL
+    pbe_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+        n, rho.data(), sigma_.data(), v1_.data(), v2_.data(), energy_density_.data(), params_);
+    GPU_CHECK_KERNEL;
 
     // 5. Compute divergence term: div(2 * v2 * grad_rho)
-    RealField h_x(grid_), h_y(grid_), h_z(grid_);
-    compute_h_kernel<<<grid_size, block_size>>>(n, v2.data(), grad_x.data(), grad_y.data(),
-                                                grad_z.data(), h_x.data(), h_y.data(), h_z.data());
+    compute_h_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+        n, v2_.data(), grad_x_.data(), grad_y_.data(), grad_z_.data(), h_x_.data(), h_y_.data(),
+        h_z_.data());
 
-    ComplexField hx_g(grid_), hy_g(grid_), hz_g(grid_), div_g(grid_);
-    hx_g.fill({0, 0});
-    hy_g.fill({0, 0});
-    hz_g.fill({0, 0});
-    real_to_complex(n, h_x.data(), hx_g.data());
-    real_to_complex(n, h_y.data(), hy_g.data());
-    real_to_complex(n, h_z.data(), hz_g.data());
+    real_to_complex(n, h_x_.data(), hx_g_.data());
+    real_to_complex(n, h_y_.data(), hy_g_.data());
+    real_to_complex(n, h_z_.data(), hz_g_.data());
 
-    fft_->forward(hx_g);
-    fft_->forward(hy_g);
-    fft_->forward(hz_g);
+    fft_.forward(hx_g_);
+    fft_.forward(hy_g_);
+    fft_.forward(hz_g_);
 
-    compute_div_g_kernel<<<grid_size, block_size>>>(n, grid_->gx(), grid_->gy(), grid_->gz(),
-                                                    hx_g.data(), hy_g.data(), hz_g.data(),
-                                                    div_g.data());
-    fft_->backward(div_g);
+    compute_div_g_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+        n, grid_.gx(), grid_.gy(), grid_.gz(), hx_g_.data(), hy_g_.data(), hz_g_.data(),
+        div_g_.data());
+    fft_.backward(div_g_);
 
     RealField div_r(grid_);
-    complex_to_real(n, div_g.data(), div_r.data());
+    complex_to_real(n, div_g_.data(), div_r.data());
 
     // 6. Final potential V_xc = v1 - div_r
-    v_sub(n, v1.data(), div_r.data(), v_xc.data());
+    v_sub(n, v1_.data(), div_r.data(), v_xc.data());
 
     // 7. Compute total energy
     GPU_Vector<double> partial_sums(grid_size);
-    reduce_sum_kernel<<<grid_size, block_size, block_size * sizeof(double)>>>(
-        n, energy_density.data(), partial_sums.data(), block_size);
-    GPU_CHECK_KERNEL
+    reduce_sum_kernel<<<grid_size, block_size, block_size * sizeof(double), grid_.stream()>>>(
+        n, energy_density_.data(), partial_sums.data(), block_size);
+    GPU_CHECK_KERNEL;
 
     std::vector<double> h_partial_sums(grid_size);
-    partial_sums.copy_to_host(h_partial_sums.data());
+    partial_sums.copy_to_host(h_partial_sums.data(), grid_.stream());
+    grid_.synchronize();
     double total_energy = 0.0;
     for (double s : h_partial_sums)
         total_energy += s;

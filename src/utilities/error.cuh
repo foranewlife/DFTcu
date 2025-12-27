@@ -1,44 +1,23 @@
 #pragma once
-#include <fstream>
+#include <cuda_runtime.h>
+
+#include <iostream>
+#include <stdexcept>
 #include <string>
-#include <vector>
 
-#include "gpu_macro.cuh"
+namespace dftcu {
 
-#include <stdio.h>
-
-#define CHECK(call)                                                                 \
-    do {                                                                            \
-        const gpuError_t error_code = call;                                         \
-        if (error_code != gpuSuccess) {                                             \
-            fprintf(stderr, "CUDA Error:\n");                                       \
-            fprintf(stderr, "    File:       %s\n", __FILE__);                      \
-            fprintf(stderr, "    Line:       %d\n", __LINE__);                      \
-            fprintf(stderr, "    Error code: %d\n", error_code);                    \
-            fprintf(stderr, "    Error text: %s\n", gpuGetErrorString(error_code)); \
-            exit(1);                                                                \
-        }                                                                           \
-    } while (0)
-
-#define CHECK_FFT(call)                                          \
-    do {                                                         \
-        const cufftResult error_code = call;                     \
-        if (error_code != CUFFT_SUCCESS) {                       \
-            fprintf(stderr, "cuFFT Error:\n");                   \
-            fprintf(stderr, "    File:       %s\n", __FILE__);   \
-            fprintf(stderr, "    Line:       %d\n", __LINE__);   \
-            fprintf(stderr, "    Error code: %d\n", error_code); \
-            exit(1);                                             \
-        }                                                        \
-    } while (0)
-
-#ifdef STRONG_DEBUG
-#define GPU_CHECK_KERNEL               \
-    {                                  \
-        CHECK(gpuGetLastError());      \
-        CHECK(gpuDeviceSynchronize()); \
+inline void handle_cuda_error(cudaError_t error, const char* file, int line) {
+    if (error != cudaSuccess) {
+        std::string msg = "CUDA Error: ";
+        msg += cudaGetErrorString(error);
+        msg += " at " + std::string(file) + ":" + std::to_string(line);
+        throw std::runtime_error(msg);
     }
-#else
-#define GPU_CHECK_KERNEL \
-    { CHECK(gpuGetLastError()); }
-#endif
+}
+
+}  // namespace dftcu
+
+#define CHECK(condition) dftcu::handle_cuda_error(condition, __FILE__, __LINE__)
+
+#define GPU_CHECK_KERNEL dftcu::handle_cuda_error(cudaGetLastError(), __FILE__, __LINE__)

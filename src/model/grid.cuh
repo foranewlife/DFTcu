@@ -23,6 +23,7 @@ class Grid {
      * @param nr 3-element vector representing the number of grid points in each dimension.
      */
     Grid(const std::vector<double>& lattice, const std::vector<int>& nr) {
+        CHECK(cudaStreamCreate(&stream_));
         for (int i = 0; i < 3; ++i) {
             for (int j = 0; j < 3; ++j) {
                 lattice_[i][j] = lattice[i * 3 + j];
@@ -31,23 +32,23 @@ class Grid {
         }
         nnr_ = nr_[0] * nr_[1] * nr_[2];
 
-        // Calculate volume
-        volume_ = std::abs(
-            lattice_[0][0] * (lattice_[1][1] * lattice_[2][2] - lattice_[1][2] * lattice_[2][1]) -
-            lattice_[0][1] * (lattice_[1][0] * lattice_[2][2] - lattice_[1][2] * lattice_[2][0]) +
-            lattice_[0][2] * (lattice_[1][0] * lattice_[2][1] - lattice_[1][1] * lattice_[2][0]));
-        dv_ = volume_ / nnr_;
-
-        // Reciprocal lattice (physics convention: 2*pi * inv(lattice)^T)
         compute_reciprocal_lattice();
 
-        // Allocate and compute g-vectors on GPU
         gg_.resize(nnr_);
         gx_.resize(nnr_);
         gy_.resize(nnr_);
         gz_.resize(nnr_);
         compute_g_vectors();
     }
+
+    ~Grid() {
+        if (stream_) {
+            cudaStreamDestroy(stream_);
+        }
+    }
+
+    cudaStream_t stream() const { return stream_; }
+    void synchronize() const { CHECK(cudaStreamSynchronize(stream_)); }
 
     /**
      * @brief Total number of grid points (nr[0] * nr[1] * nr[2]).
@@ -152,6 +153,7 @@ class Grid {
      */
     void compute_g_vectors();
 
+    cudaStream_t stream_ = nullptr;        /**< CUDA stream for grid operations */
     double lattice_[3][3];                 /**< Real-space lattice matrix */
     double rec_lattice_[3][3];             /**< Reciprocal-space lattice matrix */
     int nr_[3];                            /**< Grid dimensions */

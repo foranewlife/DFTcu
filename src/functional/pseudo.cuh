@@ -13,13 +13,20 @@ namespace dftcu {
  */
 class LocalPseudo {
   public:
-    LocalPseudo(std::shared_ptr<Grid> grid, std::shared_ptr<Atoms> atoms);
+    /**
+     * @brief Constructs a local pseudopotential functional.
+     * @param grid Reference to the simulation grid.
+     * @param atoms Shared pointer to the atom collection.
+     */
+    LocalPseudo(Grid& grid, std::shared_ptr<Atoms> atoms);
+
+    /** @brief Default destructor. */
     ~LocalPseudo() = default;
 
     /**
-     * @brief Set local pseudopotential for an atom type.
+     * @brief Set local pseudopotential for an atom type using G-space data.
      * @param type Atom type index.
-     * @param vloc_g Local pseudopotential in reciprocal space (aligned with grid).
+     * @param vloc_g G-space potential values.
      */
     void set_vloc(int type, const std::vector<double>& vloc_g);
 
@@ -43,10 +50,11 @@ class LocalPseudo {
     double compute(const RealField& rho, RealField& v_out);
 
   private:
-    std::shared_ptr<Grid> grid_;
+    Grid& grid_;
     std::shared_ptr<Atoms> atoms_;
     GPU_Vector<double> vloc_types_;
     int num_types_ = 0;
+    ComplexField v_g_; /**< Persistent buffer for G-space potential */
 };
 
 }  // namespace dftcu

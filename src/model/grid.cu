@@ -40,13 +40,12 @@ void Grid::compute_g_vectors() {
     const int block_size = 256;
     const int grid_size = (static_cast<int>(nnr_) + block_size - 1) / block_size;
 
-    compute_g_vectors_kernel<<<grid_size, block_size>>>(
+    compute_g_vectors_kernel<<<grid_size, block_size, 0, stream_>>>(
         nr_[0], nr_[1], nr_[2], rec_lattice_[0][0], rec_lattice_[0][1], rec_lattice_[0][2],
         rec_lattice_[1][0], rec_lattice_[1][1], rec_lattice_[1][2], rec_lattice_[2][0],
         rec_lattice_[2][1], rec_lattice_[2][2], gg_.data(), gx_.data(), gy_.data(), gz_.data());
 
-    CHECK(cudaDeviceSynchronize());
-    GPU_CHECK_KERNEL
+    GPU_CHECK_KERNEL;
 }
 
 }  // namespace dftcu

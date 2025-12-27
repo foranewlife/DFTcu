@@ -14,7 +14,7 @@ namespace dftcu {
  */
 class Ewald {
   public:
-    Ewald(std::shared_ptr<Grid> grid, std::shared_ptr<Atoms> atoms, double precision = 1e-8,
+    Ewald(Grid& grid, std::shared_ptr<Atoms> atoms, double precision = 1e-8,
           int bspline_order = 10);
     ~Ewald() = default;
 
@@ -36,7 +36,7 @@ class Ewald {
     void set_eta(double eta) { eta_ = eta; }
 
   private:
-    std::shared_ptr<Grid> grid_;
+    Grid& grid_;
     std::shared_ptr<Atoms> atoms_;
     double precision_;
     int bspline_order_;

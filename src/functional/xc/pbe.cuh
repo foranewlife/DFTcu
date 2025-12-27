@@ -29,7 +29,7 @@ class PBE {
         double pbe_gamma = 0.031090690869654894;
     };
 
-    PBE(std::shared_ptr<Grid> grid);
+    PBE(Grid& grid);
     ~PBE() = default;
 
     /**
@@ -45,9 +45,16 @@ class PBE {
     void set_parameters(const Parameters& params) { params_ = params; }
 
   private:
-    std::shared_ptr<Grid> grid_;
-    std::unique_ptr<FFTSolver> fft_;
+    Grid& grid_;
+    FFTSolver fft_;
     Parameters params_;
+
+    // Persistent buffers
+    RealField grad_x_, grad_y_, grad_z_;
+    ComplexField rho_g_, tmp_g_;
+    RealField h_x_, h_y_, h_z_;
+    ComplexField hx_g_, hy_g_, hz_g_, div_g_;
+    GPU_Vector<double> sigma_, v1_, v2_, energy_density_;
 };
 
 }  // namespace dftcu

@@ -33,9 +33,10 @@ __global__ void scale_kernel(size_t size, gpufftComplex* data, double scale) {
 
 class FFTSolver {
   public:
-    FFTSolver(std::shared_ptr<Grid> grid) : grid_(grid) {
-        int nr[3] = {grid->nr()[0], grid->nr()[1], grid->nr()[2]};
+    FFTSolver(Grid& grid) : grid_(grid) {
+        int nr[3] = {grid.nr()[0], grid.nr()[1], grid.nr()[2]};
         CUFFT_CHECK(cufftPlan3d(&plan_, nr[0], nr[1], nr[2], CUFFT_Z2Z));
+        CUFFT_CHECK(cufftSetStream(plan_, grid.stream()));
     }
 
     ~FFTSolver() { cufftDestroy(plan_); }
@@ -47,8 +48,7 @@ class FFTSolver {
         size_t size = field.size();
         const int block_size = 256;
         const int grid_size = (size + block_size - 1) / block_size;
-        scale_kernel<<<grid_size, block_size>>>(size, field.data(), grid_->dv());
-        CHECK(cudaDeviceSynchronize());
+        scale_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(size, field.data(), grid_.dv());
     }
 
     void backward(ComplexField& field) {
@@ -60,13 +60,12 @@ class FFTSolver {
         size_t size = field.size();
         const int block_size = 256;
         const int grid_size = (size + block_size - 1) / block_size;
-        double scale = 1.0 / (grid_->nnr() * grid_->dv());
-        scale_kernel<<<grid_size, block_size>>>(size, field.data(), scale);
-        CHECK(cudaDeviceSynchronize());
+        double scale = 1.0 / (grid_.nnr() * grid_.dv());
+        scale_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(size, field.data(), scale);
     }
 
   private:
-    std::shared_ptr<Grid> grid_;
+    Grid& grid_;
     cufftHandle plan_;
 };
 

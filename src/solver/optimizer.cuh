@@ -12,7 +12,7 @@ struct OptimizationOptions {
 
 class SimpleOptimizer {
   public:
-    SimpleOptimizer(std::shared_ptr<Grid> grid, OptimizationOptions options = {});
+    SimpleOptimizer(Grid& grid, OptimizationOptions options = {});
     ~SimpleOptimizer() = default;
 
     /**
@@ -21,13 +21,13 @@ class SimpleOptimizer {
     void solve(RealField& rho, Evaluator& evaluator);
 
   private:
-    std::shared_ptr<Grid> grid_;
+    Grid& grid_;
     OptimizationOptions options_;
 };
 
 class CGOptimizer {
   public:
-    CGOptimizer(std::shared_ptr<Grid> grid, OptimizationOptions options = {});
+    CGOptimizer(Grid& grid, OptimizationOptions options = {});
     ~CGOptimizer() = default;
 
     /**
@@ -36,13 +36,13 @@ class CGOptimizer {
     void solve(RealField& rho, Evaluator& evaluator);
 
   private:
-    std::shared_ptr<Grid> grid_;
+    Grid& grid_;
     OptimizationOptions options_;
 };
 
 class TNOptimizer {
   public:
-    TNOptimizer(std::shared_ptr<Grid> grid, OptimizationOptions options = {});
+    TNOptimizer(Grid& grid, OptimizationOptions options = {});
     ~TNOptimizer() = default;
 
     /**
@@ -51,7 +51,7 @@ class TNOptimizer {
     void solve(RealField& rho, Evaluator& evaluator);
 
   private:
-    std::shared_ptr<Grid> grid_;
+    Grid& grid_;
     OptimizationOptions options_;
 };
 

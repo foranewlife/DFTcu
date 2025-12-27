@@ -49,7 +49,12 @@ class Atoms {
     const double* charge_data() const { return d_charge_.data(); }
     const int* type() const { return d_type_.data(); }
 
+    const std::vector<double>& h_pos_x() const { return h_pos_x_; }
+    const std::vector<double>& h_pos_y() const { return h_pos_y_; }
+    const std::vector<double>& h_pos_z() const { return h_pos_z_; }
     const std::vector<double>& h_charge() const { return h_charge_; }
+    const std::vector<int>& h_type() const { return h_type_; }
+
     const GPU_Vector<double>& d_charge() const { return d_charge_; }
 
   private:

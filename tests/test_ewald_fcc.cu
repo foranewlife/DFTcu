@@ -24,7 +24,7 @@ int main() {
     atoms_vec.push_back(a);
     auto atoms = std::make_shared<Atoms>(atoms_vec);
 
-    Ewald ewald(grid, atoms);
+    Ewald ewald(*grid, atoms);
     double energy = ewald.compute(false);
     std::cout << "Final Ewald Energy: " << energy << std::endl;
 

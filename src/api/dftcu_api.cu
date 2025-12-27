@@ -61,7 +61,7 @@ PYBIND11_MODULE(dftcu, m) {
         .def("nat", &dftcu::Atoms::nat);
 
     py::class_<dftcu::RealField>(m, "RealField")
-        .def(py::init<std::shared_ptr<dftcu::Grid>, int>(), py::arg("grid"), py::arg("rank") = 1)
+        .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
         .def("fill", &dftcu::RealField::fill)
         .def("copy_from_host",
              [](dftcu::RealField& self, py::array_t<double> array) {
@@ -83,13 +83,13 @@ PYBIND11_MODULE(dftcu, m) {
         .def("size", &dftcu::RealField::size);
 
     py::class_<dftcu::ComplexField>(m, "ComplexField")
-        .def(py::init<std::shared_ptr<dftcu::Grid>, int>(), py::arg("grid"), py::arg("rank") = 1)
+        .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
         .def("fill",
              [](dftcu::ComplexField& self, std::complex<double> val) {
                  gpufftComplex gval;
                  gval.x = val.real();
                  gval.y = val.imag();
-                 // Need a kernel for this, but let's just skip for now or use copy_from_host
+                 self.fill(gval);
              })
         .def("copy_from_host",
              [](dftcu::ComplexField& self, py::array_t<std::complex<double>> array) {
@@ -108,12 +108,12 @@ PYBIND11_MODULE(dftcu, m) {
         .def("size", &dftcu::ComplexField::size);
 
     py::class_<dftcu::FFTSolver>(m, "FFTSolver")
-        .def(py::init<std::shared_ptr<dftcu::Grid>>())
+        .def(py::init<dftcu::Grid&>())
         .def("forward", &dftcu::FFTSolver::forward)
         .def("backward", &dftcu::FFTSolver::backward);
 
     py::class_<dftcu::Hartree, std::shared_ptr<dftcu::Hartree>>(m, "Hartree")
-        .def(py::init<std::shared_ptr<dftcu::Grid>>())
+        .def(py::init<dftcu::Grid&>())
         .def("compute",
              [](dftcu::Hartree& self, const dftcu::RealField& rho, dftcu::RealField& vh) {
                  double energy = 0.0;
@@ -122,9 +122,8 @@ PYBIND11_MODULE(dftcu, m) {
              });
 
     py::class_<dftcu::Ewald, std::shared_ptr<dftcu::Ewald>>(m, "Ewald")
-        .def(py::init<std::shared_ptr<dftcu::Grid>, std::shared_ptr<dftcu::Atoms>, double, int>(),
-             py::arg("grid"), py::arg("atoms"), py::arg("precision") = 1e-8,
-             py::arg("bspline_order") = 10)
+        .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>, double, int>(), py::arg("grid"),
+             py::arg("atoms"), py::arg("precision") = 1e-8, py::arg("bspline_order") = 10)
         .def(
             "compute", [](dftcu::Ewald& self, bool use_pme) { return self.compute(use_pme); },
             py::arg("use_pme") = false)
@@ -137,7 +136,7 @@ PYBIND11_MODULE(dftcu, m) {
         .def("set_eta", &dftcu::Ewald::set_eta);
 
     py::class_<dftcu::LocalPseudo, std::shared_ptr<dftcu::LocalPseudo>>(m, "LocalPseudo")
-        .def(py::init<std::shared_ptr<dftcu::Grid>, std::shared_ptr<dftcu::Atoms>>())
+        .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())
         .def("set_vloc", &dftcu::LocalPseudo::set_vloc)
         .def("set_vloc_radial", &dftcu::LocalPseudo::set_vloc_radial)
         .def("compute", [](dftcu::LocalPseudo& self, dftcu::RealField& v) { self.compute(v); })
@@ -159,13 +158,13 @@ PYBIND11_MODULE(dftcu, m) {
 
     py::class_<dftcu::WangTeter, dftcu::KEDF_Base, std::shared_ptr<dftcu::WangTeter>>(m,
                                                                                       "WangTeter")
-        .def(py::init<double, double, double>(), py::arg("coeff") = 1.0,
-             py::arg("alpha") = 5.0 / 6.0, py::arg("beta") = 5.0 / 6.0)
+        .def(py::init<dftcu::Grid&, double, double, double>(), py::arg("grid"),
+             py::arg("coeff") = 1.0, py::arg("alpha") = 5.0 / 6.0, py::arg("beta") = 5.0 / 6.0)
         .def("compute", &dftcu::WangTeter::compute, py::arg("rho"), py::arg("v_kedf"));
 
     py::class_<dftcu::revHC, dftcu::KEDF_Base, std::shared_ptr<dftcu::revHC>>(m, "revHC")
-        .def(py::init<std::shared_ptr<dftcu::Grid>, double, double>(), py::arg("grid"),
-             py::arg("alpha") = 2.0, py::arg("beta") = 2.0 / 3.0)
+        .def(py::init<dftcu::Grid&, double, double>(), py::arg("grid"), py::arg("alpha") = 2.0,
+             py::arg("beta") = 2.0 / 3.0)
         .def("compute", &dftcu::revHC::compute, py::arg("rho"), py::arg("v_kedf"));
 
     py::class_<dftcu::LDA_PZ, std::shared_ptr<dftcu::LDA_PZ>>(m, "LDA_PZ")
@@ -173,11 +172,11 @@ PYBIND11_MODULE(dftcu, m) {
         .def("compute", &dftcu::LDA_PZ::compute, py::arg("rho"), py::arg("v_xc"));
 
     py::class_<dftcu::PBE, std::shared_ptr<dftcu::PBE>>(m, "PBE")
-        .def(py::init<std::shared_ptr<dftcu::Grid>>())
+        .def(py::init<dftcu::Grid&>())
         .def("compute", &dftcu::PBE::compute, py::arg("rho"), py::arg("v_xc"));
 
     py::class_<dftcu::Evaluator>(m, "Evaluator")
-        .def(py::init<std::shared_ptr<dftcu::Grid>>())
+        .def(py::init<dftcu::Grid&>())
         .def("add_functional",
              [](dftcu::Evaluator& self, std::shared_ptr<dftcu::ThomasFermi> f) {
                  self.add_functional(dftcu::Functional(f));
@@ -225,17 +224,17 @@ PYBIND11_MODULE(dftcu, m) {
         .def_readwrite("step_size", &dftcu::OptimizationOptions::step_size);
 
     py::class_<dftcu::SimpleOptimizer>(m, "SimpleOptimizer")
-        .def(py::init<std::shared_ptr<dftcu::Grid>, dftcu::OptimizationOptions>(), py::arg("grid"),
+        .def(py::init<dftcu::Grid&, dftcu::OptimizationOptions>(), py::arg("grid"),
              py::arg("options") = dftcu::OptimizationOptions())
         .def("solve", &dftcu::SimpleOptimizer::solve);
 
     py::class_<dftcu::CGOptimizer>(m, "CGOptimizer")
-        .def(py::init<std::shared_ptr<dftcu::Grid>, dftcu::OptimizationOptions>(), py::arg("grid"),
+        .def(py::init<dftcu::Grid&, dftcu::OptimizationOptions>(), py::arg("grid"),
              py::arg("options") = dftcu::OptimizationOptions())
         .def("solve", &dftcu::CGOptimizer::solve);
 
     py::class_<dftcu::TNOptimizer>(m, "TNOptimizer")
-        .def(py::init<std::shared_ptr<dftcu::Grid>, dftcu::OptimizationOptions>(), py::arg("grid"),
+        .def(py::init<dftcu::Grid&, dftcu::OptimizationOptions>(), py::arg("grid"),
              py::arg("options") = dftcu::OptimizationOptions())
         .def("solve", &dftcu::TNOptimizer::solve);
 

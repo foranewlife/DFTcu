@@ -21,33 +21,33 @@ void __global__ hartree_kernel(size_t size, gpufftComplex* rho_g, const double* 
 }
 }  // namespace
 
-Hartree::Hartree(std::shared_ptr<Grid> grid) : grid_(grid) {}
+Hartree::Hartree(Grid& grid) : grid_(grid), rho_g_(grid) {}
 
 void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
-    size_t nnr = grid_->nnr();
-    ComplexField rho_g(grid_);
+    size_t nnr = grid_.nnr();
     FFTSolver solver(grid_);
 
     // 1. Copy Real to Complex
-    real_to_complex(nnr, rho.data(), rho_g.data());
+    real_to_complex(nnr, rho.data(), rho_g_.data());
 
     // 2. Forward FFT: rho(r) -> rho(G)
-    solver.forward(rho_g);
+    solver.forward(rho_g_);
 
     // 3. Multiply by 4*D_PI/G^2 in reciprocal space
     const int block_size = 256;
     const int grid_size = (nnr + block_size - 1) / block_size;
-    hartree_kernel<<<grid_size, block_size>>>(nnr, rho_g.data(), grid_->gg());
-    CHECK(cudaDeviceSynchronize());
+    hartree_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(nnr, rho_g_.data(), grid_.gg());
+    GPU_CHECK_KERNEL;
 
     // 4. Backward FFT: V_h(G) -> V_h(r)
-    solver.backward(rho_g);
+    solver.backward(rho_g_);
 
     // 5. Copy Complex back to Real
-    complex_to_real(nnr, rho_g.data(), vh.data());
+    complex_to_real(nnr, rho_g_.data(), vh.data());
 
     // 6. Hartree energy: E_H = 0.5 * integral( rho(r) * v_h(r) ) dV
-    energy = 0.5 * dot_product(nnr, rho.data(), vh.data()) * grid_->dv();
+    grid_.synchronize();
+    energy = 0.5 * dot_product(nnr, rho.data(), vh.data()) * grid_.dv();
 }
 
 }  // namespace dftcu
