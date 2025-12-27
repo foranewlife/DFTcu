@@ -1,46 +1,37 @@
-#!/usr/bin/env python3
 import dftcu
 import numpy as np
-from dftpy.ewald import ewald as DFTpy_Ewald
+from dftpy.ewald import ewald as EwaldPy
 from dftpy.grid import DirectGrid
 from dftpy.ions import Ions
 
 
-def test_ewald_energy():
-    """Verify Ewald energy against DFTpy for Aluminum bulk"""
-    # 1. Setup System
-    lattice = np.eye(3) * 7.65
+def test_ewald_fcc():
+    """Compare Ewald energy with DFTpy in FCC cell"""
+    a0 = 7.6
     nr = [32, 32, 32]
+    lattice = np.array([[0, a0 / 2, a0 / 2], [a0 / 2, 0, a0 / 2], [a0 / 2, a0 / 2, 0]])
     pos = np.array([[0.0, 0.0, 0.0]])
     ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
     ions.set_charges(3.0)
 
-    dftpy_grid = DirectGrid(lattice, nr=nr, full=True)
+    # 1. DFTpy Calculation
+    grid_py = DirectGrid(lattice, nr=nr, full=True)
+    ew_py = EwaldPy(ions=ions, grid=grid_py, PME=False)
+    energy_py = ew_py.energy
 
-    # 2. DFTpy Ewald
-    ewald_py = DFTpy_Ewald(grid=dftpy_grid, ions=ions)
-    e_ewald_py = ewald_py.energy
-    print(f"\nDFTpy Ewald Energy: {e_ewald_py:.10f} Ha")
-    print(f"   Real:  {ewald_py.Energy_real():.10f}")
-    print(f"   Recip: {ewald_py.Energy_rec():.10f}")
-    print(f"   Corr:  {ewald_py.Energy_corr():.10f}")
-    print(f"   Eta:   {ewald_py.eta:.6f}")
-
-    # 3. DFTcu Ewald
+    # 2. DFTcu Calculation
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
     atoms_cu = dftcu.Atoms([dftcu.Atom(0, 0, 0, 3.0, 0)])
-    ewald_cu = dftcu.Ewald(grid_cu, atoms_cu)
-    ewald_cu.set_eta(1.6)
-    e_ewald_cu = ewald_cu.compute()
-    print(f"DFTcu Ewald Energy: {e_ewald_cu:.10f} Ha")
 
-    # 4. Comparison
-    abs_diff = abs(e_ewald_py - e_ewald_cu)
-    print(f"Absolute Difference: {abs_diff:.2e} Ha")
+    ew_cu = dftcu.Ewald(grid_cu, atoms_cu)
+    # Match eta
+    ew_cu.set_eta(ew_py.eta)
+    energy_cu = ew_cu.compute(False)
 
-    # Check if they match
-    assert abs_diff < 1e-6
+    # 3. Comparison
+    print(f"Ewald Energy Py: {energy_py:.12f}, Cu: {energy_cu:.12f}")
+    assert abs(energy_py - energy_cu) < 1e-12
 
 
 if __name__ == "__main__":
-    test_ewald_energy()
+    test_ewald_fcc()

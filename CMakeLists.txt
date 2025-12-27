@@ -112,6 +112,8 @@ set(DFTCU_CORE_SOURCES
     src/functional/kedf/hc.cu
     src/functional/xc/lda_pz.cu
     src/functional/xc/pbe.cu
+    src/math/linesearch.cu
+    src/math/dcsrch.cu
     src/solver/evaluator.cu
     src/solver/optimizer.cu
     src/utilities/kernels.cu

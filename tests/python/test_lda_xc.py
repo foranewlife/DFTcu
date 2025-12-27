@@ -1,57 +1,53 @@
-#!/usr/bin/env python3
-"""
-Test LDA XC implementation against DFTpy
-"""
 import dftcu
 import numpy as np
-import pytest
-from dftpy.density import DensityGenerator
-from dftpy.functional.xc.semilocal_xc import LDA as DFTpy_LDA
+from dftpy.field import DirectField
+from dftpy.functional import Functional
 from dftpy.grid import DirectGrid
-from dftpy.ions import Ions
 
 
-@pytest.mark.comparison
-def test_lda_xc():
-    """Compare DFTcu LDA implementation with DFTpy"""
-    # Setup
-    lattice = np.eye(3) * 10.0
+def test_lda_fcc():
+    """Compare LDA XC energy and potential with DFTpy in FCC cell"""
+    a0 = 7.6
     nr = [32, 32, 32]
-    dftpy_grid = DirectGrid(lattice, nr=nr, full=True)
+    # FCC primitive
+    lattice = np.array([[0, a0 / 2, a0 / 2], [a0 / 2, 0, a0 / 2], [a0 / 2, a0 / 2, 0]])
 
-    # Create test density from atomic charges
-    pos = np.array([[5.0, 5.0, 5.0]])
-    ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
-    ions.set_charges(3.0)
-    generator = DensityGenerator()
-    rho_dftpy = generator.get_3d_value_recipe(ions, grid=dftpy_grid)
+    # 1. DFTpy Calculation
+    grid_py = DirectGrid(lattice, nr=nr, full=True)
+    rho_py = DirectField(grid=grid_py)
+    X, Y, Z = np.meshgrid(
+        np.linspace(0, 1, nr[0], endpoint=False),
+        np.linspace(0, 1, nr[1], endpoint=False),
+        np.linspace(0, 1, nr[2], endpoint=False),
+        indexing="ij",
+    )
+    rho_py[:] = np.exp(-((X - 0.5) ** 2 + (Y - 0.5) ** 2 + (Z - 0.5) ** 2) / 0.1)
+    rho_py *= 3.0 / rho_py.integral()
 
-    # DFTpy calculation
-    result_dftpy = DFTpy_LDA(rho_dftpy, calcType={"E", "V"})
-    energy_dftpy = result_dftpy.energy
-    potential_dftpy = np.array(result_dftpy.potential)
+    xc_py = Functional(type="XC", name="LDA", grid=grid_py)
+    out_py = xc_py.compute(rho_py)
 
-    # DFTcu calculation
+    # 2. DFTcu Calculation
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
-    rho_cu = dftcu.RealField(grid_cu, 1)
-    rho_cu.copy_from_host(rho_dftpy.flatten(order="C"))
-    v_xc_cu = dftcu.RealField(grid_cu, 1)
+    rho_cu = dftcu.RealField(grid_cu)
+    rho_cu.copy_from_host(rho_py.flatten())
 
     lda_cu = dftcu.LDA_PZ()
-    energy_cu = lda_cu.compute(rho_cu, v_xc_cu)
+    v_cu_obj = dftcu.RealField(grid_cu)
+    e_cu = lda_cu.compute(rho_cu, v_cu_obj)
 
-    potential_cu = np.zeros(grid_cu.nnr())
-    v_xc_cu.copy_to_host(potential_cu)
-    potential_cu = potential_cu.reshape(nr, order="C")
+    v_cu = np.zeros(grid_cu.nnr())
+    v_cu_obj.copy_to_host(v_cu)
+    v_cu = v_cu.reshape(nr)
 
-    # Comparison
-    energy_rel_error = abs(energy_cu - energy_dftpy) / max(abs(energy_dftpy), 1e-10)
-    potential_max_diff = np.abs(potential_cu - potential_dftpy).max()
+    # 3. Comparison
+    print(f"LDA Energy Py: {out_py.energy:.12f}, Cu: {e_cu:.12f}")
+    assert abs(out_py.energy - e_cu) < 1e-12
 
-    # Thresholds
-    assert energy_rel_error < 1e-10
-    assert potential_max_diff < 1e-10
+    diff_v = np.abs(out_py.potential - v_cu)
+    print(f"LDA Potential Max Diff: {diff_v.max():.2e}")
+    assert diff_v.max() < 1e-12
 
 
 if __name__ == "__main__":
-    test_lda_xc()
+    test_lda_fcc()

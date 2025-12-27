@@ -10,9 +10,9 @@ void __global__ compute_g_vectors_kernel(int nr0, int nr1, int nr2, double b00, 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int nnr = nr0 * nr1 * nr2;
     if (i < nnr) {
-        int n2 = i / (nr0 * nr1);
-        int n1 = (i % (nr0 * nr1)) / nr0;
-        int n0 = i % nr0;
+        int n0 = i / (nr1 * nr2);
+        int n1 = (i % (nr1 * nr2)) / nr2;
+        int n2 = i % nr2;
 
         auto get_freq = [](int n, int nr) {
             if (n < (nr + 1) / 2)

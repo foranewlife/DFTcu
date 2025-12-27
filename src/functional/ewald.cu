@@ -22,7 +22,7 @@ __global__ void ewald_recip_kernel(size_t nnr, int nat, const double* gx, const 
         double cur_gz = gz[i];
         double g2 = cur_gx * cur_gx + cur_gy * cur_gy + cur_gz * cur_gz;
 
-        if (g2 < 1e-12)
+        if (g2 < 1e-14)
             return;
 
         double struc_re = 0.0;
@@ -36,13 +36,16 @@ __global__ void ewald_recip_kernel(size_t nnr, int nat, const double* gx, const 
         }
 
         double term = (struc_re * struc_re + struc_im * struc_im) * exp(-g2 / (4.0 * eta)) / g2;
-        atomicAdd(energy_out, term);
+        if (isfinite(term)) {
+            atomicAdd(energy_out, term);
+        }
     }
 }
 
 __global__ void ewald_real_kernel(int nat, const double* pos_x, const double* pos_y,
                                   const double* pos_z, const double* charge, double eta,
-                                  double rmax, double L0, double L1, double L2,
+                                  double rmax, double a00, double a01, double a02, double a10,
+                                  double a11, double a12, double a20, double a21, double a22,
                                   double* energy_out) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < nat) {
@@ -58,17 +61,17 @@ __global__ void ewald_real_kernel(int nat, const double* pos_x, const double* po
             double yj = pos_y[j];
             double zj = pos_z[j];
 
-            for (int nx = -1; nx <= 1; ++nx) {
-                for (int ny = -1; ny <= 1; ++ny) {
-                    for (int nz = -1; nz <= 1; ++nz) {
+            for (int nx = -3; nx <= 3; ++nx) {
+                for (int ny = -3; ny <= 3; ++ny) {
+                    for (int nz = -3; nz <= 3; ++nz) {
                         if (i == j && nx == 0 && ny == 0 && nz == 0)
                             continue;
 
-                        double dx = xi - (xj + nx * L0);
-                        double dy = yi - (yj + ny * L1);
-                        double dz = zi - (zj + nz * L2);
+                        double dx = xi - (xj + nx * a00 + ny * a10 + nz * a20);
+                        double dy = yi - (yj + nx * a01 + ny * a11 + nz * a21);
+                        double dz = zi - (zj + nx * a02 + ny * a12 + nz * a22);
                         double r2 = dx * dx + dy * dy + dz * dz;
-                        if (r2 < rmax * rmax) {
+                        if (r2 < rmax * rmax && r2 > 1e-14) {
                             double r = sqrt(r2);
                             ei += qi * qj * erfc(sqrt(eta) * r) / r;
                         }
@@ -123,10 +126,11 @@ double Ewald::compute_real() {
     const int block_size = 128;
     const int grid_size = (static_cast<int>(atoms_->nat()) + block_size - 1) / block_size;
 
-    ewald_real_kernel<<<grid_size, block_size>>>(static_cast<int>(atoms_->nat()), atoms_->pos_x(),
-                                                 atoms_->pos_y(), atoms_->pos_z(),
-                                                 atoms_->charge_data(), eta_, rmax, lattice[0][0],
-                                                 lattice[1][1], lattice[2][2], energy.data());
+    ewald_real_kernel<<<grid_size, block_size>>>(
+        static_cast<int>(atoms_->nat()), atoms_->pos_x(), atoms_->pos_y(), atoms_->pos_z(),
+        atoms_->charge_data(), eta_, rmax, lattice[0][0], lattice[0][1], lattice[0][2],
+        lattice[1][0], lattice[1][1], lattice[1][2], lattice[2][0], lattice[2][1], lattice[2][2],
+        energy.data());
 
     double h_energy;
     energy.copy_to_host(&h_energy);

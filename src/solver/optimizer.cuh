@@ -40,4 +40,19 @@ class CGOptimizer {
     OptimizationOptions options_;
 };
 
+class TNOptimizer {
+  public:
+    TNOptimizer(std::shared_ptr<Grid> grid, OptimizationOptions options = {});
+    ~TNOptimizer() = default;
+
+    /**
+     * @brief Optimize density using Truncated Newton on sqrt(rho)
+     */
+    void solve(RealField& rho, Evaluator& evaluator);
+
+  private:
+    std::shared_ptr<Grid> grid_;
+    OptimizationOptions options_;
+};
+
 }  // namespace dftcu
