@@ -201,14 +201,14 @@ class GPU_Vector {
     size_t size() const { return size_; }
 
     /**
-     * @brief Returns a const pointer to the device data.
-     */
-    T const* data() const { return data_; }
-
-    /**
      * @brief Returns a pointer to the device data.
      */
-    T* data() { return data_; }
+    __host__ __device__ __forceinline__ T* data() { return data_; }
+
+    /**
+     * @brief Returns a const pointer to the device data.
+     */
+    __host__ __device__ __forceinline__ const T* data() const { return data_; }
 
   private:
     bool allocated_;          /**< True if memory is currently allocated */
