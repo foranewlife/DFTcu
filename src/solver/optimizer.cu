@@ -10,89 +10,75 @@
 
 namespace dftcu {
 
-namespace {
-__global__ void compute_gradient_kernel(size_t n, const double* phi, const double* v_tot, double mu,
-                                        double* g) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
-    if (i < n) {
-        // Gradient of E w.r.t phi is 2 * phi * (V_tot - mu)
-        g[i] = 2.0 * phi[i] * (v_tot[i] - mu);
-    }
-}
-
-__global__ void update_phi_kernel(size_t n, double* phi, const double* g, double step) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
-    if (i < n) {
-        phi[i] -= step * g[i];
-        if (phi[i] < 0.0)
-            phi[i] = 1e-15;  // Maintain positivity
-    }
-}
-}  // namespace
-
 SimpleOptimizer::SimpleOptimizer(Grid& grid, OptimizationOptions options)
     : grid_(grid), options_(options) {}
 
 void SimpleOptimizer::solve(RealField& rho, Evaluator& evaluator) {
     size_t n = grid_.nnr();
+
     RealField phi(grid_);
+
     RealField v_tot(grid_);
+
     RealField g(grid_);
 
-    // 1. Initial phi = sqrt(rho)
     v_sqrt(n, rho.data(), phi.data(), grid_.stream());
+
     double ne = rho.integral();
 
     double prev_energy = 1e10;
 
     std::cout << std::string(60, '-') << std::endl;
-    std::cout << "Starting Simple SCF Optimizer" << std::endl;
+
+    std::cout << "Starting Simple SCF Optimizer (ET)" << std::endl;
+
     std::cout << std::setw(8) << "Iter" << std::setw(20) << "Energy (Ha)" << std::setw(15) << "dE"
+
               << std::endl;
+
     std::cout << std::string(60, '-') << std::endl;
 
-    const int block_size = 256;
-    const int grid_size = (n + block_size - 1) / block_size;
-
     for (int iter = 0; iter < options_.max_iter; ++iter) {
-        // Evaluate energy and potential
         double energy = evaluator.compute(rho, v_tot);
 
-        // Compute chemical potential mu = integral(rho * v_tot) / Ne
         double mu = rho.dot(v_tot) * grid_.dv() / ne;
 
         double de = energy - prev_energy;
+
         std::cout << std::setw(8) << iter << std::fixed << std::setprecision(10) << std::setw(20)
+
                   << energy << std::scientific << std::setw(15) << de << std::endl;
 
         if (std::abs(de) < options_.econv && iter > 0) {
             std::cout << "Converged!" << std::endl;
+
             break;
         }
+
         prev_energy = energy;
 
-        // Compute gradient g = 2 * phi * (v_tot - mu)
-        compute_gradient_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
-            n, phi.data(), v_tot.data(), mu, g.data());
-        GPU_CHECK_KERNEL;
+        g = 2.0 * phi * (v_tot - mu);
 
-        // Update phi = phi - step * g
-        update_phi_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, phi.data(), g.data(),
-                                                                        options_.step_size);
-        GPU_CHECK_KERNEL;
+        phi = phi - options_.step_size * g;
 
-        // Re-normalize phi to maintain Ne: integral(phi^2) = Ne
+        // Note: positivity is not enforced here as in the old kernel. This could be added
+
+        // as a `max(expr, 0.0)` expression if needed.
+
         double current_ne = phi.dot(phi) * grid_.dv();
-        v_scale(n, sqrt(ne / current_ne), phi.data(), phi.data(), grid_.stream());
 
-        // Update rho = phi^2
-        v_mul(n, phi.data(), phi.data(), rho.data(), grid_.stream());
+        phi = phi * sqrt(ne / current_ne);
+
+        rho = phi * phi;
     }
+
     std::cout << std::string(60, '-') << std::endl;
 }
 
 // -----------------------------------------------------------------------------
+
 // CGOptimizer Implementation
+
 // -----------------------------------------------------------------------------
 
 CGOptimizer::CGOptimizer(Grid& grid, OptimizationOptions options)
@@ -100,133 +86,152 @@ CGOptimizer::CGOptimizer(Grid& grid, OptimizationOptions options)
 
 void CGOptimizer::solve(RealField& rho, Evaluator& evaluator) {
     size_t n = grid_.nnr();
+
     RealField phi(grid_);
+
     RealField v_tot(grid_);
+
     RealField g(grid_);
+
     RealField g_prev(grid_);
+
     RealField p(grid_);
+
     RealField dg(grid_);
+
     RealField phi_trial(grid_);
+
     RealField rho_trial(grid_);
+
     RealField v_trial(grid_);
 
-    // Initial phi = sqrt(rho)
     v_sqrt(n, rho.data(), phi.data(), grid_.stream());
+
     double ne = rho.integral();
 
     std::vector<double> energy_history;
 
     std::cout << std::string(60, '-') << std::endl;
-    std::cout << "Starting Conjugate Gradient (HS) Optimizer" << std::endl;
+
+    std::cout << "Starting Conjugate Gradient (HS) Optimizer (ET)" << std::endl;
+
     std::cout << std::setw(8) << "Iter" << std::setw(20) << "Energy (Ha)" << std::setw(15) << "dE"
+
               << std::endl;
+
     std::cout << std::string(60, '-') << std::endl;
 
-    const int block_size = 256;
-    const int grid_size = (n + block_size - 1) / block_size;
-
     for (int iter = 0; iter < options_.max_iter; ++iter) {
-        // 1. Evaluate energy and potential
         double energy = evaluator.compute(rho, v_tot);
+
         energy_history.push_back(energy);
 
-        // 2. Compute chemical potential mu
         double mu = rho.dot(v_tot) * grid_.dv() / ne;
 
         double de = (iter > 0) ? (energy - energy_history[iter - 1]) : energy;
+
         std::cout << std::setw(8) << iter << std::fixed << std::setprecision(10) << std::setw(20)
+
                   << energy << std::scientific << std::setw(15) << de << std::endl;
 
-        // 3. Check Convergence
         if (iter >= options_.ncheck) {
             bool converged = true;
+
             for (int i = 0; i < options_.ncheck; ++i) {
                 if (std::abs(energy_history.back() -
+
                              energy_history[energy_history.size() - 2 - i]) > options_.econv) {
                     converged = false;
+
                     break;
                 }
             }
+
             if (converged) {
                 std::cout << "#### Density Optimization Converged ####" << std::endl;
+
                 break;
             }
         }
 
-        // 4. Compute gradient g_phi = 2 * phi * (v_tot - mu)
-        compute_gradient_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
-            n, phi.data(), v_tot.data(), mu, g.data());
-        GPU_CHECK_KERNEL;
+        g = 2.0 * phi * (v_tot - mu);
 
-        // 4. Update search direction p
         if (iter == 0) {
-            v_scale(n, -1.0, g.data(), p.data(), grid_.stream());  // p = -g
+            p = -1.0 * g;
+
         } else {
-            // Hestenes-Stiefel beta
-            v_sub(n, g.data(), g_prev.data(), dg.data(), grid_.stream());
+            dg = g - g_prev;
+
             double num = g.dot(dg);
+
             double den = p.dot(dg);
+
             double beta = (std::abs(den) > 1e-20) ? num / den : 0.0;
+
             if (beta < 0)
+
                 beta = 0;
 
-            // p = -g + beta * p
-            v_scale(n, -1.0, g.data(), dg.data(), grid_.stream());
-            v_axpy(n, beta, p.data(), dg.data(), grid_.stream());
-            CHECK(cudaMemcpyAsync(p.data(), dg.data(), n * sizeof(double), cudaMemcpyDeviceToDevice,
-                                  grid_.stream()));
+            p = -1.0 * g + beta * p;
         }
 
-        // Orthogonalization
         double p_dot_phi = p.dot(phi) * grid_.dv();
-        v_axpy(n, -p_dot_phi / ne, phi.data(), p.data(), grid_.stream());
+
+        p = p - (p_dot_phi / ne) * phi;
+
         double p_norm = sqrt(p.dot(p) * grid_.dv());
+
         if (p_norm > 1e-15) {
-            v_scale(n, sqrt(ne) / p_norm, p.data(), p.data(), grid_.stream());
+            p = p * (sqrt(ne) / p_norm);
         }
 
-        // 5. Save g for next iteration
-        CHECK(cudaMemcpyAsync(g_prev.data(), g.data(), n * sizeof(double), cudaMemcpyDeviceToDevice,
-                              grid_.stream()));
+        g_prev = g;
 
-        // 6. Quadratic Line Search
         double e0 = energy;
+
         double de0 = g.dot(p) * grid_.dv();
 
         if (de0 > 0) {
-            v_scale(n, -1.0, g.data(), p.data(), grid_.stream());
+            p = -1.0 * g;
+
             double p_dot_phi_sd = p.dot(phi) * grid_.dv();
-            v_axpy(n, -p_dot_phi_sd / ne, phi.data(), p.data(), grid_.stream());
+
+            p = p - (p_dot_phi_sd / ne) * phi;
+
             double p_norm_sd = sqrt(p.dot(p) * grid_.dv());
-            v_scale(n, sqrt(ne) / p_norm_sd, p.data(), p.data(), grid_.stream());
+
+            p = p * (sqrt(ne) / p_norm_sd);
+
             de0 = g.dot(p) * grid_.dv();
         }
 
         double theta_trial = 0.05;
-        v_scale(n, cos(theta_trial), phi.data(), phi_trial.data(), grid_.stream());
-        v_axpy(n, sin(theta_trial), p.data(), phi_trial.data(), grid_.stream());
 
-        v_mul(n, phi_trial.data(), phi_trial.data(), rho_trial.data(), grid_.stream());
+        phi_trial = cos(theta_trial) * phi + sin(theta_trial) * p;
+
+        rho_trial = phi_trial * phi_trial;
+
         double e1 = evaluator.compute(rho_trial, v_trial);
 
         double denom = 2.0 * (e1 - e0 - de0 * theta_trial);
-        double theta_opt = theta_trial;
-        if (std::abs(denom) > 1e-20) {
-            theta_opt = -de0 * theta_trial * theta_trial / denom;
-        }
+
+        double theta_opt = (std::abs(denom) > 1e-20) ? -de0 * theta_trial * theta_trial / denom
+
+                                                     : theta_trial;
 
         if (theta_opt <= 0)
+
             theta_opt = theta_trial * 0.1;
+
         if (theta_opt > 0.5)
+
             theta_opt = 0.5;
 
-        v_scale(n, cos(theta_opt), phi.data(), dg.data(), grid_.stream());
-        v_axpy(n, sin(theta_opt), p.data(), dg.data(), grid_.stream());
-        CHECK(cudaMemcpyAsync(phi.data(), dg.data(), n * sizeof(double), cudaMemcpyDeviceToDevice,
-                              grid_.stream()));
+        phi = cos(theta_opt) * phi + sin(theta_opt) * p;
 
-        v_mul(n, phi.data(), phi.data(), rho.data(), grid_.stream());
+        rho = phi * phi;
     }
+
     std::cout << std::string(60, '-') << std::endl;
 }
 
@@ -239,68 +244,86 @@ TNOptimizer::TNOptimizer(Grid& grid, OptimizationOptions options)
 
 void TNOptimizer::solve(RealField& rho, Evaluator& evaluator) {
     size_t n = grid_.nnr();
+
     RealField phi(grid_);
+
     RealField v_tot(grid_);
+
     RealField g(grid_);
+
     RealField d(grid_);
+
     RealField Hd(grid_);
+
     RealField r(grid_);
+
     RealField p_cg(grid_);
+
     RealField g_offset(grid_);
+
     RealField phi_offset(grid_);
+
     RealField rho_offset(grid_);
+
     RealField v_offset(grid_);
 
     v_sqrt(n, rho.data(), phi.data(), grid_.stream());
+
     double target_ne = rho.integral();
+
     double energy = evaluator.compute(rho, v_tot);
 
     std::cout << std::string(80, '-') << std::endl;
-    std::cout << "Starting Truncated Newton Optimizer" << std::endl;
-    std::cout << std::setw(8) << "Step" << std::setw(24) << "Energy(a.u.)" << std::setw(16) << "dE"
-              << std::setw(8) << "Nd" << std::setw(8) << "Nls" << std::endl;
-    std::cout << std::string(80, '-') << std::endl;
 
-    const int block_size = 256;
-    const int grid_size = (n + block_size - 1) / block_size;
+    std::cout << "Starting Truncated Newton Optimizer (Expression Templates)" << std::endl;
+
+    std::cout << std::setw(8) << "Step" << std::setw(24) << "Energy(a.u.)" << std::setw(16) << "dE"
+
+              << std::setw(8) << "Nd" << std::setw(8) << "Nls" << std::endl;
+
+    std::cout << std::string(80, '-') << std::endl;
 
     for (int iter = 0; iter < options_.max_iter; ++iter) {
         double mu = rho.dot(v_tot) * grid_.dv() / target_ne;
-        compute_gradient_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
-            n, phi.data(), v_tot.data(), mu, g.data());
-        GPU_CHECK_KERNEL;
+
+        g = 2.0 * phi * (v_tot - mu);  // Expression Template
 
         // CG Loop
+
         d.fill(0.0);
-        CHECK(cudaMemcpyAsync(r.data(), g.data(), n * sizeof(double), cudaMemcpyDeviceToDevice,
-                              grid_.stream()));
-        v_scale(n, -1.0, r.data(), p_cg.data(), grid_.stream());
+
+        r = g;
+
+        p_cg = -1.0 * r;
 
         double r_norm_sq = r.dot(r);
+
         double r0_norm_sq = r_norm_sq;
+
         double r_conv = 0.1 * r0_norm_sq;
 
         RealField best_d(grid_);
+
         double min_r_norm_sq = r0_norm_sq;
 
         int nd_steps = 0;
+
         for (int j = 0; j < 50; ++j) {
             nd_steps++;
 
             double p_cg_norm = sqrt(p_cg.dot(p_cg) * grid_.dv());
+
             double current_eps = 1e-7 / std::max(1.0, p_cg_norm);
 
-            v_scale(n, 1.0, phi.data(), phi_offset.data(), grid_.stream());
-            v_axpy(n, current_eps, p_cg.data(), phi_offset.data(), grid_.stream());
+            phi_offset = phi + current_eps * p_cg;
 
-            v_mul(n, phi_offset.data(), phi_offset.data(), rho_offset.data(), grid_.stream());
+            rho_offset = phi_offset * phi_offset;
+
             evaluator.compute(rho_offset, v_offset);
 
-            compute_gradient_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
-                n, phi_offset.data(), v_offset.data(), mu, g_offset.data());
-            GPU_CHECK_KERNEL;
-            v_sub(n, g_offset.data(), g.data(), Hd.data(), grid_.stream());
-            v_scale(n, 1.0 / current_eps, Hd.data(), Hd.data(), grid_.stream());
+            g_offset = 2.0 * phi_offset * (v_offset - mu);
+
+            Hd = (g_offset - g) * (1.0 / current_eps);
 
             double pHp = p_cg.dot(Hd);
 
@@ -310,102 +333,138 @@ void TNOptimizer::solve(RealField& rho, Evaluator& evaluator) {
 
             if (pHp < 0) {
                 if (j == 0)
-                    v_scale(n, r0_norm_sq / (pHp - 1e-12), p_cg.data(), d.data(), grid_.stream());
+
+                    d = (r0_norm_sq / (pHp - 1e-12)) * p_cg;
+
                 break;
             }
 
             double alpha_cg = r_norm_sq / pHp;
-            v_axpy(n, alpha_cg, p_cg.data(), d.data(), grid_.stream());
-            v_axpy(n, alpha_cg, Hd.data(), r.data(), grid_.stream());
+
+            d = d + alpha_cg * p_cg;
+
+            r = r + alpha_cg * Hd;
 
             double r_new_norm_sq = r.dot(r);
+
             if (r_new_norm_sq < min_r_norm_sq) {
                 min_r_norm_sq = r_new_norm_sq;
-                CHECK(cudaMemcpyAsync(best_d.data(), d.data(), n * sizeof(double),
-                                      cudaMemcpyDeviceToDevice, grid_.stream()));
+
+                best_d = d;
             }
+
             if (r_new_norm_sq < r_conv)
+
                 break;
 
             double beta_cg = r_new_norm_sq / r_norm_sq;
-            v_scale(n, beta_cg, p_cg.data(), p_cg.data(), grid_.stream());
-            v_axpy(n, -1.0, r.data(), p_cg.data(), grid_.stream());
+
+            p_cg = -1.0 * r + beta_cg * p_cg;
+
             r_norm_sq = r_new_norm_sq;
         }
 
-        RealField p(grid_);
-        CHECK(cudaMemcpyAsync(p.data(), d.data(), n * sizeof(double), cudaMemcpyDeviceToDevice,
-                              grid_.stream()));
+        p_cg = d;  // Use p_cg as a temporary for the final direction
 
         // Orthogonalization
-        double p_dot_phi = p.dot(phi) * grid_.dv();
-        v_axpy(n, -p_dot_phi / target_ne, phi.data(), p.data(), grid_.stream());
-        double p_norm = sqrt(p.dot(p) * grid_.dv());
+
+        double p_dot_phi = p_cg.dot(phi) * grid_.dv();
+
+        p_cg = p_cg - (p_dot_phi / target_ne) * phi;
+
+        double p_norm = sqrt(p_cg.dot(p_cg) * grid_.dv());
+
         if (p_norm > 1e-15) {
-            v_scale(n, sqrt(target_ne) / p_norm, p.data(), p.data(), grid_.stream());
+            p_cg = (sqrt(target_ne) / p_norm) * p_cg;
         }
 
-        double g_dot_p = g.dot(p) * grid_.dv();
+        double g_dot_p = g.dot(p_cg) * grid_.dv();
+
         if (g_dot_p > 0) {
-            CHECK(cudaMemcpyAsync(p.data(), g.data(), n * sizeof(double), cudaMemcpyDeviceToDevice,
-                                  grid_.stream()));
-            v_scale(n, -1.0, p.data(), p.data(), grid_.stream());
-            p_dot_phi = p.dot(phi) * grid_.dv();
-            v_axpy(n, -p_dot_phi / target_ne, phi.data(), p.data(), grid_.stream());
-            p_norm = sqrt(p.dot(p) * grid_.dv());
+            p_cg = -1.0 * g;
+
+            p_dot_phi = p_cg.dot(phi) * grid_.dv();
+
+            p_cg = p_cg - (p_dot_phi / target_ne) * phi;
+
+            p_norm = sqrt(p_cg.dot(p_cg) * grid_.dv());
+
             if (p_norm > 1e-15)
-                v_scale(n, sqrt(target_ne) / p_norm, p.data(), p.data(), grid_.stream());
-            g_dot_p = g.dot(p) * grid_.dv();
+
+                p_cg = (sqrt(target_ne) / p_norm) * p_cg;
+
+            g_dot_p = g.dot(p_cg) * grid_.dv();
         }
 
         RealField phi_backup(grid_);
-        CHECK(cudaMemcpyAsync(phi_backup.data(), phi.data(), n * sizeof(double),
-                              cudaMemcpyDeviceToDevice, grid_.stream()));
+
+        phi_backup = phi;
 
         int nls_evals = 0;
+
         auto phi_func = [&](double theta) -> double {
             nls_evals++;
+
             RealField phi_t(grid_);
+
             RealField rho_t(grid_);
+
             RealField v_t(grid_);
-            v_scale(n, cos(theta), phi_backup.data(), phi_t.data(), grid_.stream());
-            v_axpy(n, sin(theta), p.data(), phi_t.data(), grid_.stream());
-            v_mul(n, phi_t.data(), phi_t.data(), rho_t.data(), grid_.stream());
+
+            phi_t = cos(theta) * phi_backup + sin(theta) * p_cg;
+
+            rho_t = phi_t * phi_t;
+
             return evaluator.compute(rho_t, v_t);
         };
 
         auto derphi_func = [&](double theta) -> double {
             RealField phi_t(grid_);
+
             RealField rho_t(grid_);
+
             RealField v_t(grid_);
-            RealField v_phi_t(grid_);
+
             RealField p_rot_t(grid_);
-            v_scale(n, cos(theta), phi_backup.data(), phi_t.data(), grid_.stream());
-            v_axpy(n, sin(theta), p.data(), phi_t.data(), grid_.stream());
-            v_mul(n, phi_t.data(), phi_t.data(), rho_t.data(), grid_.stream());
+
+            phi_t = cos(theta) * phi_backup + sin(theta) * p_cg;
+
+            rho_t = phi_t * phi_t;
+
             evaluator.compute(rho_t, v_t);
-            v_scale(n, cos(theta), p.data(), p_rot_t.data(), grid_.stream());
-            v_axpy(n, -sin(theta), phi_backup.data(), p_rot_t.data(), grid_.stream());
-            v_mul(n, v_t.data(), phi_t.data(), v_phi_t.data(), grid_.stream());
+
+            p_rot_t = cos(theta) * p_cg - sin(theta) * phi_backup;
+
+            RealField v_phi_t(grid_);
+
+            v_phi_t = v_t * phi_t;
+
             grid_.synchronize();
+
             return 2.0 * v_phi_t.dot(p_rot_t) * grid_.dv();
         };
 
         double alpha_star, phi_star;
+
         scalar_search_wolfe1(phi_func, derphi_func, energy, 2.0 * g_dot_p, 1e10, 1e-4, 0.2, M_PI,
+
                              0.0, 1e-14, alpha_star, phi_star);
 
-        v_scale(n, cos(alpha_star), phi_backup.data(), phi.data(), grid_.stream());
-        v_axpy(n, sin(alpha_star), p.data(), phi.data(), grid_.stream());
-        v_mul(n, phi.data(), phi.data(), rho.data(), grid_.stream());
+        phi = cos(alpha_star) * phi_backup + sin(alpha_star) * p_cg;
+
+        rho = phi * phi;
 
         double de = phi_star - energy;
+
         std::cout << std::setw(8) << iter << std::fixed << std::setprecision(12) << std::setw(24)
+
                   << energy << std::scientific << std::setprecision(6) << std::setw(16) << de
+
                   << std::setw(8) << nd_steps << std::setw(8) << nls_evals << std::endl;
 
         if (iter > 0 && std::abs(de) < options_.econv) {
             std::cout << "#### Density Optimization Converged ####" << std::endl;
+
             break;
         }
 

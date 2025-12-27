@@ -2,51 +2,101 @@
 #include <memory>
 
 #include "grid.cuh"
-#include "utilities/gpu_macro.cuh"
+#include "math/field_expr.cuh"
 #include "utilities/gpu_vector.cuh"
 #include "utilities/kernels.cuh"
 
 namespace dftcu {
 
-/**
- * @brief Represents a physical field defined on a simulation grid.
- */
-template <typename T>
-class Field {
+// Forward declaration needed by field_expr.cuh
+template <typename E>
+struct Expr;
+
+template <typename E>
+__global__ void assignment_kernel(double* out, const E expr, size_t n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        out[i] = expr[i];
+    }
+}
+
+/** @brief Alias for real-valued scalar fields (standard density, potential) */
+class RealField : public Expr<RealField> {
   public:
-    Field(Grid& grid, int rank = 1) : grid_(grid), rank_(rank), data_(grid.nnr() * rank) {}
+    RealField(Grid& grid, int rank = 1) : grid_(grid), rank_(rank), data_(grid.nnr() * rank) {}
 
-    void fill(T value) { data_.fill(value, grid_.stream()); }
-    void copy_from_host(const T* h_data) { data_.copy_from_host(h_data, grid_.stream()); }
-    void copy_to_host(T* h_data) const { data_.copy_to_host(h_data, grid_.stream()); }
+    // Assignment from an expression template
+    template <typename E>
+    RealField& operator=(const Expr<E>& expr) {
+        const int block_size = 256;
+        const int grid_size = (size() + block_size - 1) / block_size;
+        assignment_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(data(), expr.self(),
+                                                                        size());
+        GPU_CHECK_KERNEL;
+        return *this;
+    }
 
-    T* data() { return data_.data(); }
-    const T* data() const { return data_.data(); }
+    // Explicit copy-assignment operator for RealField = RealField
+    RealField& operator=(const RealField& other) {
+        if (this != &other) {
+            CHECK(cudaMemcpyAsync(data_.data(), other.data_.data(), data_.size() * sizeof(double),
+                                  cudaMemcpyDeviceToDevice, grid_.stream()));
+            GPU_CHECK_KERNEL;
+        }
+        return *this;
+    }
+
+    void fill(double value) { data_.fill(value, grid_.stream()); }
+    void copy_from_host(const double* h_data) { data_.copy_from_host(h_data, grid_.stream()); }
+    void copy_to_host(double* h_data) const { data_.copy_to_host(h_data, grid_.stream()); }
+
+    double* data() { return data_.data(); }
+    const double* data() const { return data_.data(); }
     size_t size() const { return data_.size(); }
     int rank() const { return rank_; }
     Grid& grid() const { return grid_; }
 
-    double dot(const Field<double>& other) const {
+    double dot(const RealField& other) const {
         return dot_product(size(), data(), other.data(), grid_.stream());
     }
 
     double integral() const { return v_sum(size(), data(), grid_.stream()) * grid_.dv(); }
 
+    // Element access for Expression Templates
+    __device__ __forceinline__ double operator[](size_t i) const { return data_.data()[i]; }
+
   private:
     Grid& grid_;
     int rank_;
-    GPU_Vector<T> data_;
+    GPU_Vector<double> data_;
 
-    Field(const Field&) = delete;
-    Field& operator=(const Field&) = delete;
-    Field(Field&&) = delete;
-    Field& operator=(Field&&) = delete;
+    // Prevent move semantics for now to avoid complexity with references
+    RealField(RealField&&) = delete;
+    RealField& operator=(RealField&&) = delete;
 };
 
-/** @brief Alias for real-valued scalar fields (standard density, potential) */
-using RealField = Field<double>;
-
 /** @brief Alias for complex-valued scalar fields (G-space representations) */
-using ComplexField = Field<gpufftComplex>;
+// Note: ComplexField does not yet support Expression Templates
+class ComplexField {
+  public:
+    ComplexField(Grid& grid, int rank = 1) : grid_(grid), rank_(rank), data_(grid.nnr() * rank) {}
+
+    void fill(gpufftComplex value) { data_.fill(value, grid_.stream()); }
+    void copy_from_host(const gpufftComplex* h_data) {
+        data_.copy_from_host(h_data, grid_.stream());
+    }
+    void copy_to_host(gpufftComplex* h_data) const { data_.copy_to_host(h_data, grid_.stream()); }
+
+    gpufftComplex* data() { return data_.data(); }
+    const gpufftComplex* data() const { return data_.data(); }
+    size_t size() const { return data_.size(); }
+    int rank() const { return rank_; }
+    Grid& grid() const { return grid_; }
+
+  private:
+    Grid& grid_;
+    int rank_;
+    GPU_Vector<gpufftComplex> data_;
+};
 
 }  // namespace dftcu
