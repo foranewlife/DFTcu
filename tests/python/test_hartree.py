@@ -3,14 +3,14 @@ import numpy as np
 from dftpy.field import DirectField
 from dftpy.functional import Functional
 from dftpy.grid import DirectGrid
+from test_utils import get_system
 
 
 def test_hartree_fcc():
     """Compare Hartree energy and potential with DFTpy in FCC cell"""
-    a0 = 7.6
     nr = [32, 32, 32]
-    # FCC primitive
-    lattice = np.array([[0, a0 / 2, a0 / 2], [a0 / 2, 0, a0 / 2], [a0 / 2, a0 / 2, 0]])
+    ions = get_system("Al_primitive", a=7.6)
+    lattice = ions.cell.array
 
     # 1. DFTpy Calculation
     grid_py = DirectGrid(lattice, nr=nr, full=True)

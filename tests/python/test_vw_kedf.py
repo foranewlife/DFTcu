@@ -1,23 +1,24 @@
-#!/usr/bin/env python3
 import dftcu
 import numpy as np
+from dftpy.field import DirectField
 from dftpy.functional import Functional
 from dftpy.grid import DirectGrid
+from test_utils import get_system
 
 
 def test_vw_kedf():
     """Verify vW energy against DFTpy for a Gaussian density"""
-    # 1. Setup Grid
-    lattice = np.eye(3) * 10.0
     nr = [32, 32, 32]
+    ions = get_system("Al_single", a=10.0)
+    lattice = ions.cell.array
+
+    # 1. Setup Grid
     dftpy_grid = DirectGrid(lattice, nr=nr, full=True)
 
     # 2. Gaussian density: rho(r) = exp(-r^2)
-    # Use grid.r for coordinates in newer DFTpy
+    # Using grid.r for coordinates
     r2 = np.sum(dftpy_grid.r**2, axis=0)
     rho_data = np.exp(-r2)
-    from dftpy.field import DirectField
-
     rho_dftpy = DirectField(grid=dftpy_grid, data=rho_data)
 
     # 3. DFTpy vW

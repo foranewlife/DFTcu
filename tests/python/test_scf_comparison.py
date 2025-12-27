@@ -1,33 +1,27 @@
-#!/usr/bin/env python3
-import os
 import time
 
 import dftcu
-import numpy as np
 from dftpy.density import DensityGenerator
 from dftpy.ewald import ewald as DFTpy_Ewald
 from dftpy.functional import Functional
 from dftpy.functional import Hartree as DFTpy_Hartree
 from dftpy.grid import DirectGrid
-from dftpy.ions import Ions
 from dftpy.optimization.optimization import Optimization
+from test_utils import get_pp_path, get_system, setup_pseudo, to_dftcu_atoms
 
 
 def test_scf_comparison_dftpy():
     """Compare a full SCF cycle convergence between DFTpy and DFTcu including Local Pseudo"""
     # 1. Setup System
-    a0 = 7.65
-    lattice = np.eye(3) * a0
     nr = [32, 32, 32]
-    pos = np.array([[0.0, 0.0, 0.0]])
-    ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
-    ions.set_charges(3.0)
+    ions = get_system("Al_single", a=7.65)
+    lattice = ions.cell.array
 
     dftpy_grid = DirectGrid(lattice, nr=nr, full=True)
 
     # 2. Setup DFTpy Components
     print("\n1. Running DFTpy SCF...")
-    pp_file = os.path.join("external", "DFTpy", "examples", "DATA", "al.lda.upf")
+    pp_file = get_pp_path("al.lda.upf")
     from dftpy.functional.pseudo import LocalPseudo as DFTpy_LocalPseudo
 
     pseudo_py = DFTpy_LocalPseudo(grid=dftpy_grid, ions=ions, PP_list={"Al": pp_file})
@@ -75,13 +69,12 @@ def test_scf_comparison_dftpy():
     # 3. DFTcu Implementation
     print("\n2. Running DFTcu (CUDA) SCF...")
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
-    atoms_cu = dftcu.Atoms([dftcu.Atom(0, 0, 0, 3.0, 0)])
+    atoms_cu = to_dftcu_atoms(ions)
 
     tf_cu = dftcu.ThomasFermi()
     lda_cu = dftcu.LDA_PZ()
     hartree_cu = dftcu.Hartree(grid_cu)
-    pseudo_cu = dftcu.LocalPseudo(grid_cu, atoms_cu)
-    pseudo_cu.set_vloc(0, pseudo_py.vlines["Al"].flatten(order="C").tolist())
+    pseudo_cu, _ = setup_pseudo(grid_cu, atoms_cu, "al.lda.upf", ions)
     ewald_cu = dftcu.Ewald(grid_cu, atoms_cu)
     ewald_cu.set_eta(ewald_py.eta)
 

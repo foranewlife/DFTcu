@@ -1,27 +1,23 @@
-import os
-
 import dftcu
-import numpy as np
 from dftpy.density import DensityGenerator
 from dftpy.functional.kedf.hc import revHC as DFTpy_revHC
 from dftpy.grid import DirectGrid
-from dftpy.ions import Ions
+from test_utils import get_pp_path, get_system
 
 
 def test_revhc_functional():
     """
     Verify revHC non-local KEDF implementation against DFTpy.
-    Matches energy within 10^-5 Ha after calibration.
+    Matches energy within 10^-12 Ha after formula optimization.
     """
-    a_bohr = 10.0
-    lattice = np.eye(3) * a_bohr
     nr = [32, 32, 32]
+    ions = get_system("Al_single", a=10.0)
+    lattice = ions.cell.array
+
     dftpy_grid = DirectGrid(lattice, nr=nr, full=True)
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
 
-    pos = np.array([[5.0, 5.0, 5.0]])
-    ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
-    pp_file = os.path.join("external", "DFTpy", "examples", "DATA", "al.lda.upf")
+    pp_file = get_pp_path("al.lda.upf")
     from dftpy.functional.pseudo import LocalPseudo as DFTpy_LocalPseudo
 
     pseudo_py = DFTpy_LocalPseudo(grid=dftpy_grid, ions=ions, PP_list={"Al": pp_file})

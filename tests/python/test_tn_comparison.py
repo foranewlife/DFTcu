@@ -1,27 +1,22 @@
-import os
-
 import dftcu
 import numpy as np
 import pytest
 from dftpy.field import DirectField
 from dftpy.functional import Functional, TotalFunctional
 from dftpy.grid import DirectGrid
-from dftpy.ions import Ions
+from test_utils import get_pp_path, get_system, setup_pseudo, to_dftcu_atoms
 
 
 def test_tn_alignment_step10():
     """Verify TN alignment for 10 steps to 10+ digits."""
     # Setup system
-    a0 = 4
-    lattice = np.eye(3) * a0
     nr = [32, 32, 32]
-    pos = np.array([[0.0, 0.0, 0.0]])
-    ions = Ions(symbols=["Al"], positions=pos, cell=lattice)
-    ions.set_charges(3.0)
+    ions = get_system("Al_single", a=4.0)
+    lattice = ions.cell.array
 
     # DFTpy Setup
     grid_py = DirectGrid(lattice, nr=nr, full=True)
-    pp_file = os.path.join("external", "DFTpy", "examples", "DATA", "al.lda.upf")
+    pp_file = get_pp_path("al.lda.upf")
     from dftpy.functional.pseudo import LocalPseudo as DFTpy_LocalPseudo
 
     pseudo_py = DFTpy_LocalPseudo(grid=grid_py, ions=ions, PP_list={"Al": pp_file})
@@ -47,11 +42,8 @@ def test_tn_alignment_step10():
 
     # DFTcu Setup
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
-    atoms_cu = dftcu.Atoms([dftcu.Atom(0.0, 0.0, 0.0, 3.0, 0)])
-    pseudo_cu = dftcu.LocalPseudo(grid_cu, atoms_cu)
-    pseudo_cu.set_vloc_radial(
-        0, pseudo_py.readpp._gp["Al"].tolist(), pseudo_py.readpp._vp["Al"].tolist()
-    )
+    atoms_cu = to_dftcu_atoms(ions)
+    pseudo_cu, _ = setup_pseudo(grid_cu, atoms_cu, "al.lda.upf", ions)
     from dftpy.ewald import ewald as DFTpy_Ewald
 
     ewald_py = DFTpy_Ewald(grid=grid_py, ions=ions)

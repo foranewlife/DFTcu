@@ -3,15 +3,13 @@ TN Optimizer Detailed Debug Script
 详细对比 DFTpy 和 DFTcu 每一步的中间变量
 """
 
-import os
-
 import dftcu
 import numpy as np
 from dftpy.field import DirectField
 from dftpy.functional import Functional, TotalFunctional
 from dftpy.grid import DirectGrid
-from dftpy.ions import Ions
 from dftpy.optimization import Optimization
+from test_utils import get_pp_path, get_system, setup_pseudo, to_dftcu_atoms
 
 
 def analyze_density(rho, grid, label=""):
@@ -63,13 +61,8 @@ def test_tn_step_by_step():
     print(" " * 20 + "TN Optimizer Detailed Debug")
     print("=" * 80)
 
-    # atoms_ase = bulk('Al', 'fcc', a=4.05, cubic=True)
-    from ase.build import bulk
-
-    atoms_ase = bulk("Al", "fcc", a=10, cubic=True)
-    ions = Ions.from_ase(atoms_ase)
-    lattice = ions.cell.array  # Already in Bohr
-    pos = ions.positions  # Already in Bohr
+    ions = get_system("Al_fcc", a=4.05, cubic=True)
+    lattice = ions.cell.array
 
     # Use nr=[32, 32, 32]
     nr = [32, 32, 32]
@@ -83,7 +76,7 @@ def test_tn_step_by_step():
 
     # ==================== DFTpy Setup ====================
     grid_py = DirectGrid(lattice, nr=nr, full=True)
-    pp_file = os.path.join("external", "DFTpy", "examples", "DATA", "al.lda.recpot")
+    pp_file = get_pp_path("al.lda.recpot")
 
     from dftpy.functional.pseudo import LocalPseudo as DFTpy_LocalPseudo
 
@@ -102,25 +95,11 @@ def test_tn_step_by_step():
 
     # ==================== DFTcu Setup ====================
     grid_cu = dftcu.Grid(lattice.flatten().tolist(), nr)
+    atoms_cu = to_dftcu_atoms(ions)
 
-    # Create 4 Al atoms for DFTcu
-    cu_atoms_list = []
-    for i in range(ions.nat):
-        cu_atoms_list.append(dftcu.Atom(pos[i, 0], pos[i, 1], pos[i, 2], 3.0, 0))
-    atoms_cu = dftcu.Atoms(cu_atoms_list)
-
-    pseudo_cu = dftcu.LocalPseudo(grid_cu, atoms_cu)
-    # recpot is 1D in reciprocal space
-    g_radial = pseudo_py.readpp._gp["Al"]
-    v_radial = pseudo_py.readpp._vp["Al"]
-    pseudo_cu.set_vloc_radial(0, g_radial.tolist(), v_radial.tolist())
+    pseudo_cu, _ = setup_pseudo(grid_cu, atoms_cu, "al.lda.recpot", ions)
 
     ewald_cu = dftcu.Ewald(grid_cu, atoms_cu)
-    # DFTpy's ewald might be None for single atom, use default eta
-    # Call get_ewald to ensure it's initialized
-    pseudo_py.get_ewald()
-    if hasattr(pseudo_py, "ewald") and pseudo_py.ewald is not None:
-        ewald_cu.set_eta(pseudo_py.ewald.eta)
 
     evaluator_cu = dftcu.Evaluator(grid_cu)
     # TFvW is TF + vW
