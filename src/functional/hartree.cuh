@@ -6,14 +6,20 @@ namespace dftcu {
 
 class Hartree {
   public:
-    Hartree(std::shared_ptr<Grid> grid);
+    /**
+     * @brief Constructs a Hartree functional.
+     * @param grid Reference to the simulation grid.
+     */
+    Hartree(Grid& grid);
+
+    /** @brief Default destructor. */
     ~Hartree() = default;
 
     /**
-     * @brief Compute Hartree potential and energy.
-     * @param rho Electron density
-     * @param vh Output Hartree potential
-     * @param energy Output Hartree energy
+     * @brief Computes Hartree potential and energy.
+     * @param rho Input real-space density field.
+     * @param vh Output real-space Hartree potential field.
+     * @param energy Output Hartree energy.
      */
     void compute(const RealField& rho, RealField& vh, double& energy);
 
@@ -26,8 +32,11 @@ class Hartree {
         return energy;
     }
 
+    const char* name() const { return "Hartree"; }
+
   private:
-    std::shared_ptr<Grid> grid_;
+    Grid& grid_;         /**< Associated simulation grid reference */
+    ComplexField rho_g_; /**< Persistent buffer for G-space density */
 };
 
 }  // namespace dftcu

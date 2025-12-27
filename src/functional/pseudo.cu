@@ -6,10 +6,16 @@
 namespace dftcu {
 
 namespace {
+
+const int MAX_ATOMS_PSEUDO = 512;
+__constant__ double c_pseudo_atom_x[MAX_ATOMS_PSEUDO];
+__constant__ double c_pseudo_atom_y[MAX_ATOMS_PSEUDO];
+__constant__ double c_pseudo_atom_z[MAX_ATOMS_PSEUDO];
+__constant__ int c_pseudo_atom_type[MAX_ATOMS_PSEUDO];
+
 __global__ void pseudo_rec_kernel(int nnr, const double* gx, const double* gy, const double* gz,
                                   const double* gg, const double* vloc_types, int nat,
-                                  const double* pos_x, const double* pos_y, const double* pos_z,
-                                  const int* types, gpufftComplex* v_g, double g2max) {
+                                  gpufftComplex* v_g, double g2max) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < nnr) {
         if (gg[i] > g2max) {
@@ -26,8 +32,9 @@ __global__ void pseudo_rec_kernel(int nnr, const double* gx, const double* gy, c
         double sum_im = 0.0;
 
         for (int j = 0; j < nat; ++j) {
-            int type = types[j];
-            double phase = (cur_gx * pos_x[j] + cur_gy * pos_y[j] + cur_gz * pos_z[j]);
+            int type = c_pseudo_atom_type[j];
+            double phase = (cur_gx * c_pseudo_atom_x[j] + cur_gy * c_pseudo_atom_y[j] +
+                            cur_gz * c_pseudo_atom_z[j]);
             double s, c;
             sincos(phase, &s, &c);
 
@@ -110,32 +117,34 @@ void solve_spline(const std::vector<double>& x, const std::vector<double>& y,
 }
 }  // namespace
 
-LocalPseudo::LocalPseudo(std::shared_ptr<Grid> grid, std::shared_ptr<Atoms> atoms)
-    : grid_(grid), atoms_(atoms) {}
+LocalPseudo::LocalPseudo(Grid& grid, std::shared_ptr<Atoms> atoms)
+    : grid_(grid), atoms_(atoms), v_g_(grid) {}
 
 void LocalPseudo::set_vloc(int type, const std::vector<double>& vloc_g) {
     if (type >= num_types_) {
         int new_num_types = type + 1;
-        GPU_Vector<double> new_vloc(grid_->nnr() * new_num_types);
+        GPU_Vector<double> new_vloc(grid_.nnr() * new_num_types);
         if (num_types_ > 0) {
-            CHECK(cudaMemcpy(new_vloc.data(), vloc_types_.data(),
-                             grid_->nnr() * num_types_ * sizeof(double), cudaMemcpyDeviceToDevice));
+            CHECK(cudaMemcpyAsync(new_vloc.data(), vloc_types_.data(),
+                                  grid_.nnr() * num_types_ * sizeof(double),
+                                  cudaMemcpyDeviceToDevice, grid_.stream()));
         }
         vloc_types_ = std::move(new_vloc);
         num_types_ = new_num_types;
     }
-    CHECK(cudaMemcpy(vloc_types_.data() + type * grid_->nnr(), vloc_g.data(),
-                     vloc_g.size() * sizeof(double), cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpyAsync(vloc_types_.data() + type * grid_.nnr(), vloc_g.data(),
+                          vloc_g.size() * sizeof(double), cudaMemcpyHostToDevice, grid_.stream()));
 }
 
 void LocalPseudo::set_vloc_radial(int type, const std::vector<double>& q,
                                   const std::vector<double>& v_q) {
     if (type >= num_types_) {
         int new_num_types = type + 1;
-        GPU_Vector<double> new_vloc(grid_->nnr() * new_num_types);
+        GPU_Vector<double> new_vloc(grid_.nnr() * new_num_types);
         if (num_types_ > 0) {
-            CHECK(cudaMemcpy(new_vloc.data(), vloc_types_.data(),
-                             grid_->nnr() * num_types_ * sizeof(double), cudaMemcpyDeviceToDevice));
+            CHECK(cudaMemcpyAsync(new_vloc.data(), vloc_types_.data(),
+                                  grid_.nnr() * num_types_ * sizeof(double),
+                                  cudaMemcpyDeviceToDevice, grid_.stream()));
         }
         vloc_types_ = std::move(new_vloc);
         num_types_ = new_num_types;
@@ -150,53 +159,66 @@ void LocalPseudo::set_vloc_radial(int type, const std::vector<double>& q,
     GPU_Vector<double> d_c(c.size());
     GPU_Vector<double> d_d(d.size());
 
-    d_q.copy_from_host(q.data());
-    d_a.copy_from_host(a.data());
-    d_b.copy_from_host(b.data());
-    d_c.copy_from_host(c.data());
-    d_d.copy_from_host(d.data());
+    d_q.copy_from_host(q.data(), grid_.stream());
+    d_a.copy_from_host(a.data(), grid_.stream());
+    d_b.copy_from_host(b.data(), grid_.stream());
+    d_c.copy_from_host(c.data(), grid_.stream());
+    d_d.copy_from_host(d.data(), grid_.stream());
 
     const int block_size = 256;
-    const int grid_size = (static_cast<int>(grid_->nnr()) + block_size - 1) / block_size;
+    const int grid_size = (static_cast<int>(grid_.nnr()) + block_size - 1) / block_size;
 
-    interpolate_radial_kernel<<<grid_size, block_size>>>(
-        grid_->nnr(), grid_->gg(), static_cast<int>(q.size()), d_q.data(), d_a.data(), d_b.data(),
-        d_c.data(), d_d.data(), vloc_types_.data() + type * grid_->nnr());
+    interpolate_radial_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+        grid_.nnr(), grid_.gg(), static_cast<int>(q.size()), d_q.data(), d_a.data(), d_b.data(),
+        d_c.data(), d_d.data(), vloc_types_.data() + type * grid_.nnr());
 
-    CHECK(cudaDeviceSynchronize());
-    GPU_CHECK_KERNEL
+    GPU_CHECK_KERNEL;
 }
 
 void LocalPseudo::compute(RealField& v) {
-    size_t nnr = grid_->nnr();
-    ComplexField v_g(grid_);
+    size_t nnr = grid_.nnr();
     FFTSolver solver(grid_);
+
+    if (atoms_->nat() > MAX_ATOMS_PSEUDO) {
+        throw std::runtime_error(
+            "Number of atoms exceeds MAX_ATOMS_PSEUDO for constant memory optimization in "
+            "LocalPseudo.");
+    }
+    CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_x, atoms_->h_pos_x().data(),
+                                  atoms_->nat() * sizeof(double), 0, cudaMemcpyHostToDevice,
+                                  grid_.stream()));
+    CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_y, atoms_->h_pos_y().data(),
+                                  atoms_->nat() * sizeof(double), 0, cudaMemcpyHostToDevice,
+                                  grid_.stream()));
+    CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_z, atoms_->h_pos_z().data(),
+                                  atoms_->nat() * sizeof(double), 0, cudaMemcpyHostToDevice,
+                                  grid_.stream()));
+    CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_type, atoms_->h_type().data(),
+                                  atoms_->nat() * sizeof(int), 0, cudaMemcpyHostToDevice,
+                                  grid_.stream()));
 
     const int block_size = 256;
     const int grid_size = (static_cast<int>(nnr) + block_size - 1) / block_size;
 
-    // Use the maximum G2 from the grid instead of the inscribed sphere
-    double g2max = grid_->g2max() + 1e-6;
+    double g2max = grid_.g2max() + 1e-6;
 
-    pseudo_rec_kernel<<<grid_size, block_size>>>(
-        static_cast<int>(nnr), grid_->gx(), grid_->gy(), grid_->gz(), grid_->gg(),
-        vloc_types_.data(), static_cast<int>(atoms_->nat()), atoms_->pos_x(), atoms_->pos_y(),
-        atoms_->pos_z(), atoms_->type(), v_g.data(), g2max);
+    pseudo_rec_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+        static_cast<int>(nnr), grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), vloc_types_.data(),
+        static_cast<int>(atoms_->nat()), v_g_.data(), g2max);
 
-    CHECK(cudaDeviceSynchronize());
-    solver.backward(v_g);
-    complex_to_real(nnr, v_g.data(), v.data());
-    CHECK(cudaDeviceSynchronize());
+    GPU_CHECK_KERNEL;
+    solver.backward(v_g_);
+    complex_to_real(nnr, v_g_.data(), v.data(), grid_.stream());
 }
 
 double LocalPseudo::compute(const RealField& rho, RealField& v_out) {
-    size_t n = grid_->nnr();
+    size_t n = grid_.nnr();
     RealField v_ps(grid_);
     compute(v_ps);
 
-    double energy = rho.dot(v_ps) * grid_->dv();
+    grid_.synchronize();
+    double energy = rho.dot(v_ps) * grid_.dv();
     v_add(n, v_out.data(), v_ps.data(), v_out.data());
     return energy;
 }
-
 }  // namespace dftcu

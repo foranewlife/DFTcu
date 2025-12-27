@@ -134,10 +134,14 @@ class GPU_Vector {
      * @brief Copies data from host memory to device memory.
      * @param h_data Pointer to host memory.
      */
-    void copy_from_host(const T* h_data) {
+    void copy_from_host(const T* h_data, cudaStream_t stream = nullptr) {
         if (size_ == 0)
             return;
-        CHECK(gpuMemcpy(data_, h_data, memory_, gpuMemcpyHostToDevice));
+        if (stream) {
+            CHECK(cudaMemcpyAsync(data_, h_data, memory_, cudaMemcpyHostToDevice, stream));
+        } else {
+            CHECK(cudaMemcpy(data_, h_data, memory_, cudaMemcpyHostToDevice));
+        }
     }
 
     /**
@@ -145,37 +149,47 @@ class GPU_Vector {
      * @param h_data Pointer to host memory.
      * @param size Number of elements to copy.
      */
-    void copy_from_host(const T* h_data, const size_t size) {
+    void copy_from_host(const T* h_data, const size_t size, cudaStream_t stream = nullptr) {
         if (size == 0)
             return;
         const size_t memory = sizeof(T) * size;
-        CHECK(gpuMemcpy(data_, h_data, memory, gpuMemcpyHostToDevice));
+        if (stream) {
+            CHECK(cudaMemcpyAsync(data_, h_data, memory, cudaMemcpyHostToDevice, stream));
+        } else {
+            CHECK(cudaMemcpy(data_, h_data, memory, cudaMemcpyHostToDevice));
+        }
     }
 
     /**
      * @brief Copies data from device memory to host memory.
      * @param h_data Pointer to host memory.
      */
-    void copy_to_host(T* h_data) const {
+    void copy_to_host(T* h_data, cudaStream_t stream = nullptr) const {
         if (size_ == 0)
             return;
-        CHECK(gpuMemcpy(h_data, data_, memory_, gpuMemcpyDeviceToHost));
+        if (stream) {
+            CHECK(cudaMemcpyAsync(h_data, data_, memory_, cudaMemcpyDeviceToHost, stream));
+        } else {
+            CHECK(cudaMemcpy(h_data, data_, memory_, cudaMemcpyDeviceToHost));
+        }
     }
 
     /**
      * @brief Fills the entire vector with a constant value on the GPU.
      * @param value The value to fill with.
      */
-    void fill(const T value) {
+    void fill(const T value, cudaStream_t stream = nullptr) {
         if (size_ == 0)
             return;
         if (memory_type_ == Memory_Type::global) {
-            const int block_size = 128;
+            const int block_size = 256;
             const int grid_size = (size_ + block_size - 1) / block_size;
-            gpu_fill<<<grid_size, block_size>>>(size_, value, data_);
-            GPU_CHECK_KERNEL
+            gpu_fill<<<grid_size, block_size, 0, stream>>>(size_, value, data_);
+            GPU_CHECK_KERNEL;
         } else  // managed (or unified) memory
         {
+            if (stream)
+                CHECK(cudaStreamSynchronize(stream));
             for (int i = 0; i < size_; ++i)
                 data_[i] = value;
         }

@@ -45,16 +45,21 @@ __global__ void wt_potential_kernel(size_t size, const double* rho, const double
 }
 }  // namespace
 
-WangTeter::WangTeter(double coeff, double alpha, double beta)
-    : coeff_(coeff), alpha_(alpha), beta_(beta) {}
+WangTeter::WangTeter(Grid& grid, double coeff, double alpha, double beta)
+    : grid_(grid),
+      coeff_(coeff),
+      alpha_(alpha),
+      beta_(beta),
+      rho_beta_(grid),
+      rho_beta_g_(grid),
+      v_conv_(grid) {}
 
 double WangTeter::compute(const RealField& rho, RealField& v_kedf) {
-    auto grid = rho.grid_ptr();
-    size_t nnr = grid->nnr();
-    FFTSolver solver(grid);
+    size_t nnr = grid_.nnr();
+    FFTSolver solver(grid_);
 
     double total_electrons = rho.integral();
-    double rho0 = total_electrons / grid->volume();
+    double rho0 = total_electrons / grid_.volume();
     if (rho0 < params_.rho0_threshold)
         return 0.0;
 
@@ -63,28 +68,27 @@ double WangTeter::compute(const RealField& rho, RealField& v_kedf) {
     double c_tf = constants::C_TF_BASE;
     double factor = (5.0 / (9.0 * alpha_ * beta_)) * c_tf;
 
-    GPU_Vector<double> rho_beta(nnr);
-    power_rho_kernel<<<(nnr + 255) / 256, 256>>>(nnr, rho.data(), rho_beta.data(), beta_, params_);
-    CHECK(cudaDeviceSynchronize());
+    power_rho_kernel<<<(nnr + 255) / 256, 256, 0, grid_.stream()>>>(
+        nnr, rho.data(), rho_beta_.data(), beta_, params_);
+    GPU_CHECK_KERNEL;
 
-    ComplexField rho_beta_g(grid);
-    real_to_complex(nnr, rho_beta.data(), rho_beta_g.data());
-    solver.forward(rho_beta_g);
+    real_to_complex(nnr, rho_beta_.data(), rho_beta_g_.data());
+    solver.forward(rho_beta_g_);
 
     // Apply Kernel in reciprocal space
-    wt_reciprocal_kernel<<<(nnr + 255) / 256, 256>>>(nnr, rho_beta_g.data(), grid->gg(), tkf,
-                                                     factor);
-    CHECK(cudaDeviceSynchronize());
+    wt_reciprocal_kernel<<<(nnr + 255) / 256, 256, 0, grid_.stream()>>>(nnr, rho_beta_g_.data(),
+                                                                        grid_.gg(), tkf, factor);
+    GPU_CHECK_KERNEL;
 
-    solver.backward(rho_beta_g);
-    GPU_Vector<double> v_conv(nnr);
-    complex_to_real(nnr, rho_beta_g.data(), v_conv.data());
+    solver.backward(rho_beta_g_);
+    complex_to_real(nnr, rho_beta_g_.data(), v_conv_.data());
 
-    wt_potential_kernel<<<(nnr + 255) / 256, 256>>>(nnr, rho.data(), v_conv.data(), v_kedf.data(),
-                                                    alpha_, beta_, coeff_, params_);
-    CHECK(cudaDeviceSynchronize());
+    wt_potential_kernel<<<(nnr + 255) / 256, 256, 0, grid_.stream()>>>(
+        nnr, rho.data(), v_conv_.data(), v_kedf.data(), alpha_, beta_, coeff_, params_);
+    GPU_CHECK_KERNEL;
 
-    double energy = (dot_product(nnr, rho.data(), v_kedf.data()) * grid->dv()) / (2.0 * alpha_);
+    grid_.synchronize();
+    double energy = (dot_product(nnr, rho.data(), v_kedf.data()) * grid_.dv()) / (2.0 * alpha_);
     return energy;
 }
 

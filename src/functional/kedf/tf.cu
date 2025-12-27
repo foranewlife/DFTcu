@@ -52,7 +52,8 @@ ThomasFermi::ThomasFermi(double coeff) : coeff_(coeff) {
 
 double ThomasFermi::compute(const RealField& rho, RealField& v_kedf) {
     const int n = rho.size();
-    const double dV = rho.grid().dv();
+    Grid& grid = rho.grid();
+    const double dV = grid.dv();
 
     const double c_tf = coeff_ * c_tf_;
     const double c_tf_pot = coeff_ * c_tf_pot_;
@@ -61,17 +62,18 @@ double ThomasFermi::compute(const RealField& rho, RealField& v_kedf) {
     const int block_size = 256;
     const int grid_size = (n + block_size - 1) / block_size;
 
-    compute_tf_kernel<<<grid_size, block_size>>>(n, c_tf, c_tf_pot, rho.data(), v_kedf.data(),
-                                                 energy_density.data(), params_);
+    compute_tf_kernel<<<grid_size, block_size, 0, grid.stream()>>>(
+        n, c_tf, c_tf_pot, rho.data(), v_kedf.data(), energy_density.data(), params_);
     GPU_CHECK_KERNEL;
 
     GPU_Vector<double> partial_sums(grid_size);
-    reduce_sum_kernel<<<grid_size, block_size, block_size * sizeof(double)>>>(
+    reduce_sum_kernel<<<grid_size, block_size, block_size * sizeof(double), grid.stream()>>>(
         n, energy_density.data(), partial_sums.data(), block_size);
     GPU_CHECK_KERNEL;
 
     std::vector<double> h_partial_sums(grid_size);
-    partial_sums.copy_to_host(h_partial_sums.data());
+    partial_sums.copy_to_host(h_partial_sums.data(), grid.stream());
+    grid.synchronize();
 
     double total_energy_density = 0.0;
     for (int i = 0; i < grid_size; ++i) {

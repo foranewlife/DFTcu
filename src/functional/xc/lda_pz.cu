@@ -70,25 +70,28 @@ __global__ void reduce_sum_kernel(const int n, const double* data, double* parti
 
 double LDA_PZ::compute(const RealField& rho, RealField& v_xc) {
     int n = rho.size();
-    double dv = rho.grid().dv();
+    Grid& grid = rho.grid();
+    double dv = grid.dv();
 
     GPU_Vector<double> energy_density(n);
 
     const int block_size = 256;
     const int grid_size = (n + block_size - 1) / block_size;
 
-    lda_pz_kernel<<<grid_size, block_size>>>(n, rho.data(), v_xc.data(), energy_density.data(),
-                                             params_);
-    GPU_CHECK_KERNEL
+    lda_pz_kernel<<<grid_size, block_size, 0, grid.stream()>>>(n, rho.data(), v_xc.data(),
+                                                               energy_density.data(), params_);
+    GPU_CHECK_KERNEL;
 
     // Reduce energy density
     GPU_Vector<double> partial_sums(grid_size);
-    reduce_sum_kernel<<<grid_size, block_size, block_size * sizeof(double)>>>(
+    reduce_sum_kernel<<<grid_size, block_size, block_size * sizeof(double), grid.stream()>>>(
         n, energy_density.data(), partial_sums.data(), block_size);
-    GPU_CHECK_KERNEL
+    GPU_CHECK_KERNEL;
 
     std::vector<double> h_partial_sums(grid_size);
-    partial_sums.copy_to_host(h_partial_sums.data());
+    partial_sums.copy_to_host(h_partial_sums.data(), grid.stream());
+    grid.synchronize();
+
     double total_energy = 0.0;
     for (double s : h_partial_sums)
         total_energy += s;

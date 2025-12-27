@@ -15,7 +15,7 @@ namespace dftcu {
  */
 class revHC : public KEDF_Base {
   public:
-    revHC(std::shared_ptr<Grid> grid, double alpha = 2.0, double beta = 2.0 / 3.0);
+    revHC(Grid& grid, double alpha = 2.0, double beta = 2.0 / 3.0);
     virtual ~revHC() = default;
 
     /**
@@ -39,8 +39,8 @@ class revHC : public KEDF_Base {
     void set_parameters(const Parameters& params) { params_ = params; }
 
   private:
-    std::shared_ptr<Grid> grid_;
-    std::unique_ptr<FFTSolver> fft_;
+    Grid& grid_;
+    FFTSolver fft_;
     double alpha_;
     double beta_;
 
@@ -51,6 +51,11 @@ class revHC : public KEDF_Base {
     GPU_Vector<double> d_k2_;
     GPU_Vector<double> d_d_;
     GPU_Vector<double> d_d2_;
+
+    // Persistent buffers
+    RealField rho_alpha_beta_;
+    ComplexField rho_g_;
+    ComplexField conv_out_g_;
 };
 
 }  // namespace dftcu
