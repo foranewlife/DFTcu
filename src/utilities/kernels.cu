@@ -1,3 +1,4 @@
+#include "cublas_manager.cuh"
 #include "error.cuh"
 #include "kernels.cuh"
 
@@ -16,13 +17,6 @@ void __global__ complex_to_real_kernel(size_t size, const gpufftComplex* complex
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < size) {
         real[i] = complex[i].x;
-    }
-}
-
-void __global__ dot_kernel(size_t size, const double* a, const double* b, double* result) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
-    if (i < size) {
-        atomicAdd(result, a[i] * b[i]);
     }
 }
 
@@ -48,11 +42,7 @@ __global__ void v_mul_kernel(size_t n, const double* a, const double* b, double*
     if (i < n)
         out[i] = a[i] * b[i];
 }
-__global__ void v_axpy_kernel(size_t n, double alpha, const double* x, double* y) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
-    if (i < n)
-        y[i] += alpha * x[i];
-}
+
 __global__ void v_scale_kernel(size_t n, double alpha, const double* x, double* out) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < n)
@@ -80,20 +70,18 @@ void complex_to_real(size_t size, const gpufftComplex* complex, double* real, cu
 }
 
 double dot_product(size_t size, const double* a, const double* b, cudaStream_t stream) {
-    double* d_result;
-    CHECK(cudaMallocAsync(&d_result, sizeof(double), stream));
-    CHECK(cudaMemsetAsync(d_result, 0, sizeof(double), stream));
+    cublasHandle_t handle = CublasManager::instance().handle();
+    CUBLAS_SAFE_CALL(cublasSetStream(handle, stream));
 
-    const int block_size = 256;
-    const int grid_size = (size + block_size - 1) / block_size;
-    dot_kernel<<<grid_size, block_size, 0, stream>>>(size, a, b, d_result);
-    GPU_CHECK_KERNEL;
+    double dot_result;
+    // Use RAII guard to safely set pointer mode to host and ensure it's reset
+    CublasPointerModeGuard mode_guard(handle, CUBLAS_POINTER_MODE_HOST);
+    CUBLAS_SAFE_CALL(cublasDdot(handle, size, a, 1, b, 1, &dot_result));
 
-    double h_result;
-    CHECK(cudaMemcpyAsync(&h_result, d_result, sizeof(double), cudaMemcpyDeviceToHost, stream));
+    // Synchronize to ensure the host-side result is ready
     CHECK(cudaStreamSynchronize(stream));
-    CHECK(cudaFreeAsync(d_result, stream));
-    return h_result;
+
+    return dot_result;
 }
 
 void v_add(size_t n, const double* a, const double* b, double* out, cudaStream_t stream) {
@@ -115,10 +103,11 @@ void v_mul(size_t n, const double* a, const double* b, double* out, cudaStream_t
     GPU_CHECK_KERNEL;
 }
 void v_axpy(size_t n, double alpha, const double* x, double* y, cudaStream_t stream) {
-    const int block_size = 256;
-    const int grid_size = (n + block_size - 1) / block_size;
-    v_axpy_kernel<<<grid_size, block_size, 0, stream>>>(n, alpha, x, y);
-    GPU_CHECK_KERNEL;
+    cublasHandle_t handle = CublasManager::instance().handle();
+    CUBLAS_SAFE_CALL(cublasSetStream(handle, stream));
+    // Set pointer mode to host for the alpha scalar
+    CublasPointerModeGuard mode_guard(handle, CUBLAS_POINTER_MODE_HOST);
+    CUBLAS_SAFE_CALL(cublasDaxpy(handle, n, &alpha, x, 1, y, 1));
 }
 void v_scale(size_t n, double alpha, const double* x, double* out, cudaStream_t stream) {
     const int block_size = 256;

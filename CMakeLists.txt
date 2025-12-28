@@ -133,6 +133,9 @@ target_link_libraries(dftcu_core
     PUBLIC
         CUDA::cufft
         CUDA::cudart
+        CUDA::nvrtc
+        CUDA::cuda_driver
+        CUDA::cublas
 )
 
 target_compile_options(dftcu_core
