@@ -82,19 +82,20 @@ if(BUILD_WITH_CUDA)
     set(CMAKE_CUDA_STANDARD_REQUIRED OFF)
 
     find_package(CUDAToolkit REQUIRED)
+
+    # Python for pybind11
+    find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} -m pybind11 --cmakedir
+        OUTPUT_VARIABLE pybind11_DIR
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    find_package(pybind11 REQUIRED)
 else()
+    # Still need basic Python3 for Doxygen or other scripts if necessary
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
     message(STATUS "CUDA build disabled. Skipping CUDA-related targets and tests.")
 endif()
-
-
-# Python for pybind11
-find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
-execute_process(
-    COMMAND ${Python3_EXECUTABLE} -m pybind11 --cmakedir
-    OUTPUT_VARIABLE pybind11_DIR
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-find_package(pybind11 REQUIRED)
 
 
 if(BUILD_WITH_CUDA)
