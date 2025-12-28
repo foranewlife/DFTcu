@@ -1,7 +1,6 @@
-/**
- * \page blog_convergence 算法收敛性分析报告
- */
-# TN 优化器收敛能量差异深度分析报告
+# Technical Note: Convergence Analysis of Optimizers {#blog_convergence}
+
+**TN-ID**: TN_CONVERGENCE_ANALYSIS
 
 ## 📊 问题陈述
 

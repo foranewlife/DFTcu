@@ -1,7 +1,4 @@
-/**
- * \page blog_ls_refactor 线搜索算法重构 (英文)
- */
-# Technical Note: Line Search Algorithm Refactor
+# Technical Note: Line Search Algorithm Refactor {#blog_ls_refactor}
 
 **日期**: 2025-12-27
 **目标**: 将line search从TNOptimizer解耦，实现scipy兼容的独立模块
