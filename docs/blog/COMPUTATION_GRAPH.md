@@ -1,3 +1,6 @@
+/**
+ * \page blog_comp_graph 基于表达式模板的计算图设计
+ */
 # Technical Note: Computation Graph via Expression Templates
 
 **TN-ID**: TN_COMPUTATION_GRAPH
