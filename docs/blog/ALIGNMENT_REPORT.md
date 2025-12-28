@@ -1,3 +1,7 @@
+/**
+ * \page blog_alignment DFTpy 精度对标报告
+ */
+# Technical Note: Alignment with DFTpy Reference
 # DFTcu Truncated Newton (TN) 优化器对齐及验收报告
 
 ## 1. 任务背景

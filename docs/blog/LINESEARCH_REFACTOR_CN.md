@@ -1,4 +1,7 @@
-# TN优化器Line Search重构 - 快速参考
+/**
+ * \page blog_ls_refactor_cn 线搜索算法重构 (中文)
+ */
+# 技术笔记：线搜索算法重构 (Line Search Refactor)
 
 ## 工作总结
 

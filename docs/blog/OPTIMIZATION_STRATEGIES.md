@@ -1,3 +1,6 @@
+/**
+ * \page blog_opt_strategies 优化策略 (cuBLAS 和表达式模板)
+ */
 # Technical Note: Optimization Strategies (cuBLAS & Expression Templates)
 
 **TN-ID**: TN_OPTIMIZATION_STRATEGIES
