@@ -102,6 +102,7 @@ if(BUILD_WITH_CUDA)
     # Core library sources
     set(DFTCU_CORE_SOURCES
         src/model/grid.cu
+        src/model/wavefunction.cu
         src/functional/hartree.cu
         src/functional/ewald.cu
         src/functional/pseudo.cu
@@ -135,6 +136,7 @@ if(BUILD_WITH_CUDA)
             CUDA::nvrtc
             CUDA::cuda_driver
             CUDA::cublas
+            CUDA::curand
     )
 
     target_compile_options(dftcu_core

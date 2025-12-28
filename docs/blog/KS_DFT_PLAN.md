@@ -1,68 +1,83 @@
-# 技术规划：在 DFTcu 中实现平面波 KS-DFT {#blog_ks_dft_plan}
+# 技术规划：对标 VASP 实现平面波 KS-DFT {#blog_ks_dft_plan}
 
 **日期**: 2025-12-28
-**状态**: 规划中
-**目标**: 扩展 DFTcu 架构以支持基于轨道的 Kohn-Sham DFT 计算
+**状态**: 规划中 (对标 VASP 架构)
+**目标**: 在 DFTcu 中实现高性能平面波 Kohn-Sham DFT，核心算法与数据结构对标 VASP 6.x 及其 GPU 加速版本。
 
 ---
 
 ## 1. 引言
 
-目前 DFTcu 已实现了高效的无轨道 DFT (OF-DFT) 框架。为了提升计算精度并支持更广泛的化学体系，我们需要引入基于轨道的 Kohn-Sham DFT。KS-DFT 的核心挑战在于处理单粒子波函数（轨道）以及求解哈密顿量的本征值问题。
+VASP (Vienna Ab initio Simulation Package) 是平面波 DFT 计算的工业标准。其 GPU 版本利用了高效的线性代数库和自定义 Kernel。DFTcu 将在现有 C++/CUDA 架构基础上，参考 VASP 的核心算法逻辑，实现高性能的 KS-DFT 求解器。
 
-## 2. 核心组件开发计划
+## 2. 核心模块对标说明
 
-实现平面波 KS-DFT 需要在现有架构上新增以下核心模块：
+我们将 DFTcu 的开发任务与 VASP 的核心源文件进行功能对标，以确保算法的严谨性与效率。
 
-### 2.1 波函数与占据数管理 (Wavefunctions)
-*   **数据结构**: 需要支持 `ComplexField` 的集合，用于存储 $\psi_{n,k}$（n 为带索引，k 为 k 点）。
-*   **正交化**: 实现并行化的 Gram-Schmidt 或 Lowdin 正交化算法。
-*   **占据数**: 实现费米-狄拉克分布（Fermi-Dirac distribution）以处理金属体系。
+### 2.1 波函数与基组 (Basis & Wavefunctions)
+*   **VASP 对标**: `wave.F`, `wave_struct.F`
+*   **DFTcu 实现**:
+    *   `Wavefunction` 类：存储系数 $C_{n,k}(G)$。
+    *   **平面波截断**: 实现 `ENCUT` 控制的倒空间球形截断。
+    *   **K 点并行**: 初始版本支持单 K 点（Gamma-only 优化），后续扩展至多 K 点。
 
-### 2.2 哈密顿量算符 ($\\hat{H}\\psi$)
-需要实现高效的算符作用逻辑：
-*   **动能算符 ($\\hat{T}$)**: 在倒空间利用 $G^2$ 进行对角操作。
-*   **局域势算符 ($\\hat{V}_{loc}$)**: 在实空间利用表达式模板进行高效相乘。
-*   **非局域赝势 ($\\hat{V}_{nl}$)**: 实现 Kleinman-Bylander 形式，这是平面波 KS-DFT 的性能关键。
+### 2.2 哈密顿量作用 ($\\hat{H}\\psi$)
+*   **VASP 对标**: `hamil.F`, `nonl.F` (倒空间), `nonlr.F` (实空间)
+*   **DFTcu 实现**:
+    *   **动能项**: 倒空间对角操作。
+    *   **局域势**: 实空间相乘。利用 DFTcu 现有的表达式模板加速 $\\hat{V}_{loc} \\psi$。
+    *   **非局域势 (Non-local)**: 实现 Kleinman-Bylander 形式。
+        *   对标 VASP 的 `LREAL = .FALSE.` (倒空间投影)。
+        *   关键计算：$\\sum_{lm} \\langle \\psi_n | \\beta_{lm} \\rangle \\langle \\beta_{lm} | \\psi_n \\rangle$。
+        *   **优化**: 使用 cuBLAS 的 `cublasZgemm` 处理投影系数矩阵。
 
-### 2.3 本征值求解器 (Eigensolver)
-由于平面波基组规模巨大，不能直接对角化。需要迭代法求解：
-*   **LOBPCG**: 现代且高度并行化的预条件共轭梯度法。
-*   **Davidson**: 经典的子空间迭代法。
-*   **预条件器**: 实现基于动能的 Teter-Payne-Allan 预条件器。
+### 2.3 电子子问题求解器 (Electronic Minimization)
+*   **VASP 对标**: `davidson.F` (ALGO=Normal), `rmm-diis.F` (ALGO=VeryFast)
+*   **DFTcu 实现**:
+    *   **阻尼迭代/Davidson**: 用于初始步骤的快速收敛。
+    *   **RMM-DIIS (Residual Minimization Method)**: 生产计算中的核心算法。
+        *   通过最小化残差 $R = (\\hat{H} - \\epsilon) \\psi$ 来更新波函数。
+        *   **GPU 优化**: 实现 Blocked RMM-DIIS，最大化矩阵乘法比例。
 
-### 2.4 电荷密度混合 (Density Mixing)
-*   复用并优化现有的 **Pulay Mixing (DIIS)** 算法，确保 SCF 循环的高效收敛。
-
----
-
-## 3. 分阶段实施路线图
-
-### 第一阶段：基础设施 (Infrastructure)
-1.  定义 `Wavefunction` 类，支持多带（Multi-band）操作。
-2.  扩展 `Evaluator` 以处理轨道相关的能量项。
-3.  实现简单的实空间非局域算符接口。
-
-### 第二阶段：哈密顿量与本征值 (Hamiltonian & Solver)
-1.  实现 `Hamiltonian::apply(const Wavefunction& psi)` 方法。
-2.  集成 cuBLAS/cuSOLVER 以加速子空间对角化。
-3.  实现 LOBPCG 求解器的初始版本。
-
-### 第三阶段：集成与验证 (Integration & Validation)
-1.  完成完整的 SCF 循环逻辑。
-2.  针对标准体系（如 Si, Al）进行精度对标（vs DFTpy/VASP）。
-3.  性能调优：利用 Nsight Systems 分析 $\\hat{H}\\psi$ 的瓶颈。
+### 2.4 电荷密度构建与混合 (Charge Density & Mixing)
+*   **VASP 对标**: `charge.F`, `mix.F`
+*   **DFTcu 实现**:
+    *   **Density Construction**: $\\rho(r) = \\sum_n f_n |\\psi_n(r)|^2$。
+    *   **Mixing**: 对标 VASP 的 `IMIX = 4` (Pulay 混合)。
+    *   **优化**: 利用现有的表达式模板实现高效的密度空间运算。
 
 ---
 
-## 4. 技术决策：混合优化
+## 3. 开发阶段规划 (对标 VASP 工作流)
 
-我们将继续贯彻 **cuBLAS + 表达式模板** 的混合策略：
-*   **表达式模板**: 用于实空间的势场相加和电荷密度构建（$\rho = \sum |\psi|^2$）。
-*   **cuBLAS**: 用于波函数之间的正交化（大矩阵乘法）和子空间投影。
+### 第一阶段：单电子算子与基础结构
+1.  **数据容器**: 完成 `Wavefunction` 类，支持 `CPU <-> GPU` 零拷贝同步。
+2.  **赝势读取**: 扩展 `LocalPseudo` 模块以支持 VASP 风格的 `POTCAR`（读取 PAW 数据中的局域部分和非局域投影器参数）。
+3.  **FFT 映射**: 对标 VASP 的 `PREC` 参数，建立精确的 FFT 网格映射逻辑。
+
+### 第二阶段：本征值求解与哈密顿量
+1.  **$\\hat{H}\\psi$ 核心实现**: 集成非局域投影器计算。
+2.  **Davidson 求解器**: 实现基础的对角化功能，确保能得到正确的能级。
+3.  **子空间对角化**: 集成 cuSOLVER 处理子空间哈密顿矩阵 $H_{nm} = \\langle \\psi_n | \\hat{H} | \\psi_m \\rangle$。
+
+### 第三阶段：全自洽场 (SCF) 循环
+1.  **费米能级计算**: 实现高效的四面体法或 Smearing 算法。
+2.  **混合器集成**: 将 Pulay 混合器应用于电荷密度。
+3.  **收敛判据**: 对标 VASP 的 `EDIFF` 参数。
+
+---
+
+## 4. 关键算法挑战：非局域算符优化
+
+在 GPU 上，非局域势的投影是最大的计算瓶颈。
+*   **VASP 经验**: 通过将多个波函数和投影器打包成大矩阵，将计算转化为 `GEMM`。
+*   **DFTcu 策略**:
+    1.  将投影器 $\\beta_i$ 预存储在 GPU。
+    2.  利用 `cublasDgemm` 计算所有带的投影系数 $\\langle \\beta_i | \\psi_n \\rangle$。
+    3.  利用自定义 Kernel 或表达式模板完成最后的重构。
 
 ---
 
 ## 5. 结论
 
-通过引入 KS-DFT，DFTcu 将从一个专门的无轨道计算工具演变为一个通用的平面波 DFT 平台。这将充分利用我们已经建立的高效网格操作、FFT 求解器以及 cuBLAS 集成优势。
+通过深度对标 VASP 的架构与算法，DFTcu 将具备处理复杂体系的 KS-DFT 计算能力。我们将继承 VASP 在算法稳定性上的优势，并利用现代 C++ 和 CUDA 提供的更高效内存管理与计算融合技术进行超越。

@@ -12,6 +12,7 @@
 #include "model/atoms.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
+#include "model/wavefunction.cuh"
 #include "solver/evaluator.cuh"
 #include "solver/optimizer.cuh"
 #include "solver/tn_optimizer_legacy.cuh"
@@ -107,6 +108,16 @@ PYBIND11_MODULE(dftcu, m) {
                  self.copy_to_host((gpufftComplex*)buf.ptr);
              })
         .def("size", &dftcu::ComplexField::size);
+
+    py::class_<dftcu::Wavefunction>(m, "Wavefunction")
+        .def(py::init<dftcu::Grid&, int, double>(), py::arg("grid"), py::arg("num_bands"),
+             py::arg("encut"))
+        .def("num_bands", &dftcu::Wavefunction::num_bands)
+        .def("num_pw", &dftcu::Wavefunction::num_pw)
+        .def("encut", &dftcu::Wavefunction::encut)
+        .def("randomize", &dftcu::Wavefunction::randomize, py::arg("seed") = 42)
+        .def("compute_density", &dftcu::Wavefunction::compute_density, py::arg("occupations"),
+             py::arg("rho"));
 
     py::class_<dftcu::FFTSolver>(m, "FFTSolver")
         .def(py::init<dftcu::Grid&>())
