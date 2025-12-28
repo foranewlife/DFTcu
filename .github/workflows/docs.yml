@@ -23,17 +23,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y doxygen graphviz
 
-      - name: Generate Doxyfile
-        run: |
-          sed -e "s|@PROJECT_VERSION@|0.1.0|g" \
-              -e "s|@CMAKE_CURRENT_BINARY_DIR@|build|g" \
-              -e "s|@CMAKE_SOURCE_DIR@|.|g" \
-              docs/Doxyfile.in > docs/Doxyfile
+      - name: Configure CMake (no CUDA)
+        run: cmake -B build -DBUILD_WITH_CUDA=OFF
 
       - name: Build Documentation
-        run: |
-          mkdir -p build
-          doxygen docs/Doxyfile
+        run: cmake --build build --target doc
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
