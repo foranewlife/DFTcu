@@ -45,21 +45,27 @@ __global__ void wt_potential_kernel(size_t size, const double* rho, const double
 }
 }  // namespace
 
-WangTeter::WangTeter(Grid& grid, double coeff, double alpha, double beta)
-    : grid_(grid),
-      coeff_(coeff),
-      alpha_(alpha),
-      beta_(beta),
-      rho_beta_(grid),
-      rho_beta_g_(grid),
-      v_conv_(grid) {}
+WangTeter::WangTeter(double coeff, double alpha, double beta)
+    : coeff_(coeff), alpha_(alpha), beta_(beta) {}
+
+void WangTeter::initialize_buffers(Grid& grid) {
+    if (grid_ == &grid)
+        return;
+
+    grid_ = &grid;
+    rho_beta_ = std::make_unique<RealField>(grid);
+    rho_beta_g_ = std::make_unique<ComplexField>(grid);
+    v_conv_ = std::make_unique<RealField>(grid);
+}
 
 double WangTeter::compute(const RealField& rho, RealField& v_kedf) {
-    size_t nnr = grid_.nnr();
-    FFTSolver solver(grid_);
+    Grid& grid = rho.grid();
+    initialize_buffers(grid);
+    size_t nnr = grid.nnr();
+    FFTSolver solver(grid);
 
     double total_electrons = rho.integral();
-    double rho0 = total_electrons / grid_.volume();
+    double rho0 = total_electrons / grid.volume();
     if (rho0 < params_.rho0_threshold)
         return 0.0;
 
@@ -68,27 +74,27 @@ double WangTeter::compute(const RealField& rho, RealField& v_kedf) {
     double c_tf = constants::C_TF_BASE;
     double factor = (5.0 / (9.0 * alpha_ * beta_)) * c_tf;
 
-    power_rho_kernel<<<(nnr + 255) / 256, 256, 0, grid_.stream()>>>(
-        nnr, rho.data(), rho_beta_.data(), beta_, params_);
+    power_rho_kernel<<<(nnr + 255) / 256, 256, 0, grid.stream()>>>(
+        nnr, rho.data(), rho_beta_->data(), beta_, params_);
     GPU_CHECK_KERNEL;
 
-    real_to_complex(nnr, rho_beta_.data(), rho_beta_g_.data());
-    solver.forward(rho_beta_g_);
+    real_to_complex(nnr, rho_beta_->data(), rho_beta_g_->data());
+    solver.forward(*rho_beta_g_);
 
     // Apply Kernel in reciprocal space
-    wt_reciprocal_kernel<<<(nnr + 255) / 256, 256, 0, grid_.stream()>>>(nnr, rho_beta_g_.data(),
-                                                                        grid_.gg(), tkf, factor);
+    wt_reciprocal_kernel<<<(nnr + 255) / 256, 256, 0, grid.stream()>>>(nnr, rho_beta_g_->data(),
+                                                                       grid.gg(), tkf, factor);
     GPU_CHECK_KERNEL;
 
-    solver.backward(rho_beta_g_);
-    complex_to_real(nnr, rho_beta_g_.data(), v_conv_.data());
+    solver.backward(*rho_beta_g_);
+    complex_to_real(nnr, rho_beta_g_->data(), v_conv_->data());
 
-    wt_potential_kernel<<<(nnr + 255) / 256, 256, 0, grid_.stream()>>>(
-        nnr, rho.data(), v_conv_.data(), v_kedf.data(), alpha_, beta_, coeff_, params_);
+    wt_potential_kernel<<<(nnr + 255) / 256, 256, 0, grid.stream()>>>(
+        nnr, rho.data(), v_conv_->data(), v_kedf.data(), alpha_, beta_, coeff_, params_);
     GPU_CHECK_KERNEL;
 
-    grid_.synchronize();
-    double energy = (dot_product(nnr, rho.data(), v_kedf.data()) * grid_.dv()) / (2.0 * alpha_);
+    grid.synchronize();
+    double energy = (dot_product(nnr, rho.data(), v_kedf.data()) * grid.dv()) / (2.0 * alpha_);
     return energy;
 }
 

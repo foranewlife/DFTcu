@@ -29,7 +29,7 @@ def test_wt_kedf():
     rho_cu = dftcu.RealField(grid_cu, 1)
     rho_cu.copy_from_host(rho_data.flatten(order="C"))
 
-    wt_cu = dftcu.WangTeter(coeff=1.0)
+    wt_cu = dftcu.WangTeter()
     v_wt_cu = dftcu.RealField(grid_cu, 1)
     e_wt_cu = wt_cu.compute(rho_cu, v_wt_cu)
 

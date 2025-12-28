@@ -69,15 +69,15 @@ install: ## Install to venv using uv (compiles with CUDACXX)
 	@CUDACXX=$(CUDACXX) $(UV) pip install .
 
 .PHONY: install-dev
-install-dev: ## Install in editable mode for incremental builds (RECOMMENDED for development)
-	@echo "$(YELLOW)Installing in editable mode with $(CUDACXX) for incremental builds...$(NC)"
-	@CUDACXX=$(CUDACXX) $(UV) pip install -e .
-	@echo "$(GREEN)✓ Editable install complete - changes to .cu files will trigger incremental rebuilds$(NC)"
+install-dev: ## Install in editable mode (No Isolation + Dev Deps) - RECOMMENDED
+	@echo "$(YELLOW)Installing in editable mode (no-build-isolation) with $(CUDACXX)...$(NC)"
+	@CUDACXX=$(CUDACXX) $(UV) pip install --no-build-isolation -e ".[dev]"
+	@echo "$(GREEN)✓ Editable install complete. Changes to C++ files require 'make rebuild'.$(NC)"
 
 .PHONY: rebuild
-rebuild: ## Quick rebuild after source changes (only works with editable install)
-	@echo "$(YELLOW)Rebuilding (incremental)...$(NC)"
-	@CUDACXX=$(CUDACXX) $(UV) pip install -e . --no-deps
+rebuild: ## Quick incremental rebuild (C++ changes)
+	@echo "$(YELLOW)Rebuilding C++ extensions...$(NC)"
+	@CUDACXX=$(CUDACXX) $(UV) pip install --no-build-isolation --no-deps -e .
 	@echo "$(GREEN)✓ Incremental rebuild complete$(NC)"
 
 ##@ Building

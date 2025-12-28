@@ -14,6 +14,7 @@
 #include "model/grid.cuh"
 #include "solver/evaluator.cuh"
 #include "solver/optimizer.cuh"
+#include "solver/tn_optimizer_legacy.cuh"
 #include "utilities/kernels.cuh"
 
 #include <pybind11/functional.h>
@@ -158,8 +159,8 @@ PYBIND11_MODULE(dftcu, m) {
 
     py::class_<dftcu::WangTeter, dftcu::KEDF_Base, std::shared_ptr<dftcu::WangTeter>>(m,
                                                                                       "WangTeter")
-        .def(py::init<dftcu::Grid&, double, double, double>(), py::arg("grid"),
-             py::arg("coeff") = 1.0, py::arg("alpha") = 5.0 / 6.0, py::arg("beta") = 5.0 / 6.0)
+        .def(py::init<double, double, double>(), py::arg("coeff") = 1.0,
+             py::arg("alpha") = 5.0 / 6.0, py::arg("beta") = 5.0 / 6.0)
         .def("compute", &dftcu::WangTeter::compute, py::arg("rho"), py::arg("v_kedf"));
 
     py::class_<dftcu::revHC, dftcu::KEDF_Base, std::shared_ptr<dftcu::revHC>>(m, "revHC")
@@ -237,6 +238,12 @@ PYBIND11_MODULE(dftcu, m) {
         .def(py::init<dftcu::Grid&, dftcu::OptimizationOptions>(), py::arg("grid"),
              py::arg("options") = dftcu::OptimizationOptions())
         .def("solve", &dftcu::TNOptimizer::solve);
+
+    py::class_<dftcu::TNOptimizerLegacy, std::shared_ptr<dftcu::TNOptimizerLegacy>>(
+        m, "TNOptimizerLegacy")
+        .def(py::init<dftcu::Grid&, dftcu::OptimizationOptions>(), py::arg("grid"),
+             py::arg("options") = dftcu::OptimizationOptions())
+        .def("solve", &dftcu::TNOptimizerLegacy::solve);
 
     m.def(
         "scalar_search_wolfe1",
