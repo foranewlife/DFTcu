@@ -8,30 +8,36 @@
 
 namespace dftcu {
 
-// Forward declaration needed by field_expr.cuh
-template <typename E>
-struct Expr;
-
-template <typename E>
-__global__ void assignment_kernel(double* out, const E expr, size_t n) {
+template <typename View>
+__global__ void assignment_kernel(double* out, View expr_view, size_t n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
-        out[i] = expr[i];
+        out[i] = expr_view[i];
     }
 }
 
 /** @brief Alias for real-valued scalar fields (standard density, potential) */
 class RealField : public Expr<RealField> {
   public:
+    struct RealFieldView {
+        const double* ptr;
+
+        __device__ __forceinline__ double operator[](size_t i) const { return ptr[i]; }
+    };
+
+    using View = RealFieldView;
+
     RealField(Grid& grid, int rank = 1) : grid_(grid), rank_(rank), data_(grid.nnr() * rank) {}
+
+    __host__ __device__ __forceinline__ View view() const { return View{data_.data()}; }
 
     // Assignment from an expression template
     template <typename E>
     RealField& operator=(const Expr<E>& expr) {
         const int block_size = 256;
         const int grid_size = (size() + block_size - 1) / block_size;
-        assignment_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(data(), expr.self(),
-                                                                        size());
+        auto expr_view = expr.view();
+        assignment_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(data(), expr_view, size());
         GPU_CHECK_KERNEL;
         return *this;
     }
@@ -62,7 +68,6 @@ class RealField : public Expr<RealField> {
 
     double integral() const { return v_sum(size(), data(), grid_.stream()) * grid_.dv(); }
 
-    // Element access for Expression Templates
     __device__ __forceinline__ double operator[](size_t i) const { return data_.data()[i]; }
 
   private:
@@ -70,7 +75,7 @@ class RealField : public Expr<RealField> {
     int rank_;
     GPU_Vector<double> data_;
 
-    // Prevent move semantics for now to avoid complexity with references
+    RealField(const RealField&) = delete;
     RealField(RealField&&) = delete;
     RealField& operator=(RealField&&) = delete;
 };

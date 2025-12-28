@@ -1,4 +1,6 @@
 #pragma once
+#include <memory>
+
 #include "fft/fft_solver.cuh"
 #include "kedf_base.cuh"
 #include "model/field.cuh"
@@ -21,7 +23,7 @@ class WangTeter : public KEDF_Base {
         double rho0_threshold = 1e-12;
     };
 
-    WangTeter(Grid& grid, double coeff = 1.0, double alpha = 5.0 / 6.0, double beta = 5.0 / 6.0);
+    WangTeter(double coeff = 1.0, double alpha = 5.0 / 6.0, double beta = 5.0 / 6.0);
     virtual ~WangTeter() = default;
 
     /**
@@ -37,16 +39,18 @@ class WangTeter : public KEDF_Base {
     void set_parameters(const Parameters& params) { params_ = params; }
 
   private:
-    Grid& grid_;
+    void initialize_buffers(Grid& grid);
+
+    Grid* grid_ = nullptr;
     double coeff_;
     double alpha_;
     double beta_;
     Parameters params_;
 
     // Persistent buffers
-    RealField rho_beta_;
-    ComplexField rho_beta_g_;
-    RealField v_conv_;
+    std::unique_ptr<RealField> rho_beta_;
+    std::unique_ptr<ComplexField> rho_beta_g_;
+    std::unique_ptr<RealField> v_conv_;
 };
 
 }  // namespace dftcu

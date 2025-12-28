@@ -40,7 +40,7 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES MATCHES "^(5
                     return 0;
                 }
             ]])
-            execute_process(COMMAND ${DETECT_NVCC} ${arch_file} -o "${arch_file}.exe"
+            execute_process(COMMAND ${DETECT_NVCC} -arch=sm_${PROBED_ARCH} ${arch_file} -o "${arch_file}.exe"
                             RESULT_VARIABLE PROBE_COMPILE_RES ERROR_QUIET)
             if(PROBE_COMPILE_RES EQUAL 0)
                 execute_process(COMMAND "${arch_file}.exe" OUTPUT_VARIABLE PROBED_ARCH
@@ -116,6 +116,7 @@ set(DFTCU_CORE_SOURCES
     src/math/dcsrch.cu
     src/solver/evaluator.cu
     src/solver/optimizer.cu
+    src/solver/tn_optimizer_legacy.cu
     src/utilities/kernels.cu
 )
 

@@ -45,7 +45,7 @@ cmake.args = [
 # Configure editable install for incremental builds
 # Use 'redirect' mode - faster than 'inplace' but requires manual rebuild
 editable.mode = "redirect"
-editable.rebuild = false
+editable.rebuild = true
 editable.verbose = true
 # Install from existing build if available
 install.strip = false
@@ -54,21 +54,28 @@ install.strip = false
 
 [project.optional-dependencies]
 dev = [
+    # Build system (Crucial for --no-build-isolation)
+    "scikit-build-core>=0.5.0",
+    "pybind11>=2.10",
+    "cmake>=3.18",
+    "ninja",  # 强烈推荐：加快编译速度
+
     # Testing
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pytest-xdist>=3.0.0",
     "pytest-benchmark>=4.0.0",
+
     # Code quality
     "black>=23.0.0",
     "flake8>=6.0.0",
     "isort>=5.0.0",
     "mypy>=1.0.0",
+
     # Pre-commit hooks
     "pre-commit>=3.0.0",
-    # DFTpy for comparison tests (install from submodule)
-    # Install with: pip install -e external/DFTpy
 ]
+
 docs = [
     "sphinx>=6.0.0",
     "sphinx-rtd-theme>=1.0.0",
