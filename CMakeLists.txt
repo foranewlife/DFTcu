@@ -115,6 +115,7 @@ if(BUILD_WITH_CUDA)
         src/math/linesearch.cu
         src/math/dcsrch.cu
         src/solver/evaluator.cu
+        src/solver/hamiltonian.cu
         src/solver/optimizer.cu
         src/solver/tn_optimizer_legacy.cu
         src/utilities/kernels.cu
