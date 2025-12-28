@@ -267,10 +267,50 @@ ls build/Makefile     # ❌ 如果存在，删除 build/ 重新配置
    uv pip install -e . --no-deps
    ```
 
-## 🎯 总结
+## ⚡ 性能剖析指南
 
-- ✅ **日常开发**：使用 `make install-dev` + `make rebuild`
-- ✅ **C++ 调试**：使用 `make build`（最快）
-- ✅ **最终发布**：使用 `make install`（全量编译）
-- ✅ **保留 `build/` 目录**以享受增量编译
-- ✅ **统一使用 Ninja** 构建系统
+为了深入分析 GPU 代码的性能瓶颈，您可以使用 NVIDIA Nsight Systems (nsys) 工具。
+
+### 1. 配置和构建项目
+
+首先，您需要以启用性能剖析的模式重新配置和构建项目。这将确保 `nvcc` 使用 `-lineinfo` 标志编译 CUDA 代码，使剖析报告能够精确映射到源代码行。
+
+```bash
+# 清理旧的构建产物
+make clean
+
+# 配置 CMake，并启用 ENABLE_PROFILING
+cmake -B build -GNinja -DENABLE_PROFILING=ON
+
+# 构建项目
+make build
+
+# 安装到开发环境
+make install-dev
+```
+
+### 2. 运行性能剖析器 (nsys)
+
+安装完成后，您可以使用 `nsys profile` 命令运行您感兴趣的测试或代码。以剖析 Python 基准测试为例：
+
+```bash
+# 运行 nsys 剖析 Python 基准测试
+# --force-overwrite true: 强制覆盖旧报告
+# -w true: 等待被剖析的进程结束
+# -o profiling_report: 指定报告文件名 (将生成 profiling_report.nsys-rep)
+nsys profile --force-overwrite true -w true -o profiling_report .venv/bin/pytest tests/python/test_benchmark_optimizers.py
+```
+
+### 3. 查看剖析报告
+
+`nsys profile` 命令执行完成后，会在当前目录下生成一个 `.nsys-rep` 文件（例如 `profiling_report.nsys-rep`）。
+
+您可以使用 NVIDIA Nsight Systems GUI 工具打开这个报告文件，进行详细的性能分析，包括：
+
+*   GPU Kernel 启动时间
+*   CPU-GPU 同步开销
+*   内存传输模式
+*   CUDA API 调用追踪
+*   Kernel 的源代码级性能分析
+
+通过分析这些数据，您可以识别出代码中的热点区域和性能瓶颈，从而进行有针对性的优化。

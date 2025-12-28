@@ -25,6 +25,7 @@ CMAKE_FLAGS := -GNinja \
                -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE) \
                -DCMAKE_CUDA_COMPILER=$(CUDACXX) \
                -DCMAKE_CUDA_ARCHITECTURES=$(STRIPPED_ARCH) \
+               -DBUILD_WITH_CUDA=ON \
                -DBUILD_TESTING=ON \
                -DBUILD_DOCS=ON
 
@@ -89,7 +90,7 @@ configure: ## Configure CMake build
 	@echo "$(GREEN)✓ Configuration complete$(NC)"
 
 .PHONY: build
-build: configure ## Build the project (C++ only)
+build: ## Build the project (C++ only)
 	@echo "$(YELLOW)Building $(PROJECT_NAME)...$(NC)"
 	@$(CMAKE) --build $(BUILD_DIR) -j$$(nproc)
 	@echo "$(GREEN)✓ Build complete$(NC)"
@@ -138,7 +139,7 @@ lint: ## Run linters
 ##@ Documentation
 
 .PHONY: doc
-doc: configure ## Generate documentation
+doc: ## Generate documentation
 	@echo "$(YELLOW)Generating documentation...$(NC)"
 	@cd $(BUILD_DIR) && $(CMAKE) --build . --target doc
 	@echo "$(GREEN)✓ Documentation generated$(NC)"
