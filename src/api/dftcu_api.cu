@@ -14,6 +14,7 @@
 #include "model/grid.cuh"
 #include "model/wavefunction.cuh"
 #include "solver/evaluator.cuh"
+#include "solver/hamiltonian.cuh"
 #include "solver/optimizer.cuh"
 #include "solver/tn_optimizer_legacy.cuh"
 #include "utilities/kernels.cuh"
@@ -226,6 +227,12 @@ PYBIND11_MODULE(dftcu, m) {
              })
         .def("clear", &dftcu::Evaluator::clear)
         .def("compute", &dftcu::Evaluator::compute);
+
+    py::class_<dftcu::Hamiltonian>(m, "Hamiltonian")
+        .def(py::init<dftcu::Grid&, dftcu::Evaluator&>(), py::arg("grid"), py::arg("evaluator"))
+        .def("update_potentials", &dftcu::Hamiltonian::update_potentials, py::arg("rho"))
+        .def("apply", &dftcu::Hamiltonian::apply, py::arg("psi"), py::arg("h_psi"))
+        .def("v_loc", &dftcu::Hamiltonian::v_loc, py::return_value_policy::reference_internal);
 
     py::class_<dftcu::OptimizationOptions>(m, "OptimizationOptions")
         .def(py::init<>())
