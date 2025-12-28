@@ -1,8 +1,6 @@
-/**
- * \page blog_ls_refactor_cn 线搜索算法重构 (中文)
- */
-# 技术笔记：线搜索算法重构 (Line Search Refactor)
+# 技术笔记：线搜索算法重构 (Line Search Refactor) {#blog_ls_refactor_cn}
 
+**日期**: 2025-12-27
 ## 工作总结
 
 ### 完成内容

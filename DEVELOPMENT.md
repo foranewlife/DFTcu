@@ -1,7 +1,4 @@
-/**
- * \page dev_guide 开发者指南
- */
-# DFTcu 开发指南
+# DFTcu 开发指南 {#dev_guide}
 
 ## 构建方式对比
 

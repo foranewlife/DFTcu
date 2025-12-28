@@ -1,7 +1,4 @@
-/**
- * \page blog_comp_graph 基于表达式模板的计算图设计
- */
-# Technical Note: Computation Graph via Expression Templates
+# Technical Note: Computation Graph via Expression Templates {#blog_comp_graph}
 
 **TN-ID**: TN_COMPUTATION_GRAPH
 **Date**: 2025-12-27
