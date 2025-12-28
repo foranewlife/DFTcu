@@ -32,7 +32,7 @@ def test_revhc_functional():
     res_py = DFTpy_revHC(rho_init, calcType={"E", "V"}, ke_kernel_saved=ke_kernel_saved)
 
     # 2. DFTcu revHC
-    revhc_cu = dftcu.revHC(grid_cu)
+    revhc_cu = dftcu.revHC()
     v_cu = dftcu.RealField(grid_cu, 1)
     energy_cu = revhc_cu.compute(rho_cu, v_cu)
 

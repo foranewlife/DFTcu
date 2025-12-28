@@ -175,14 +175,7 @@ __global__ void finalize_potential_kernel(size_t n, const double* rho, const dou
 
 }  // namespace
 
-revHC::revHC(Grid& grid, double alpha, double beta)
-    : grid_(grid),
-      fft_(grid),
-      alpha_(alpha),
-      beta_(beta),
-      rho_alpha_beta_(grid, 2),
-      rho_g_(grid, 2),
-      conv_out_g_(grid, 2) {
+revHC::revHC(double alpha, double beta) : alpha_(alpha), beta_(beta) {
     // Load pre-computed kernel tables to device once
     d_k_.resize(HC_KERNEL_SIZE);
     d_k2_.resize(HC_KERNEL_SIZE);
@@ -195,40 +188,54 @@ revHC::revHC(Grid& grid, double alpha, double beta)
     d_d2_.copy_from_host(HC_D2_DATA);
 }
 
+void revHC::initialize_buffers(Grid& grid) {
+    if (grid_ == &grid)
+        return;
+
+    grid_ = &grid;
+    fft_ = std::make_unique<FFTSolver>(grid);
+    rho_alpha_beta_ = std::make_unique<RealField>(grid, 2);
+    rho_g_ = std::make_unique<ComplexField>(grid, 2);
+    conv_out_g_ = std::make_unique<ComplexField>(grid, 2);
+}
+
 double revHC::compute(const RealField& rho, RealField& v_kedf) {
-    size_t n = grid_.nnr();
-    double dv = grid_.dv();
+    Grid& grid = rho.grid();
+    initialize_buffers(grid);
+
+    size_t n = grid.nnr();
+    double dv = grid.dv();
     const int block_size = 256;
     const int grid_size = (n + block_size - 1) / block_size;
 
     // 1. Gradient
-    ComplexField rg(grid_);
+    ComplexField rg(grid);
     real_to_complex(n, rho.data(), rg.data());
-    fft_.forward(rg);
+    fft_->forward(rg);
 
-    RealField gx(grid_), gy(grid_), gz(grid_);
-    ComplexField tmp_g(grid_);
-    multiply_ig_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, grid_.gx(), rg.data(),
-                                                                     tmp_g.data());
-    fft_.backward(tmp_g);
+    RealField gx(grid), gy(grid), gz(grid);
+    ComplexField tmp_g(grid);
+    multiply_ig_kernel<<<grid_size, block_size, 0, grid.stream()>>>(n, grid.gx(), rg.data(),
+                                                                    tmp_g.data());
+    fft_->backward(tmp_g);
     complex_to_real(n, tmp_g.data(), gx.data());
-    multiply_ig_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, grid_.gy(), rg.data(),
-                                                                     tmp_g.data());
-    fft_.backward(tmp_g);
+    multiply_ig_kernel<<<grid_size, block_size, 0, grid.stream()>>>(n, grid.gy(), rg.data(),
+                                                                    tmp_g.data());
+    fft_->backward(tmp_g);
     complex_to_real(n, tmp_g.data(), gy.data());
-    multiply_ig_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, grid_.gz(), rg.data(),
-                                                                     tmp_g.data());
-    fft_.backward(tmp_g);
+    multiply_ig_kernel<<<grid_size, block_size, 0, grid.stream()>>>(n, grid.gz(), rg.data(),
+                                                                    tmp_g.data());
+    fft_->backward(tmp_g);
     complex_to_real(n, tmp_g.data(), gz.data());
 
     // 2. s and kf (merged kernel)
     GPU_Vector<double> s(n), kf_eff(n);
-    compute_s_and_kf_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+    compute_s_and_kf_kernel<<<grid_size, block_size, 0, grid.stream()>>>(
         n, rho.data(), gx.data(), gy.data(), gz.data(), s.data(), kf_eff.data(), params_.kappa,
         params_.mu, constants::RHO_THRESHOLD);
 
     // 3. Determine kf_eff range using thrust with stream
-    grid_.synchronize();
+    grid.synchronize();
     thrust::device_ptr<const double> kf_ptr(kf_eff.data());
     double kf_raw_min = *thrust::min_element(kf_ptr, kf_ptr + n);
     double kf_raw_max = *thrust::max_element(kf_ptr, kf_ptr + n);
@@ -248,81 +255,81 @@ double revHC::compute(const RealField& rho, RealField& v_kedf) {
         current_nsp = params_.max_nsp;
 
     // 4. Convolutions
-    RealField rho_beta(grid_), rho_alpha(grid_);
-    power_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, rho.data(), rho_beta.data(),
-                                                               beta_, constants::RHO_THRESHOLD);
-    power_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, rho.data(), rho_alpha.data(),
-                                                               alpha_, constants::RHO_THRESHOLD);
+    RealField rho_beta(grid), rho_alpha(grid);
+    power_kernel<<<grid_size, block_size, 0, grid.stream()>>>(n, rho.data(), rho_beta.data(), beta_,
+                                                              constants::RHO_THRESHOLD);
+    power_kernel<<<grid_size, block_size, 0, grid.stream()>>>(n, rho.data(), rho_alpha.data(),
+                                                              alpha_, constants::RHO_THRESHOLD);
 
-    ComplexField rb_g(grid_), ra_g(grid_);
+    ComplexField rb_g(grid), ra_g(grid);
     real_to_complex(n, rho_beta.data(), rb_g.data());
     real_to_complex(n, rho_alpha.data(), ra_g.data());
-    fft_.forward(rb_g);
-    fft_.forward(ra_g);
+    fft_->forward(rb_g);
+    fft_->forward(ra_g);
 
     GPU_Vector<double> pots1(n * current_nsp), pots2(n * current_nsp);
     GPU_Vector<double> mders1(n * current_nsp), mders2(n * current_nsp);
 
     // Reuse ComplexField buffers
-    ComplexField tb_g(grid_), ta_g(grid_);
+    ComplexField tb_g(grid), ta_g(grid);
 
     for (int i = 0; i < current_nsp; ++i) {
         double kf_ref = (kf_min + SAVE_TOL) * pow(ratio, (double)i);
 
         // K convolution
         CHECK(cudaMemcpyAsync(tb_g.data(), rb_g.data(), n * sizeof(gpufftComplex),
-                              cudaMemcpyDeviceToDevice, grid_.stream()));
-        multiply_kernel_spline_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
-            n, tb_g.data(), grid_.gg(), kf_ref, d_k_.data(), d_k2_.data(), d_d_.data(),
-            d_d2_.data(), HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, false);
-        fft_.backward(tb_g);
+                              cudaMemcpyDeviceToDevice, grid.stream()));
+        multiply_kernel_spline_kernel<<<grid_size, block_size, 0, grid.stream()>>>(
+            n, tb_g.data(), grid.gg(), kf_ref, d_k_.data(), d_k2_.data(), d_d_.data(), d_d2_.data(),
+            HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, false);
+        fft_->backward(tb_g);
         complex_to_real(n, tb_g.data(), pots1.data() + i * n);
 
         CHECK(cudaMemcpyAsync(ta_g.data(), ra_g.data(), n * sizeof(gpufftComplex),
-                              cudaMemcpyDeviceToDevice, grid_.stream()));
-        multiply_kernel_spline_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
-            n, ta_g.data(), grid_.gg(), kf_ref, d_k_.data(), d_k2_.data(), d_d_.data(),
-            d_d2_.data(), HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, false);
-        fft_.backward(ta_g);
+                              cudaMemcpyDeviceToDevice, grid.stream()));
+        multiply_kernel_spline_kernel<<<grid_size, block_size, 0, grid.stream()>>>(
+            n, ta_g.data(), grid.gg(), kf_ref, d_k_.data(), d_k2_.data(), d_d_.data(), d_d2_.data(),
+            HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, false);
+        fft_->backward(ta_g);
         complex_to_real(n, ta_g.data(), pots2.data() + i * n);
 
         // dK/dkf convolution
         CHECK(cudaMemcpyAsync(tb_g.data(), rb_g.data(), n * sizeof(gpufftComplex),
-                              cudaMemcpyDeviceToDevice, grid_.stream()));
-        multiply_kernel_spline_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
-            n, tb_g.data(), grid_.gg(), kf_ref, d_k_.data(), d_k2_.data(), d_d_.data(),
-            d_d2_.data(), HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, true);
-        fft_.backward(tb_g);
+                              cudaMemcpyDeviceToDevice, grid.stream()));
+        multiply_kernel_spline_kernel<<<grid_size, block_size, 0, grid.stream()>>>(
+            n, tb_g.data(), grid.gg(), kf_ref, d_k_.data(), d_k2_.data(), d_d_.data(), d_d2_.data(),
+            HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, true);
+        fft_->backward(tb_g);
         complex_to_real(n, tb_g.data(), mders1.data() + i * n);
 
         CHECK(cudaMemcpyAsync(ta_g.data(), ra_g.data(), n * sizeof(gpufftComplex),
-                              cudaMemcpyDeviceToDevice, grid_.stream()));
-        multiply_kernel_spline_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
-            n, ta_g.data(), grid_.gg(), kf_ref, d_k_.data(), d_k2_.data(), d_d_.data(),
-            d_d2_.data(), HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, true);
-        fft_.backward(ta_g);
+                              cudaMemcpyDeviceToDevice, grid.stream()));
+        multiply_kernel_spline_kernel<<<grid_size, block_size, 0, grid.stream()>>>(
+            n, ta_g.data(), grid.gg(), kf_ref, d_k_.data(), d_k2_.data(), d_d_.data(), d_d2_.data(),
+            HC_KERNEL_SIZE, HC_KERNEL_ETAMAX, true);
+        fft_->backward(ta_g);
         complex_to_real(n, ta_g.data(), mders2.data() + i * n);
     }
 
-    RealField pot1(grid_), pot2(grid_);
+    RealField pot1(grid), pot2(grid);
     interpolate_potential_hermite_high_precision_kernel<<<grid_size, block_size, 0,
-                                                          grid_.stream()>>>(
+                                                          grid.stream()>>>(
         n, kf_eff.data(), kf_min + SAVE_TOL, ratio, current_nsp, pots1.data(), mders1.data(),
         pot1.data());
     interpolate_potential_hermite_high_precision_kernel<<<grid_size, block_size, 0,
-                                                          grid_.stream()>>>(
+                                                          grid.stream()>>>(
         n, kf_eff.data(), kf_min + SAVE_TOL, ratio, current_nsp, pots2.data(), mders2.data(),
         pot2.data());
 
-    grid_.synchronize();
+    grid.synchronize();
     double energy = dot_product(n, rho_alpha.data(), pot1.data()) * dv;
-    finalize_potential_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+    finalize_potential_kernel<<<grid_size, block_size, 0, grid.stream()>>>(
         n, rho.data(), pot1.data(), pot2.data(), alpha_, beta_, v_kedf.data(),
         constants::RHO_THRESHOLD);
 
     thrust::device_ptr<const double> rho_ptr(rho.data());
     double rhov = *thrust::max_element(rho_ptr, rho_ptr + n);
-    ldw_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, rho.data(), v_kedf.data(), rhov);
+    ldw_kernel<<<grid_size, block_size, 0, grid.stream()>>>(n, rho.data(), v_kedf.data(), rhov);
 
     return energy;
 }

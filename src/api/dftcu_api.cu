@@ -164,8 +164,7 @@ PYBIND11_MODULE(dftcu, m) {
         .def("compute", &dftcu::WangTeter::compute, py::arg("rho"), py::arg("v_kedf"));
 
     py::class_<dftcu::revHC, dftcu::KEDF_Base, std::shared_ptr<dftcu::revHC>>(m, "revHC")
-        .def(py::init<dftcu::Grid&, double, double>(), py::arg("grid"), py::arg("alpha") = 2.0,
-             py::arg("beta") = 2.0 / 3.0)
+        .def(py::init<double, double>(), py::arg("alpha") = 2.0, py::arg("beta") = 2.0 / 3.0)
         .def("compute", &dftcu::revHC::compute, py::arg("rho"), py::arg("v_kedf"));
 
     py::class_<dftcu::LDA_PZ, std::shared_ptr<dftcu::LDA_PZ>>(m, "LDA_PZ")
