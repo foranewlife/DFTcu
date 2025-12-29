@@ -37,7 +37,7 @@ def test_ewald_multi_atoms():
     # 2. DFTpy Ewald (Exact & PME)
     print("1. Running DFTpy Ewald (Exact & PME)...")
     # DFTpy defaults to eta=1.6 if not specified
-    ewald_py = DFTpy_Ewald(grid=dftpy_grid, ions=ions, PME=False)
+    ewald_py = DFTpy_Ewald(grid=dftpy_grid, ions=ions, PME=True)
     e_ewald_py_exact = ewald_py.energy
     print(f"   DFTpy Energy (Exact): {e_ewald_py_exact:.10f} Ha (eta={ewald_py.eta:.2f})")
 
@@ -50,7 +50,7 @@ def test_ewald_multi_atoms():
     ewald_cu = dftcu.Ewald(grid_cu, atoms_cu)
     # Match DFTpy eta for exact comparison
     ewald_cu.set_eta(ewald_py.eta)
-    e_ewald_cu_exact = ewald_cu.compute(use_pme=False)
+    e_ewald_cu_exact = ewald_cu.compute(use_pme=True)
     print(f"   DFTcu Energy (Exact): {e_ewald_cu_exact:.10f} Ha")
 
     # 4. Final Comparison

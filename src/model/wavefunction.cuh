@@ -1,4 +1,5 @@
 #pragma once
+#include <complex>
 #include <memory>
 #include <vector>
 
@@ -39,6 +40,15 @@ class Wavefunction {
     /** @brief Get device pointer to a specific band's data */
     gpufftComplex* band_data(int n) { return data_.data() + n * grid_.nnr(); }
 
+    /** @brief Get the host vector of valid plane-wave indices */
+    std::vector<int> get_pw_indices();
+
+    /** @brief Copy coefficients from host memory (NumPy, std::vector, etc.) */
+    void copy_from_host(const std::complex<double>* data);
+
+    /** @brief Copy coefficients to host memory */
+    void copy_to_host(std::complex<double>* data) const;
+
     // --- Operations ---
     /** @brief Initialize with random coefficients and normalize */
     void randomize(unsigned int seed = 42);
@@ -55,6 +65,21 @@ class Wavefunction {
 
     /** @brief Compute norm of each band on GPU */
     void compute_norms(std::vector<double>& norms);
+
+    /** @brief Compute Hermitian inner product between two bands: <band_a | band_b> */
+    std::complex<double> dot(int band_a, int band_b);
+
+    /**
+     * @brief Compute band occupations using Fermi-Dirac distribution
+     * @param eigenvalues Computed band energies
+     * @param nelectrons Target total number of electrons
+     * @param sigma Smearing width (Hartree)
+     * @param occupations Output occupation numbers
+     * @param fermi_energy Output computed Fermi energy
+     */
+    static void compute_occupations(const std::vector<double>& eigenvalues, double nelectrons,
+                                    double sigma, std::vector<double>& occupations,
+                                    double& fermi_energy);
 
   private:
     Grid& grid_;

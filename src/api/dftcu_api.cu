@@ -1,25 +1,22 @@
-#include "fft/fft_solver.cuh"
 #include "functional/ewald.cuh"
 #include "functional/hartree.cuh"
 #include "functional/kedf/hc.cuh"
 #include "functional/kedf/tf.cuh"
 #include "functional/kedf/vw.cuh"
 #include "functional/kedf/wt.cuh"
+#include "functional/nonlocal_pseudo.cuh"
 #include "functional/pseudo.cuh"
 #include "functional/xc/lda_pz.cuh"
 #include "functional/xc/pbe.cuh"
-#include "math/linesearch.cuh"
 #include "model/atoms.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
 #include "model/wavefunction.cuh"
+#include "solver/davidson.cuh"
 #include "solver/evaluator.cuh"
 #include "solver/hamiltonian.cuh"
-#include "solver/optimizer.cuh"
-#include "solver/tn_optimizer_legacy.cuh"
-#include "utilities/kernels.cuh"
 
-#include <pybind11/functional.h>
+#include <pybind11/complex.h>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -27,32 +24,43 @@
 namespace py = pybind11;
 
 PYBIND11_MODULE(dftcu, m) {
-    py::class_<dftcu::Grid, std::shared_ptr<dftcu::Grid>>(m, "Grid")
-        .def(py::init([](const std::vector<double>& lattice, const std::vector<int>& nr) {
-            return std::make_shared<dftcu::Grid>(lattice, nr);
-        }))
-        .def("nnr", &dftcu::Grid::nnr)
-        .def("dv", &dftcu::Grid::dv)
+    m.doc() = "DFTcu: A GPU-accelerated orbital-free DFT code";
+
+    py::class_<dftcu::Grid>(m, "Grid")
+        .def(py::init<const std::vector<double>&, const std::vector<int>&>())
         .def("volume", &dftcu::Grid::volume)
+        .def("dv", &dftcu::Grid::dv)
+        .def("nnr", &dftcu::Grid::nnr)
         .def("g2max", &dftcu::Grid::g2max)
-        .def("lattice",
-             [](dftcu::Grid& self) {
-                 std::vector<std::vector<double>> lat(3, std::vector<double>(3));
-                 for (int i = 0; i < 3; ++i)
-                     for (int j = 0; j < 3; ++j)
-                         lat[i][j] = self.lattice()[i][j];
-                 return lat;
+        .def("gg", [](dftcu::Grid& self) {
+            std::vector<double> h_gg(self.nnr());
+            CHECK(cudaMemcpy(h_gg.data(), self.gg(), self.nnr() * sizeof(double),
+                             cudaMemcpyDeviceToHost));
+            return h_gg;
+        });
+
+    py::class_<dftcu::RealField>(m, "RealField")
+        .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
+        .def("integral", &dftcu::RealField::integral)
+        .def("fill", &dftcu::RealField::fill)
+        .def("copy_from_host",
+             [](dftcu::RealField& self, py::array_t<double> arr) {
+                 py::buffer_info buf = arr.request();
+                 if (buf.size != self.size())
+                     throw std::runtime_error("Size mismatch");
+                 self.copy_from_host((double*)buf.ptr);
              })
-        .def("rec_lattice", [](dftcu::Grid& self) {
-            std::vector<std::vector<double>> lat(3, std::vector<double>(3));
-            for (int i = 0; i < 3; ++i)
-                for (int j = 0; j < 3; ++j)
-                    lat[i][j] = self.rec_lattice()[i][j];
-            return lat;
+        .def("copy_to_host", [](dftcu::RealField& self, py::array_t<double> arr) {
+            py::buffer_info buf = arr.request();
+            if (buf.size != self.size())
+                throw std::runtime_error("Size mismatch");
+            self.copy_to_host((double*)buf.ptr);
         });
 
     py::class_<dftcu::Atom>(m, "Atom")
-        .def(py::init<double, double, double, double, int>())
+        .def(py::init<>())
+        .def(py::init<double, double, double, double, int>(), py::arg("x"), py::arg("y"),
+             py::arg("z"), py::arg("charge"), py::arg("type"))
         .def_readwrite("x", &dftcu::Atom::x)
         .def_readwrite("y", &dftcu::Atom::y)
         .def_readwrite("z", &dftcu::Atom::z)
@@ -60,219 +68,162 @@ PYBIND11_MODULE(dftcu, m) {
         .def_readwrite("type", &dftcu::Atom::type);
 
     py::class_<dftcu::Atoms, std::shared_ptr<dftcu::Atoms>>(m, "Atoms")
-        .def(py::init<const std::vector<dftcu::Atom>&>())
-        .def("nat", &dftcu::Atoms::nat);
+        .def(py::init<const std::vector<dftcu::Atom>&>());
 
-    py::class_<dftcu::RealField>(m, "RealField")
-        .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
-        .def("fill", &dftcu::RealField::fill)
-        .def("copy_from_host",
-             [](dftcu::RealField& self, py::array_t<double> array) {
-                 auto buf = array.request();
-                 if (buf.size != self.size())
-                     throw std::runtime_error("Size mismatch");
-                 self.copy_from_host((double*)buf.ptr);
-             })
-        .def("copy_to_host",
-             [](dftcu::RealField& self, py::array_t<double> array) {
-                 auto buf = array.request();
-                 if (buf.size != self.size())
-                     throw std::runtime_error("Size mismatch");
-                 self.copy_to_host((double*)buf.ptr);
-             })
-        .def("dot", [](const dftcu::RealField& self,
-                       const dftcu::RealField& other) { return self.dot(other); })
-        .def("integral", &dftcu::RealField::integral)
-        .def("size", &dftcu::RealField::size);
-
-    py::class_<dftcu::ComplexField>(m, "ComplexField")
-        .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
-        .def("fill",
-             [](dftcu::ComplexField& self, std::complex<double> val) {
-                 gpufftComplex gval;
-                 gval.x = val.real();
-                 gval.y = val.imag();
-                 self.fill(gval);
-             })
-        .def("copy_from_host",
-             [](dftcu::ComplexField& self, py::array_t<std::complex<double>> array) {
-                 auto buf = array.request();
-                 if (buf.size != self.size())
-                     throw std::runtime_error("Size mismatch");
-                 self.copy_from_host((gpufftComplex*)buf.ptr);
-             })
-        .def("copy_to_host",
-             [](dftcu::ComplexField& self, py::array_t<std::complex<double>> array) {
-                 auto buf = array.request();
-                 if (buf.size != self.size())
-                     throw std::runtime_error("Size mismatch");
-                 self.copy_to_host((gpufftComplex*)buf.ptr);
-             })
-        .def("size", &dftcu::ComplexField::size);
-
-    py::class_<dftcu::Wavefunction>(m, "Wavefunction")
+    py::class_<dftcu::Wavefunction, std::shared_ptr<dftcu::Wavefunction>>(m, "Wavefunction")
         .def(py::init<dftcu::Grid&, int, double>(), py::arg("grid"), py::arg("num_bands"),
              py::arg("encut"))
-        .def("num_bands", &dftcu::Wavefunction::num_bands)
         .def("num_pw", &dftcu::Wavefunction::num_pw)
-        .def("encut", &dftcu::Wavefunction::encut)
-        .def("randomize", &dftcu::Wavefunction::randomize, py::arg("seed") = 42)
-        .def("compute_density", &dftcu::Wavefunction::compute_density, py::arg("occupations"),
-             py::arg("rho"));
-
-    py::class_<dftcu::FFTSolver>(m, "FFTSolver")
-        .def(py::init<dftcu::Grid&>())
-        .def("forward", &dftcu::FFTSolver::forward)
-        .def("backward", &dftcu::FFTSolver::backward);
-
-    py::class_<dftcu::Hartree, std::shared_ptr<dftcu::Hartree>>(m, "Hartree")
-        .def(py::init<dftcu::Grid&>())
-        .def("compute",
-             [](dftcu::Hartree& self, const dftcu::RealField& rho, dftcu::RealField& vh) {
-                 double energy = 0.0;
-                 self.compute(rho, vh, energy);
-                 return energy;
-             });
-
-    py::class_<dftcu::Ewald, std::shared_ptr<dftcu::Ewald>>(m, "Ewald")
-        .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>, double, int>(), py::arg("grid"),
-             py::arg("atoms"), py::arg("precision") = 1e-8, py::arg("bspline_order") = 10)
-        .def(
-            "compute", [](dftcu::Ewald& self, bool use_pme) { return self.compute(use_pme); },
-            py::arg("use_pme") = false)
-        .def(
-            "compute",
-            [](dftcu::Ewald& self, const dftcu::RealField& rho, dftcu::RealField& v_out) {
-                return self.compute(rho, v_out);
-            },
-            py::arg("rho"), py::arg("v_out"))
-        .def("set_eta", &dftcu::Ewald::set_eta);
-
-    py::class_<dftcu::LocalPseudo, std::shared_ptr<dftcu::LocalPseudo>>(m, "LocalPseudo")
-        .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())
-        .def("set_vloc", &dftcu::LocalPseudo::set_vloc)
-        .def("set_vloc_radial", &dftcu::LocalPseudo::set_vloc_radial)
-        .def("compute", [](dftcu::LocalPseudo& self, dftcu::RealField& v) { self.compute(v); })
-        .def("compute", [](dftcu::LocalPseudo& self, const dftcu::RealField& rho,
-                           dftcu::RealField& v_out) { return self.compute(rho, v_out); });
-
-    // KEDF functionals
-    py::class_<dftcu::KEDF_Base, std::shared_ptr<dftcu::KEDF_Base>>(m, "KEDF_Base");
-
-    py::class_<dftcu::ThomasFermi, dftcu::KEDF_Base, std::shared_ptr<dftcu::ThomasFermi>>(
-        m, "ThomasFermi")
-        .def(py::init<double>(), py::arg("coeff") = 1.0)
-        .def("compute", &dftcu::ThomasFermi::compute, py::arg("rho"), py::arg("v_kedf"));
-
-    py::class_<dftcu::vonWeizsacker, dftcu::KEDF_Base, std::shared_ptr<dftcu::vonWeizsacker>>(
-        m, "vonWeizsacker")
-        .def(py::init<double>(), py::arg("coeff") = 1.0)
-        .def("compute", &dftcu::vonWeizsacker::compute, py::arg("rho"), py::arg("v_kedf"));
-
-    py::class_<dftcu::WangTeter, dftcu::KEDF_Base, std::shared_ptr<dftcu::WangTeter>>(m,
-                                                                                      "WangTeter")
-        .def(py::init<double, double, double>(), py::arg("coeff") = 1.0,
-             py::arg("alpha") = 5.0 / 6.0, py::arg("beta") = 5.0 / 6.0)
-        .def("compute", &dftcu::WangTeter::compute, py::arg("rho"), py::arg("v_kedf"));
-
-    py::class_<dftcu::revHC, dftcu::KEDF_Base, std::shared_ptr<dftcu::revHC>>(m, "revHC")
-        .def(py::init<double, double>(), py::arg("alpha") = 2.0, py::arg("beta") = 2.0 / 3.0)
-        .def("compute", &dftcu::revHC::compute, py::arg("rho"), py::arg("v_kedf"));
-
-    py::class_<dftcu::LDA_PZ, std::shared_ptr<dftcu::LDA_PZ>>(m, "LDA_PZ")
-        .def(py::init<>())
-        .def("compute", &dftcu::LDA_PZ::compute, py::arg("rho"), py::arg("v_xc"));
-
-    py::class_<dftcu::PBE, std::shared_ptr<dftcu::PBE>>(m, "PBE")
-        .def(py::init<dftcu::Grid&>())
-        .def("compute", &dftcu::PBE::compute, py::arg("rho"), py::arg("v_xc"));
+        .def("compute_density", &dftcu::Wavefunction::compute_density)
+        .def("randomize", &dftcu::Wavefunction::randomize, py::arg("seed") = 42U)
+        .def("get_pw_indices", &dftcu::Wavefunction::get_pw_indices)
+        .def("copy_from_host",
+             [](dftcu::Wavefunction& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> arr) {
+                 py::buffer_info buf = arr.request();
+                 size_t expected = static_cast<size_t>(self.grid().nnr()) * self.num_bands();
+                 if (buf.size != expected) {
+                     throw std::runtime_error("Wavefunction size mismatch in copy_from_host");
+                 }
+                 self.copy_from_host(static_cast<std::complex<double>*>(buf.ptr));
+             })
+        .def("copy_to_host",
+             [](dftcu::Wavefunction& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> arr) {
+                 py::buffer_info buf = arr.request();
+                 size_t expected = static_cast<size_t>(self.grid().nnr()) * self.num_bands();
+                 if (buf.size != expected) {
+                     throw std::runtime_error("Wavefunction size mismatch in copy_to_host");
+                 }
+                 self.copy_to_host(static_cast<std::complex<double>*>(buf.ptr));
+             })
+        .def("dot", &dftcu::Wavefunction::dot);
 
     py::class_<dftcu::Evaluator>(m, "Evaluator")
         .def(py::init<dftcu::Grid&>())
+        .def("add_functional", &dftcu::Evaluator::add_functional)
         .def("add_functional",
              [](dftcu::Evaluator& self, std::shared_ptr<dftcu::ThomasFermi> f) {
-                 self.add_functional(dftcu::Functional(f));
+                 self.add_functional(f);
              })
         .def("add_functional",
              [](dftcu::Evaluator& self, std::shared_ptr<dftcu::vonWeizsacker> f) {
-                 self.add_functional(dftcu::Functional(f));
+                 self.add_functional(f);
              })
+        .def("add_functional", [](dftcu::Evaluator& self,
+                                  std::shared_ptr<dftcu::WangTeter> f) { self.add_functional(f); })
+        .def("add_functional", [](dftcu::Evaluator& self,
+                                  std::shared_ptr<dftcu::revHC> f) { self.add_functional(f); })
+        .def("add_functional", [](dftcu::Evaluator& self,
+                                  std::shared_ptr<dftcu::Hartree> f) { self.add_functional(f); })
+        .def("add_functional", [](dftcu::Evaluator& self,
+                                  std::shared_ptr<dftcu::LDA_PZ> f) { self.add_functional(f); })
         .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::WangTeter> f) {
-                 self.add_functional(dftcu::Functional(f));
-             })
-        .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::revHC> f) {
-                 self.add_functional(dftcu::Functional(f));
-             })
-        .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::LDA_PZ> f) {
-                 self.add_functional(dftcu::Functional(f));
-             })
-        .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::PBE> f) {
-                 self.add_functional(dftcu::Functional(f));
-             })
-        .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::Hartree> f) {
-                 self.add_functional(dftcu::Functional(f));
-             })
+             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::PBE> f) { self.add_functional(f); })
+        .def("add_functional", [](dftcu::Evaluator& self,
+                                  std::shared_ptr<dftcu::Ewald> f) { self.add_functional(f); })
         .def("add_functional",
              [](dftcu::Evaluator& self, std::shared_ptr<dftcu::LocalPseudo> f) {
-                 self.add_functional(dftcu::Functional(f));
+                 self.add_functional(f);
              })
-        .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::Ewald> f) {
-                 self.add_functional(dftcu::Functional(f));
-             })
-        .def("clear", &dftcu::Evaluator::clear)
         .def("compute", &dftcu::Evaluator::compute);
 
-    py::class_<dftcu::Hamiltonian>(m, "Hamiltonian")
-        .def(py::init<dftcu::Grid&, dftcu::Evaluator&>(), py::arg("grid"), py::arg("evaluator"))
-        .def("update_potentials", &dftcu::Hamiltonian::update_potentials, py::arg("rho"))
-        .def("apply", &dftcu::Hamiltonian::apply, py::arg("psi"), py::arg("h_psi"))
-        .def("v_loc", &dftcu::Hamiltonian::v_loc, py::return_value_policy::reference_internal);
-
-    py::class_<dftcu::OptimizationOptions>(m, "OptimizationOptions")
+    py::class_<dftcu::Hartree, std::shared_ptr<dftcu::Hartree>>(m, "Hartree")
         .def(py::init<>())
-        .def_readwrite("max_iter", &dftcu::OptimizationOptions::max_iter)
-        .def_readwrite("econv", &dftcu::OptimizationOptions::econv)
-        .def_readwrite("ncheck", &dftcu::OptimizationOptions::ncheck)
-        .def_readwrite("step_size", &dftcu::OptimizationOptions::step_size);
+        .def(py::init([](dftcu::Grid& grid) {
+            auto ptr = std::make_shared<dftcu::Hartree>();
+            dftcu::RealField rho(grid);
+            rho.fill(0.0);
+            dftcu::RealField vh(grid);
+            double energy = 0.0;
+            ptr->compute(rho, vh, energy);
+            return ptr;
+        }))
+        .def(
+            "compute",
+            [](dftcu::Hartree& self, const dftcu::RealField& rho, dftcu::RealField& v_out) {
+                double energy = 0.0;
+                self.compute(rho, v_out, energy);
+                return energy;
+            },
+            py::arg("rho"), py::arg("potential"));
+    py::class_<dftcu::LDA_PZ, std::shared_ptr<dftcu::LDA_PZ>>(m, "LDA_PZ")
+        .def(py::init<>())
+        .def(
+            "compute",
+            [](dftcu::LDA_PZ& self, const dftcu::RealField& rho, dftcu::RealField& v_out) {
+                return self.compute(rho, v_out);
+            },
+            py::arg("rho"), py::arg("potential"));
+    py::class_<dftcu::PBE, std::shared_ptr<dftcu::PBE>>(m, "PBE")
+        .def(py::init<dftcu::Grid&>())
+        .def(
+            "compute",
+            [](dftcu::PBE& self, const dftcu::RealField& rho, dftcu::RealField& v_out) {
+                return self.compute(rho, v_out);
+            },
+            py::arg("rho"), py::arg("potential"));
+    py::class_<dftcu::ThomasFermi, std::shared_ptr<dftcu::ThomasFermi>>(m, "ThomasFermi")
+        .def(py::init<double>(), py::arg("coeff") = 1.0);
+    py::class_<dftcu::vonWeizsacker, std::shared_ptr<dftcu::vonWeizsacker>>(m, "vonWeizsacker")
+        .def(py::init<double>(), py::arg("coeff") = 1.0);
+    py::class_<dftcu::WangTeter, std::shared_ptr<dftcu::WangTeter>>(m, "WangTeter")
+        .def(py::init<double, double, double>(), py::arg("coeff") = 1.0,
+             py::arg("alpha") = 5.0 / 6.0, py::arg("beta") = 5.0 / 6.0);
+    py::class_<dftcu::revHC, std::shared_ptr<dftcu::revHC>>(m, "revHC")
+        .def(py::init<double, double>(), py::arg("alpha") = 2.0, py::arg("beta") = 2.0 / 3.0);
+    py::class_<dftcu::Ewald, std::shared_ptr<dftcu::Ewald>>(m, "Ewald")
+        .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>, double, double>(),
+             py::arg("grid"), py::arg("atoms"), py::arg("precision") = 1e-8,
+             py::arg("gcut_hint") = -1.0)
+        .def("set_eta", &dftcu::Ewald::set_eta)
+        .def("set_pme", &dftcu::Ewald::set_pme)
+        .def("compute", (double(dftcu::Ewald::*)(bool, double)) & dftcu::Ewald::compute,
+             py::arg("use_pme") = false, py::arg("gcut") = -1.0)
+        .def("compute_legacy", &dftcu::Ewald::compute_legacy)
+        .def("compute",
+             (double(dftcu::Ewald::*)(const dftcu::RealField&, dftcu::RealField&)) &
+                 dftcu::Ewald::compute,
+             py::arg("rho"), py::arg("v_out"));
 
-    py::class_<dftcu::SimpleOptimizer>(m, "SimpleOptimizer")
-        .def(py::init<dftcu::Grid&, dftcu::OptimizationOptions>(), py::arg("grid"),
-             py::arg("options") = dftcu::OptimizationOptions())
-        .def("solve", &dftcu::SimpleOptimizer::solve);
+    py::class_<dftcu::LocalPseudo, std::shared_ptr<dftcu::LocalPseudo>>(m, "LocalPseudo")
+        .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>(), py::arg("grid"),
+             py::arg("atoms"))
+        .def("set_vloc", &dftcu::LocalPseudo::set_vloc)
+        .def("set_vloc_radial", &dftcu::LocalPseudo::set_vloc_radial)
+        .def("compute_potential",
+             [](dftcu::LocalPseudo& self, dftcu::RealField& vloc) { self.compute(vloc); })
+        .def("compute", [](dftcu::LocalPseudo& self, const dftcu::RealField& rho,
+                           dftcu::RealField& v_out) { return self.compute(rho, v_out); });
 
-    py::class_<dftcu::CGOptimizer>(m, "CGOptimizer")
-        .def(py::init<dftcu::Grid&, dftcu::OptimizationOptions>(), py::arg("grid"),
-             py::arg("options") = dftcu::OptimizationOptions())
-        .def("solve", &dftcu::CGOptimizer::solve);
+    py::class_<dftcu::Hamiltonian>(m, "Hamiltonian")
+        .def(py::init<dftcu::Grid&, dftcu::Evaluator&>())
+        .def("update_potentials", &dftcu::Hamiltonian::update_potentials)
+        .def("apply", &dftcu::Hamiltonian::apply)
+        .def("set_nonlocal", &dftcu::Hamiltonian::set_nonlocal);
 
-    py::class_<dftcu::TNOptimizer>(m, "TNOptimizer")
-        .def(py::init<dftcu::Grid&, dftcu::OptimizationOptions>(), py::arg("grid"),
-             py::arg("options") = dftcu::OptimizationOptions())
-        .def("solve", &dftcu::TNOptimizer::solve);
+    py::class_<dftcu::DavidsonSolver>(m, "DavidsonSolver")
+        .def(py::init<dftcu::Grid&, int, double>(), py::arg("grid"), py::arg("max_iter") = 50,
+             py::arg("tol") = 1e-6)
+        .def("solve", &dftcu::DavidsonSolver::solve);
 
-    py::class_<dftcu::TNOptimizerLegacy, std::shared_ptr<dftcu::TNOptimizerLegacy>>(
-        m, "TNOptimizerLegacy")
-        .def(py::init<dftcu::Grid&, dftcu::OptimizationOptions>(), py::arg("grid"),
-             py::arg("options") = dftcu::OptimizationOptions())
-        .def("solve", &dftcu::TNOptimizerLegacy::solve);
-
-    m.def(
-        "scalar_search_wolfe1",
-        [](std::function<double(double)> phi, std::function<double(double)> derphi, double phi0,
-           double derphi0, double phi0_old, double c1, double c2, double amax, double amin,
-           double xtol) {
-            double alpha_star = 0, phi_star = 0;
-            bool conv = dftcu::scalar_search_wolfe1(phi, derphi, phi0, derphi0, phi0_old, c1, c2,
-                                                    amax, amin, xtol, alpha_star, phi_star);
-            return std::make_tuple(conv, alpha_star, phi_star);
-        },
-        py::arg("phi"), py::arg("derphi"), py::arg("phi0"), py::arg("derphi0"),
-        py::arg("phi0_old") = 1e10, py::arg("c1") = 1e-4, py::arg("c2") = 0.9,
-        py::arg("amax") = 100.0, py::arg("amin") = 1e-8, py::arg("xtol") = 1e-14);
+    py::class_<dftcu::NonLocalPseudo, std::shared_ptr<dftcu::NonLocalPseudo>>(m, "NonLocalPseudo")
+        .def(py::init<dftcu::Grid&>())
+        .def(
+            "add_projector",
+            [](dftcu::NonLocalPseudo& self, py::object beta_obj, double coupling) {
+                std::vector<std::complex<double>> host;
+                if (py::isinstance<py::array>(beta_obj)) {
+                    py::array array = beta_obj.cast<py::array>();
+                    py::buffer_info buf = array.request();
+                    auto ptr = static_cast<std::complex<double>*>(buf.ptr);
+                    host.assign(ptr, ptr + buf.size);
+                } else {
+                    host = beta_obj.cast<std::vector<std::complex<double>>>();
+                }
+                self.add_projector(host, coupling);
+            },
+            py::arg("beta_g"), py::arg("coupling_constant"))
+        .def("clear", &dftcu::NonLocalPseudo::clear)
+        .def_property_readonly("num_projectors", &dftcu::NonLocalPseudo::num_projectors);
 }

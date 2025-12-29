@@ -26,14 +26,23 @@ __global__ void apply_vloc_kernel(size_t n, const double* v_loc, gpufftComplex* 
     }
 }
 
+__global__ void accumulate_hpsi_kernel(size_t n, const gpufftComplex* tmp, gpufftComplex* h_psi) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        h_psi[i].x += tmp[i].x;
+        h_psi[i].y += tmp[i].y;
+    }
+}
+
 }  // namespace
 
-Hamiltonian::Hamiltonian(Grid& grid, Evaluator& evaluator)
-    : grid_(grid), evaluator_(evaluator), v_loc_tot_(grid) {}
+Hamiltonian::Hamiltonian(Grid& grid, Evaluator& evaluator,
+                         std::shared_ptr<NonLocalPseudo> nl_pseudo)
+    : grid_(grid), evaluator_(evaluator), nonlocal_(nl_pseudo), v_loc_tot_(grid) {
+    v_loc_tot_.fill(0.0);
+}
 
 void Hamiltonian::update_potentials(const RealField& rho) {
-    // Collect all local potential components from the evaluator
-    // Evaluator::compute resets v_loc_tot_ to zero and sums Hartree, XC, etc.
     evaluator_.compute(rho, v_loc_tot_);
 }
 
@@ -50,30 +59,35 @@ void Hamiltonian::apply(Wavefunction& psi, Wavefunction& h_psi) {
 
     // 2. Local Potential Term (Real Space)
     FFTSolver fft(grid_);
-    ComplexField tmp_r(grid_);
     ComplexField tmp_g(grid_);
 
     const int grid_size_v = (n + block_size - 1) / block_size;
 
     for (int nb = 0; nb < nbands; ++nb) {
-        // psi(G) -> psi(r)
         CHECK(cudaMemcpyAsync(tmp_g.data(), psi.band_data(nb), n * sizeof(gpufftComplex),
                               cudaMemcpyDeviceToDevice, grid_.stream()));
         fft.backward(tmp_g);
 
-        // psi(r) * V_loc(r)
         apply_vloc_kernel<<<grid_size_v, block_size, 0, grid_.stream()>>>(n, v_loc_tot_.data(),
                                                                           tmp_g.data());
         GPU_CHECK_KERNEL;
 
-        // V_loc * psi -> (G-space)
         fft.forward(tmp_g);
+        // Normalize the FFT output to match physical conventions
+        v_scale(2 * n, 1.0 / (double)n, (const double*)tmp_g.data(), (double*)tmp_g.data(),
+                grid_.stream());
 
-        // Accumulate into h_psi: h_psi(G) += FFT(V_loc * psi)
-        v_axpy(n * 2, 1.0, (double*)tmp_g.data(), (double*)h_psi.band_data(nb), grid_.stream());
+        accumulate_hpsi_kernel<<<grid_size_v, block_size, 0, grid_.stream()>>>(n, tmp_g.data(),
+                                                                               h_psi.band_data(nb));
+        GPU_CHECK_KERNEL;
     }
 
-    // 3. Project onto valid PW sphere
+    // 3. Non-local Potential Term
+    if (nonlocal_) {
+        nonlocal_->apply(psi, h_psi);
+    }
+
+    // 4. Project onto valid PW sphere
     h_psi.apply_mask();
     grid_.synchronize();
 }

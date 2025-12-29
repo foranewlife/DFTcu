@@ -18,7 +18,9 @@ const double PHI_THRESHOLD = 1e-15;
 const double C_TF_BASE = 2.8712340001881918;  // (3.0/10.0) * pow(3.0*D_PI*D_PI, 2.0/3.0)
 
 // Exchange-correlation constants
-const double EX_LDA_COEFF = -0.7385587663820223;  // -3/4 * (3/pi)^(1/3)
+const double EX_LDA_COEFF = -0.7385587663820224;  // -3/4 * (3/pi)^(1/3)
+// Value computed using double-precision arithmetic for consistency with other constants.
+// Note: The last digit may differ due to floating-point calculation differences across platforms.
 
 }  // namespace constants
 
