@@ -49,6 +49,12 @@ class Wavefunction {
     /** @brief Copy coefficients to host memory */
     void copy_to_host(std::complex<double>* data) const;
 
+    /** @brief Get coefficients of a specific band on the full grid */
+    std::vector<std::complex<double>> get_coefficients(int band) const;
+
+    /** @brief Set coefficients of a specific band on the full grid */
+    void set_coefficients(const std::vector<std::complex<double>>& coeffs, int band);
+
     // --- Operations ---
     /** @brief Initialize with random coefficients and normalize */
     void randomize(unsigned int seed = 42);
