@@ -32,12 +32,27 @@ PYBIND11_MODULE(dftcu, m) {
         .def("dv", &dftcu::Grid::dv)
         .def("nnr", &dftcu::Grid::nnr)
         .def("g2max", &dftcu::Grid::g2max)
-        .def("gg", [](dftcu::Grid& self) {
-            std::vector<double> h_gg(self.nnr());
-            CHECK(cudaMemcpy(h_gg.data(), self.gg(), self.nnr() * sizeof(double),
-                             cudaMemcpyDeviceToHost));
-            return h_gg;
-        });
+                .def("gg", [](dftcu::Grid& self) {
+                    std::vector<double> h_gg(self.nnr());
+                    CHECK(cudaMemcpy(h_gg.data(), self.gg(), self.nnr() * sizeof(double), cudaMemcpyDeviceToHost));
+                    return h_gg;
+                })
+                .def("gx", [](dftcu::Grid& self) {
+                    std::vector<double> h_gx(self.nnr());
+                    CHECK(cudaMemcpy(h_gx.data(), self.gx(), self.nnr() * sizeof(double), cudaMemcpyDeviceToHost));
+                    return h_gx;
+                })
+                .def("gy", [](dftcu::Grid& self) {
+                    std::vector<double> h_gy(self.nnr());
+                    CHECK(cudaMemcpy(h_gy.data(), self.gy(), self.nnr() * sizeof(double), cudaMemcpyDeviceToHost));
+                    return h_gy;
+                })
+                .def("gz", [](dftcu::Grid& self) {
+                    std::vector<double> h_gz(self.nnr());
+                    CHECK(cudaMemcpy(h_gz.data(), self.gz(), self.nnr() * sizeof(double), cudaMemcpyDeviceToHost));
+                    return h_gz;
+                });
+        
 
     py::class_<dftcu::RealField>(m, "RealField")
         .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
@@ -97,7 +112,10 @@ PYBIND11_MODULE(dftcu, m) {
                  }
                  self.copy_to_host(static_cast<std::complex<double>*>(buf.ptr));
              })
-        .def("dot", &dftcu::Wavefunction::dot);
+        .def("get_coefficients", &dftcu::Wavefunction::get_coefficients)
+        .def("set_coefficients", [](dftcu::Wavefunction& self, const std::vector<std::complex<double>>& coeffs, int band) {
+            self.set_coefficients(coeffs, band);
+        });
 
     py::class_<dftcu::Evaluator>(m, "Evaluator")
         .def(py::init<dftcu::Grid&>())
@@ -225,5 +243,6 @@ PYBIND11_MODULE(dftcu, m) {
             },
             py::arg("beta_g"), py::arg("coupling_constant"))
         .def("clear", &dftcu::NonLocalPseudo::clear)
+        .def("calculate_energy", &dftcu::NonLocalPseudo::calculate_energy)
         .def_property_readonly("num_projectors", &dftcu::NonLocalPseudo::num_projectors);
 }

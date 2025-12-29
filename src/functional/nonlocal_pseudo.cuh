@@ -45,6 +45,9 @@ class NonLocalPseudo {
     /** @brief Remove all projectors */
     void clear();
 
+    /** @brief Calculate non-local energy contribution for a wavefunction */
+    double calculate_energy(const Wavefunction& psi, const std::vector<double>& occupations);
+
     int num_projectors() const { return num_projectors_; }
 
   private:

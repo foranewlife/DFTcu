@@ -99,6 +99,23 @@ void Wavefunction::initialize_mask() {
     CHECK(cudaFree(d_count));
 }
 
+std::vector<std::complex<double>> Wavefunction::get_coefficients(int band) const {
+    size_t nnr = grid_.nnr();
+    std::vector<std::complex<double>> host_data(nnr);
+    CHECK(cudaMemcpy(host_data.data(), data_.data() + band * nnr, nnr * sizeof(gpufftComplex),
+                     cudaMemcpyDeviceToHost));
+    return host_data;
+}
+
+void Wavefunction::set_coefficients(const std::vector<std::complex<double>>& coeffs, int band) {
+    size_t nnr = grid_.nnr();
+    if (coeffs.size() != nnr) {
+        throw std::runtime_error("Wavefunction::set_coefficients: size mismatch");
+    }
+    CHECK(cudaMemcpy(data_.data() + band * nnr, coeffs.data(), nnr * sizeof(gpufftComplex),
+                     cudaMemcpyHostToDevice));
+}
+
 void Wavefunction::randomize(unsigned int seed) {
     size_t total_size = data_.size();
     const int block_size = 256;
@@ -237,9 +254,18 @@ std::complex<double> Wavefunction::dot(int band_a, int band_b) {
 }
 
 std::vector<int> Wavefunction::get_pw_indices() {
-    std::vector<int> host_mask(num_pw_);
+    size_t n = grid_.nnr();
+    std::vector<int> host_mask(n);
     pw_mask_.copy_to_host(host_mask.data());
-    return host_mask;
+    
+    std::vector<int> indices;
+    indices.reserve(num_pw_);
+    for (int i = 0; i < n; ++i) {
+        if (host_mask[i] != 0) {
+            indices.push_back(i);
+        }
+    }
+    return indices;
 }
 
 }  // namespace dftcu
