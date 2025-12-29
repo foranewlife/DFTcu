@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cmath>
 #include <vector>
 
@@ -55,19 +56,9 @@ class Grid {
      */
     size_t nnr() const { return nnr_; }
 
-    /**
-     * @brief Differential volume element (volume / nnr).
-     */
-    double dv() const { return dv_; }
-
-    /**
-     * @brief Total volume of the simulation cell.
-     */
     double volume() const { return volume_; }
-
-    /**
-     * @brief Array containing the number of grid points in each dimension.
-     */
+    /** @brief Differential volume element dv = Volume / N */
+    double dv() const { return volume_ / (double)nnr_; }
     const int* nr() const { return nr_; }
 
     /**
@@ -127,7 +118,6 @@ class Grid {
                      a13 * (a21 * a32 - a22 * a31);
 
         volume_ = std::abs(det);
-        dv_ = volume_ / nnr_;
 
         double inv[3][3];
         inv[0][0] = (a22 * a33 - a23 * a32) / det;
@@ -159,7 +149,6 @@ class Grid {
     int nr_[3];                            /**< Grid dimensions */
     size_t nnr_;                           /**< Total number of points */
     double volume_;                        /**< Unit cell volume */
-    double dv_;                            /**< Volume element */
     GPU_Vector<double> gg_, gx_, gy_, gz_; /**< GPU data for G-vectors */
 
     // Prevent copying

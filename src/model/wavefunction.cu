@@ -3,10 +3,27 @@
 #include "utilities/kernels.cuh"
 
 #include <curand_kernel.h>
+#include <thrust/complex.h>
+#include <thrust/execution_policy.h>
+#include <thrust/functional.h>
+#include <thrust/iterator/zip_iterator.h>
+#include <thrust/transform_reduce.h>
+#include <thrust/tuple.h>
 
 namespace dftcu {
 
 namespace {
+
+using ThrustComplex = thrust::complex<double>;
+using WaveDotTuple = thrust::tuple<ThrustComplex, ThrustComplex>;
+
+struct HermitianProductOp {
+    __host__ __device__ ThrustComplex operator()(const WaveDotTuple& tpl) const {
+        const ThrustComplex& a = thrust::get<0>(tpl);
+        const ThrustComplex& b = thrust::get<1>(tpl);
+        return thrust::conj(a) * b;
+    }
+};
 
 __global__ void initialize_mask_kernel(size_t n, const double* gg, double encut, int* mask,
                                        int* count) {
@@ -105,6 +122,16 @@ void Wavefunction::apply_mask() {
     GPU_CHECK_KERNEL;
 }
 
+void Wavefunction::copy_from_host(const std::complex<double>* data) {
+    size_t total_size = grid_.nnr() * num_bands_;
+    data_.copy_from_host(reinterpret_cast<const gpufftComplex*>(data), grid_.stream());
+}
+
+void Wavefunction::copy_to_host(std::complex<double>* data) const {
+    size_t total_size = grid_.nnr() * num_bands_;
+    data_.copy_to_host(reinterpret_cast<gpufftComplex*>(data), grid_.stream());
+}
+
 void Wavefunction::compute_density(const std::vector<double>& occupations, RealField& rho) {
     size_t n = grid_.nnr();
     rho.fill(0.0);
@@ -113,7 +140,10 @@ void Wavefunction::compute_density(const std::vector<double>& occupations, RealF
     ComplexField psi_r(grid_);
 
     const int block_size = 256;
-    const int grid_size = (n + block_size - 1) / block_size;
+    const int grid_size_v = (n + block_size - 1) / block_size;
+    // Physical Normalization:
+    // rho(r) = 1/Volume * sum( f_n * |IFFT_unnorm(C_G)|^2 )
+    double inv_vol = 1.0 / grid_.volume();
 
     for (int nb = 0; nb < num_bands_; ++nb) {
         if (occupations[nb] < 1e-12)
@@ -123,16 +153,93 @@ void Wavefunction::compute_density(const std::vector<double>& occupations, RealF
         CHECK(cudaMemcpyAsync(psi_r.data(), band_data(nb), n * sizeof(gpufftComplex),
                               cudaMemcpyDeviceToDevice, grid_.stream()));
 
-        // 2. Transform to real space
+        // 2. Transform to real space (Raw IFFT: no scaling)
         fft.backward(psi_r);
 
-        // 3. Accumulate: rho += f_n * |psi_n|^2
-        accumulate_density_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
-            n, psi_r.data(), occupations[nb], rho.data());
+        // 3. Accumulate: rho += (f_n / Volume) * |psi_r|^2
+        accumulate_density_kernel<<<grid_size_v, block_size, 0, grid_.stream()>>>(
+            n, psi_r.data(), occupations[nb] * inv_vol, rho.data());
         GPU_CHECK_KERNEL;
     }
 
     grid_.synchronize();
+}
+
+void Wavefunction::compute_occupations(const std::vector<double>& eigenvalues, double nelectrons,
+                                       double sigma, std::vector<double>& occupations,
+                                       double& fermi_energy) {
+    int nband = eigenvalues.size();
+    occupations.resize(nband);
+
+    auto get_ne = [&](double mu) {
+        double ne = 0;
+        for (double e : eigenvalues) {
+            double arg = (e - mu) / sigma;
+            if (arg > 30.0)
+                continue;
+            if (arg < -30.0) {
+                ne += 2.0;  // Spin degenerate
+                continue;
+            }
+            ne += 2.0 / (exp(arg) + 1.0);
+        }
+        return ne;
+    };
+
+    // Bisection for Fermi Level
+    double low = eigenvalues.front() - 5.0 * sigma;
+    double high = eigenvalues.back() + 5.0 * sigma;
+
+    for (int iter = 0; iter < 50; ++iter) {
+        double mid = (low + high) / 2.0;
+        if (get_ne(mid) > nelectrons) {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+
+    fermi_energy = (low + high) / 2.0;
+    for (int i = 0; i < nband; ++i) {
+        double arg = (eigenvalues[i] - fermi_energy) / sigma;
+        if (arg > 30.0)
+            occupations[i] = 0.0;
+        else if (arg < -30.0)
+            occupations[i] = 2.0;
+        else
+            occupations[i] = 2.0 / (exp(arg) + 1.0);
+    }
+}
+
+void Wavefunction::compute_norms(std::vector<double>& norms) {
+    norms.resize(num_bands_);
+    for (int i = 0; i < num_bands_; ++i) {
+        norms[i] = std::sqrt(dot(i, i).real());
+    }
+}
+
+std::complex<double> Wavefunction::dot(int band_a, int band_b) {
+    size_t n = grid_.nnr();
+    using Complex = thrust::complex<double>;
+
+    Complex* a_ptr = reinterpret_cast<Complex*>(band_data(band_a));
+    Complex* b_ptr = reinterpret_cast<Complex*>(band_data(band_b));
+
+    auto zipped_begin = thrust::make_zip_iterator(thrust::make_tuple(a_ptr, b_ptr));
+    auto zipped_end = zipped_begin + n;
+
+    Complex sum =
+        thrust::transform_reduce(thrust::cuda::par.on(grid_.stream()), zipped_begin, zipped_end,
+                                 HermitianProductOp(), Complex(0.0, 0.0), thrust::plus<Complex>());
+
+    grid_.synchronize();
+    return {sum.real(), sum.imag()};
+}
+
+std::vector<int> Wavefunction::get_pw_indices() {
+    std::vector<int> host_mask(num_pw_);
+    pw_mask_.copy_to_host(host_mask.data());
+    return host_mask;
 }
 
 }  // namespace dftcu

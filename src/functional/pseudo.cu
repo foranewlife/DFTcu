@@ -209,6 +209,7 @@ void LocalPseudo::compute(RealField& v) {
     GPU_CHECK_KERNEL;
     solver.backward(v_g_);
     complex_to_real(nnr, v_g_.data(), v.data(), grid_.stream());
+    v_scale(nnr, 1.0 / (double)nnr, v.data(), v.data(), grid_.stream());
 }
 
 double LocalPseudo::compute(const RealField& rho, RealField& v_out) {

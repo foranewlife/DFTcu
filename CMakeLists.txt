@@ -106,6 +106,7 @@ if(BUILD_WITH_CUDA)
         src/functional/hartree.cu
         src/functional/ewald.cu
         src/functional/pseudo.cu
+        src/functional/nonlocal_pseudo.cu
         src/functional/kedf/tf.cu
         src/functional/kedf/vw.cu
         src/functional/kedf/wt.cu
@@ -116,6 +117,7 @@ if(BUILD_WITH_CUDA)
         src/math/dcsrch.cu
         src/solver/evaluator.cu
         src/solver/hamiltonian.cu
+        src/solver/davidson.cu
         src/solver/optimizer.cu
         src/solver/tn_optimizer_legacy.cu
         src/utilities/kernels.cu
@@ -138,6 +140,7 @@ if(BUILD_WITH_CUDA)
             CUDA::cuda_driver
             CUDA::cublas
             CUDA::curand
+            CUDA::cusolver
     )
 
     target_compile_options(dftcu_core

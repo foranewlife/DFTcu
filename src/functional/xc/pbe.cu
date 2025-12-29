@@ -188,16 +188,19 @@ double PBE::compute(const RealField& rho, RealField& v_xc) {
                                                                      tmp_g_.data());
     fft_.backward(tmp_g_);
     complex_to_real(n, tmp_g_.data(), grad_x_.data());
+    v_scale(n, 1.0 / (double)n, grad_x_.data(), grad_x_.data(), grid_.stream());
 
     multiply_ig_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, grid_.gy(), rho_g_.data(),
                                                                      tmp_g_.data());
     fft_.backward(tmp_g_);
     complex_to_real(n, tmp_g_.data(), grad_y_.data());
+    v_scale(n, 1.0 / (double)n, grad_y_.data(), grad_y_.data(), grid_.stream());
 
     multiply_ig_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, grid_.gz(), rho_g_.data(),
                                                                      tmp_g_.data());
     fft_.backward(tmp_g_);
     complex_to_real(n, tmp_g_.data(), grad_z_.data());
+    v_scale(n, 1.0 / (double)n, grad_z_.data(), grad_z_.data(), grid_.stream());
 
     // 3. Compute sigma = |grad rho|^2
     v_mul(n, grad_x_.data(), grad_x_.data(), sigma_.data());
@@ -234,6 +237,7 @@ double PBE::compute(const RealField& rho, RealField& v_xc) {
 
     RealField div_r(grid_);
     complex_to_real(n, div_g_.data(), div_r.data());
+    v_scale(n, 1.0 / (double)n, div_r.data(), div_r.data(), grid_.stream());
 
     // 6. Final potential V_xc = v1 - div_r
     v_sub(n, v1_.data(), div_r.data(), v_xc.data());

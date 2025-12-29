@@ -18,11 +18,11 @@ __constant__ double c_atom_q[MAX_ATOMS];
 
 namespace {
 __global__ void ewald_recip_kernel(size_t nnr, int nat, const double* gx, const double* gy,
-                                   const double* gz, double eta, double* energy) {
+                                   const double* gz, double eta, double gcut, double* energy) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < nnr) {
         double g2 = gx[i] * gx[i] + gy[i] * gy[i] + gz[i] * gz[i];
-        if (g2 > 1e-12) {
+        if (g2 > 1e-12 && g2 <= gcut) {
             double str_fac_real = 0.0;
             double str_fac_imag = 0.0;
             for (int ia = 0; ia < nat; ++ia) {
@@ -79,19 +79,61 @@ __global__ void ewald_real_kernel(int nat, const double* pos_x, const double* po
 }
 }  // namespace
 
-Ewald::Ewald(Grid& grid, std::shared_ptr<Atoms> atoms, double precision, int bspline_order)
-    : grid_(grid), atoms_(atoms), precision_(precision), bspline_order_(bspline_order) {
-    eta_ = get_best_eta();
+Ewald::Ewald(Grid& grid, std::shared_ptr<Atoms> atoms, double precision, double gcut_hint)
+    : grid_(grid), atoms_(atoms), precision_(precision) {
+    double charge_sum = 0;
+    for (double c : atoms_->h_charge())
+        charge_sum += c;
+
+    // Use actual gcut for alpha optimization
+    double gcut = (gcut_hint > 0) ? gcut_hint : grid_.g2max();
+
+    // QE-style alpha selection:
+    // Find largest alpha such that error at gcut is below precision
+
+    // Initial value for alpha in the QE-style optimization algorithm.
+    constexpr double INITIAL_ALPHA = 2.9;
+    // Decrement step for alpha in the QE-style optimization algorithm.
+    constexpr double ALPHA_DECREMENT = 0.1;
+
+    double alpha = INITIAL_ALPHA;
+    for (int i = 0; i < 100; ++i) {
+        // Error estimate: 2 * Q^2 * sqrt(2*alpha/pi) * erfc(sqrt(gcut / 4 / alpha))
+        double upperbound = 2.0 * charge_sum * charge_sum * sqrt(2.0 * alpha / constants::D_PI) *
+                            erfc(sqrt(gcut / 4.0 / alpha));
+        if (upperbound < precision_)
+            break;
+        alpha -= ALPHA_DECREMENT;
+        if (alpha <= 0.05) {
+            alpha = 0.05;
+            break;
+        }
+    }
+    eta_ = alpha;
 }
 
 double Ewald::get_best_eta() {
-    double vol = grid_.volume();
     double gmax = sqrt(grid_.g2max());
     double eta = (gmax * gmax) / (-4.0 * log(precision_));
     return eta;
 }
 
+double Ewald::compute_legacy() {
+    // Save current eta and use legacy one
+    double saved_eta = eta_;
+    eta_ = get_best_eta();
+    double real = compute_real();
+    double recip = compute_recip_exact();
+    double corr = compute_corr();
+    eta_ = saved_eta;
+    return real + recip + corr;
+}
+
 double Ewald::compute_recip_exact() {
+    return compute_recip_exact(grid_.g2max());
+}
+
+double Ewald::compute_recip_exact(double gcut) {
     GPU_Vector<double> energy(1);
     energy.fill(0.0, grid_.stream());
 
@@ -118,7 +160,7 @@ double Ewald::compute_recip_exact() {
     const int grid_size = (nnr + block_size - 1) / block_size;
 
     ewald_recip_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
-        nnr, static_cast<int>(atoms_->nat()), grid_.gx(), grid_.gy(), grid_.gz(), eta_,
+        nnr, static_cast<int>(atoms_->nat()), grid_.gx(), grid_.gy(), grid_.gz(), eta_, gcut,
         energy.data());
     GPU_CHECK_KERNEL;
 
@@ -159,7 +201,10 @@ double Ewald::compute_corr() {
         charge_sq_sum += c * c;
     }
 
+    // QE style in Hartree (e2=1):
+    // E_self = -Z^2 * sqrt(alpha/pi)
     double e_self = -sqrt(eta_ / constants::D_PI) * charge_sq_sum;
+    // E_bg   = -pi*Q^2 / (2*Omega*alpha)
     double e_bg = -0.5 * constants::D_PI * charge_sum * charge_sum / (eta_ * grid_.volume());
 
     return e_self + e_bg;
@@ -169,9 +214,11 @@ double Ewald::compute_recip_pme() {
     return compute_recip_exact();
 }
 
-double Ewald::compute(bool use_pme) {
+double Ewald::compute(bool use_pme, double gcut) {
+    if (gcut <= 0)
+        gcut = grid_.g2max();
     double real = compute_real();
-    double recip = use_pme ? compute_recip_pme() : compute_recip_exact();
+    double recip = use_pme ? compute_recip_pme() : compute_recip_exact(gcut);
     double corr = compute_corr();
     return real + recip + corr;
 }

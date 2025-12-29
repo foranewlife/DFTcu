@@ -8,9 +8,8 @@ class Hartree {
   public:
     /**
      * @brief Constructs a Hartree functional.
-     * @param grid Reference to the simulation grid.
      */
-    Hartree(Grid& grid);
+    Hartree();
 
     /** @brief Default destructor. */
     ~Hartree() = default;
@@ -35,8 +34,12 @@ class Hartree {
     const char* name() const { return "Hartree"; }
 
   private:
-    Grid& grid_;         /**< Associated simulation grid reference */
-    ComplexField rho_g_; /**< Persistent buffer for G-space density */
+    void initialize_buffers(Grid& grid);
+
+    Grid* grid_ = nullptr;
+    std::unique_ptr<FFTSolver> fft_;
+    std::unique_ptr<ComplexField> rho_g_;
+    std::unique_ptr<RealField> v_tmp_;
 };
 
 }  // namespace dftcu

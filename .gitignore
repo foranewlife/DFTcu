@@ -50,4 +50,13 @@ Thumbs.db
 *.ptx
 *.cubin
 
-external/
+# QE alignment data
+run_qe_*/
+*.npy
+*.xml
+*.UPF
+*.in
+*.log
+*.save/
+
+external/vasp*

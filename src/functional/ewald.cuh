@@ -14,15 +14,29 @@ namespace dftcu {
  */
 class Ewald {
   public:
+    /**
+     * @brief Constructs Ewald solver.
+     * @param grid Simulation grid.
+     * @param atoms Atomic system.
+     * @param precision Target precision (Ha). Used to determine alpha if gcut is not provided.
+     * @param gcut_hint Optional reciprocal cutoff hint. If > 0, alpha is optimized for this cutoff.
+     */
     Ewald(Grid& grid, std::shared_ptr<Atoms> atoms, double precision = 1e-8,
-          int bspline_order = 10);
+          double gcut_hint = -1.0);
     ~Ewald() = default;
 
     /**
-     * @brief Compute the total Ewald energy.
+     * @brief Compute the total Ewald energy using QE-style algorithm.
+     * Matches Quantum ESPRESSO's numerical result.
      * @param use_pme Use Particle Mesh Ewald method.
+     * @param gcut Reciprocal space cutoff (Hartree). If <= 0, uses grid.g2max().
      */
-    double compute(bool use_pme = false);
+    double compute(bool use_pme = false, double gcut = -1.0);
+
+    /**
+     * @brief Legacy Ewald computation (DFTpy-compatible).
+     */
+    double compute_legacy();
 
     /**
      * @brief Unified interface for Evaluator.
@@ -47,6 +61,7 @@ class Ewald {
     double get_best_eta();
     double compute_real();
     double compute_recip_exact();
+    double compute_recip_exact(double gcut);
     double compute_recip_pme();
     double compute_corr();
 };
