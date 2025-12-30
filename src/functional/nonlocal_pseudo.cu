@@ -21,8 +21,8 @@ __global__ void scale_projections_kernel(int num_proj, int num_bands, const doub
 }
 
 __global__ void manual_projection_kernel(int num_proj, int nbands, int n,
-                                         const gpufftComplex* projectors,
-                                         const gpufftComplex* psi, gpufftComplex* projections) {
+                                         const gpufftComplex* projectors, const gpufftComplex* psi,
+                                         gpufftComplex* projections) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < num_proj * nbands) {
         int iproj = idx % num_proj;
@@ -42,8 +42,7 @@ __global__ void manual_projection_kernel(int num_proj, int nbands, int n,
 
 __global__ void manual_apply_nl_kernel(int num_proj, int nbands, int n, double omega,
                                        const gpufftComplex* projectors,
-                                       const gpufftComplex* projections,
-                                       gpufftComplex* hpsi) {
+                                       const gpufftComplex* projections, gpufftComplex* hpsi) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n * nbands) {
         int ig = idx % n;
@@ -112,7 +111,8 @@ void NonLocalPseudo::apply(Wavefunction& psi_in, Wavefunction& h_psi_out) {
     const int grid_size_p = (num_projectors_ * nbands + block_size_p - 1) / block_size_p;
 
     manual_projection_kernel<<<grid_size_p, block_size_p, 0, grid_.stream()>>>(
-        num_projectors_, nbands, (int)n, d_projectors_.data(), psi_in.data(), d_projections_.data());
+        num_projectors_, nbands, (int)n, d_projectors_.data(), psi_in.data(),
+        d_projections_.data());
 
     const int block_size_s = 256;
     const int grid_size_s = (num_projectors_ * nbands + block_size_s - 1) / block_size_s;
@@ -123,8 +123,8 @@ void NonLocalPseudo::apply(Wavefunction& psi_in, Wavefunction& h_psi_out) {
     const int grid_size_a = (int)(n * nbands + block_size_a - 1) / block_size_a;
 
     manual_apply_nl_kernel<<<grid_size_a, block_size_a, 0, grid_.stream()>>>(
-        num_projectors_, nbands, (int)n, grid_.volume(), d_projectors_.data(), d_projections_.data(),
-        h_psi_out.data());
+        num_projectors_, nbands, (int)n, grid_.volume(), d_projectors_.data(),
+        d_projections_.data(), h_psi_out.data());
 
     grid_.synchronize();
 }
@@ -169,7 +169,8 @@ double NonLocalPseudo::calculate_energy(const Wavefunction& psi,
         energy += occupations[n_idx] * band_energy;
     }
 
-    return energy * omega2;
+    // TEST: Use omega instead of omega2
+    return energy * omega;
 }
 
 }  // namespace dftcu

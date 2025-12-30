@@ -75,6 +75,9 @@ class Wavefunction {
     /** @brief Compute Hermitian inner product between two bands: <band_a | band_b> */
     std::complex<double> dot(int band_a, int band_b);
 
+    /** @brief Compute the total kinetic energy: Ts = sum_n f_n <psi_n | -0.5 nabla^2 | psi_n> */
+    double compute_kinetic_energy(const std::vector<double>& occupations);
+
     /**
      * @brief Compute band occupations using Fermi-Dirac distribution
      * @param eigenvalues Computed band energies

@@ -6,6 +6,13 @@ namespace dftcu {
 
 namespace {
 
+__global__ void shift_potential_kernel(size_t n, double* v, double shift) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        v[idx] -= shift;
+    }
+}
+
 __global__ void apply_kinetic_kernel(size_t n, int num_bands, const double* gg,
                                      const gpufftComplex* psi, gpufftComplex* h_psi) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -43,7 +50,29 @@ Hamiltonian::Hamiltonian(Grid& grid, Evaluator& evaluator,
 }
 
 void Hamiltonian::update_potentials(const RealField& rho) {
-    evaluator_.compute(rho, v_loc_tot_);
+    // Compute the local potential from all functionals
+    double energy = evaluator_.compute(rho, v_loc_tot_);
+
+    // Adjust potential zero-point to match QE convention
+    // QE sets the vacuum level (or average potential) as the reference zero
+    // This is crucial for correct eigenvalue alignment
+    double v_avg = v_loc_tot_.integral() / grid_.volume();
+
+    printf("DEBUG: v_avg = %.10f Ha\n", v_avg);
+
+    // Shift potential to set average to zero
+    // This makes eigenvalues relative to the vacuum level
+    size_t n = v_loc_tot_.size();
+    double* d_v = v_loc_tot_.data();
+
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+
+    shift_potential_kernel<<<blocks, threads>>>(n, d_v, v_avg);
+    CHECK(cudaGetLastError());
+    grid_.synchronize();
+
+    printf("DEBUG: Potential shifted by %.10f Ha\n", v_avg);
 }
 
 void Hamiltonian::apply(Wavefunction& psi, Wavefunction& h_psi) {

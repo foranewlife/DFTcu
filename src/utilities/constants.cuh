@@ -22,6 +22,9 @@ const double EX_LDA_COEFF = -0.7385587663820224;  // -3/4 * (3/pi)^(1/3)
 // Value computed using double-precision arithmetic for consistency with other constants.
 // Note: The last digit may differ due to floating-point calculation differences across platforms.
 
+// Numerical limits
+const int MAX_ATOMS_PSEUDO = 512;
+
 }  // namespace constants
 
 }  // namespace dftcu

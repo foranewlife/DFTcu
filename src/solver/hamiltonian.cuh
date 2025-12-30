@@ -46,6 +46,17 @@ class Hamiltonian {
     /** @brief Update the local potential from the evaluator */
     void update_potentials(const RealField& rho);
 
+    /** @brief Check if non-local pseudopotential is present */
+    bool has_nonlocal() const { return nonlocal_ != nullptr; }
+
+    /** @brief Get reference to evaluator */
+    Evaluator& get_evaluator() { return evaluator_; }
+    const Evaluator& get_evaluator() const { return evaluator_; }
+
+    /** @brief Get reference to non-local pseudopotential */
+    NonLocalPseudo& get_nonlocal() { return *nonlocal_; }
+    const NonLocalPseudo& get_nonlocal() const { return *nonlocal_; }
+
   private:
     Grid& grid_;
     Evaluator& evaluator_;
