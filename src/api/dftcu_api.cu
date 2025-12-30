@@ -9,12 +9,14 @@
 #include "functional/xc/lda_pz.cuh"
 #include "functional/xc/pbe.cuh"
 #include "model/atoms.cuh"
+#include "model/density_builder.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
 #include "model/wavefunction.cuh"
 #include "solver/davidson.cuh"
 #include "solver/evaluator.cuh"
 #include "solver/hamiltonian.cuh"
+#include "solver/scf.cuh"
 
 #include <pybind11/complex.h>
 #include <pybind11/numpy.h>
@@ -32,27 +34,34 @@ PYBIND11_MODULE(dftcu, m) {
         .def("dv", &dftcu::Grid::dv)
         .def("nnr", &dftcu::Grid::nnr)
         .def("g2max", &dftcu::Grid::g2max)
-                .def("gg", [](dftcu::Grid& self) {
-                    std::vector<double> h_gg(self.nnr());
-                    CHECK(cudaMemcpy(h_gg.data(), self.gg(), self.nnr() * sizeof(double), cudaMemcpyDeviceToHost));
-                    return h_gg;
-                })
-                .def("gx", [](dftcu::Grid& self) {
-                    std::vector<double> h_gx(self.nnr());
-                    CHECK(cudaMemcpy(h_gx.data(), self.gx(), self.nnr() * sizeof(double), cudaMemcpyDeviceToHost));
-                    return h_gx;
-                })
-                .def("gy", [](dftcu::Grid& self) {
-                    std::vector<double> h_gy(self.nnr());
-                    CHECK(cudaMemcpy(h_gy.data(), self.gy(), self.nnr() * sizeof(double), cudaMemcpyDeviceToHost));
-                    return h_gy;
-                })
-                .def("gz", [](dftcu::Grid& self) {
-                    std::vector<double> h_gz(self.nnr());
-                    CHECK(cudaMemcpy(h_gz.data(), self.gz(), self.nnr() * sizeof(double), cudaMemcpyDeviceToHost));
-                    return h_gz;
-                });
-        
+        .def("synchronize", &dftcu::Grid::synchronize)
+        .def("gg",
+             [](dftcu::Grid& self) {
+                 std::vector<double> h_gg(self.nnr());
+                 CHECK(cudaMemcpy(h_gg.data(), self.gg(), self.nnr() * sizeof(double),
+                                  cudaMemcpyDeviceToHost));
+                 return h_gg;
+             })
+        .def("gx",
+             [](dftcu::Grid& self) {
+                 std::vector<double> h_gx(self.nnr());
+                 CHECK(cudaMemcpy(h_gx.data(), self.gx(), self.nnr() * sizeof(double),
+                                  cudaMemcpyDeviceToHost));
+                 return h_gx;
+             })
+        .def("gy",
+             [](dftcu::Grid& self) {
+                 std::vector<double> h_gy(self.nnr());
+                 CHECK(cudaMemcpy(h_gy.data(), self.gy(), self.nnr() * sizeof(double),
+                                  cudaMemcpyDeviceToHost));
+                 return h_gy;
+             })
+        .def("gz", [](dftcu::Grid& self) {
+            std::vector<double> h_gz(self.nnr());
+            CHECK(cudaMemcpy(h_gz.data(), self.gz(), self.nnr() * sizeof(double),
+                             cudaMemcpyDeviceToHost));
+            return h_gz;
+        });
 
     py::class_<dftcu::RealField>(m, "RealField")
         .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
@@ -113,9 +122,10 @@ PYBIND11_MODULE(dftcu, m) {
                  self.copy_to_host(static_cast<std::complex<double>*>(buf.ptr));
              })
         .def("get_coefficients", &dftcu::Wavefunction::get_coefficients)
-        .def("set_coefficients", [](dftcu::Wavefunction& self, const std::vector<std::complex<double>>& coeffs, int band) {
-            self.set_coefficients(coeffs, band);
-        });
+        .def("set_coefficients",
+             [](dftcu::Wavefunction& self, const std::vector<std::complex<double>>& coeffs,
+                int band) { self.set_coefficients(coeffs, band); })
+        .def("compute_kinetic_energy", &dftcu::Wavefunction::compute_kinetic_energy);
 
     py::class_<dftcu::Evaluator>(m, "Evaluator")
         .def(py::init<dftcu::Grid&>())
@@ -209,6 +219,7 @@ PYBIND11_MODULE(dftcu, m) {
              py::arg("atoms"))
         .def("set_vloc", &dftcu::LocalPseudo::set_vloc)
         .def("set_vloc_radial", &dftcu::LocalPseudo::set_vloc_radial)
+        .def("set_valence_charge", &dftcu::LocalPseudo::set_valence_charge)
         .def("compute_potential",
              [](dftcu::LocalPseudo& self, dftcu::RealField& vloc) { self.compute(vloc); })
         .def("compute", [](dftcu::LocalPseudo& self, const dftcu::RealField& rho,
@@ -218,12 +229,48 @@ PYBIND11_MODULE(dftcu, m) {
         .def(py::init<dftcu::Grid&, dftcu::Evaluator&>())
         .def("update_potentials", &dftcu::Hamiltonian::update_potentials)
         .def("apply", &dftcu::Hamiltonian::apply)
-        .def("set_nonlocal", &dftcu::Hamiltonian::set_nonlocal);
+        .def("set_nonlocal", &dftcu::Hamiltonian::set_nonlocal)
+        .def("v_loc", &dftcu::Hamiltonian::v_loc, py::return_value_policy::reference);
 
     py::class_<dftcu::DavidsonSolver>(m, "DavidsonSolver")
         .def(py::init<dftcu::Grid&, int, double>(), py::arg("grid"), py::arg("max_iter") = 50,
              py::arg("tol") = 1e-6)
         .def("solve", &dftcu::DavidsonSolver::solve);
+
+    // SCF Solver
+    py::class_<dftcu::SCFSolver::Options>(m, "SCFOptions")
+        .def(py::init<>())
+        .def_readwrite("max_iter", &dftcu::SCFSolver::Options::max_iter)
+        .def_readwrite("e_conv", &dftcu::SCFSolver::Options::e_conv)
+        .def_readwrite("rho_conv", &dftcu::SCFSolver::Options::rho_conv)
+        .def_readwrite("mixing_beta", &dftcu::SCFSolver::Options::mixing_beta)
+        .def_readwrite("davidson_max_iter", &dftcu::SCFSolver::Options::davidson_max_iter)
+        .def_readwrite("davidson_tol", &dftcu::SCFSolver::Options::davidson_tol)
+        .def_readwrite("verbose", &dftcu::SCFSolver::Options::verbose);
+
+    py::class_<dftcu::SCFSolver>(m, "SCFSolver")
+        .def(py::init([](dftcu::Grid& grid) {
+                 return new dftcu::SCFSolver(grid, dftcu::SCFSolver::Options());
+             }),
+             py::arg("grid"))
+        .def(py::init<dftcu::Grid&, const dftcu::SCFSolver::Options&>(), py::arg("grid"),
+             py::arg("options"))
+        .def("solve", &dftcu::SCFSolver::solve, py::arg("ham"), py::arg("psi"),
+             py::arg("occupations"), py::arg("rho_init"))
+        .def("is_converged", &dftcu::SCFSolver::is_converged)
+        .def("num_iterations", &dftcu::SCFSolver::num_iterations)
+        .def("get_history", [](const dftcu::SCFSolver& self) {
+            auto hist = self.get_history();
+            // Convert to numpy array for easy Python access
+            py::array_t<double> result({(py::ssize_t)hist.size(), (py::ssize_t)4});
+            auto r = result.mutable_unchecked<2>();
+            for (size_t i = 0; i < hist.size(); ++i) {
+                for (size_t j = 0; j < 4; ++j) {
+                    r(i, j) = hist[i][j];
+                }
+            }
+            return result;
+        });
 
     py::class_<dftcu::NonLocalPseudo, std::shared_ptr<dftcu::NonLocalPseudo>>(m, "NonLocalPseudo")
         .def(py::init<dftcu::Grid&>())
@@ -245,4 +292,9 @@ PYBIND11_MODULE(dftcu, m) {
         .def("clear", &dftcu::NonLocalPseudo::clear)
         .def("calculate_energy", &dftcu::NonLocalPseudo::calculate_energy)
         .def_property_readonly("num_projectors", &dftcu::NonLocalPseudo::num_projectors);
+
+    py::class_<dftcu::DensityBuilder>(m, "DensityBuilder")
+        .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())
+        .def("set_atomic_rho_g", &dftcu::DensityBuilder::set_atomic_rho_g)
+        .def("build_density", &dftcu::DensityBuilder::build_density);
 }

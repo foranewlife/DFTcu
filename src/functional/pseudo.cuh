@@ -39,6 +39,13 @@ class LocalPseudo {
     void set_vloc_radial(int type, const std::vector<double>& q, const std::vector<double>& v_q);
 
     /**
+     * @brief Set valence charge for an atom type.
+     * @param type Atom type index.
+     * @param zv Valence charge (number of valence electrons).
+     */
+    void set_valence_charge(int type, double zv);
+
+    /**
      * @brief Compute the local pseudopotential on the real space grid.
      * @param vloc_r Output real space potential field.
      */
@@ -53,6 +60,7 @@ class LocalPseudo {
     Grid& grid_;
     std::shared_ptr<Atoms> atoms_;
     GPU_Vector<double> vloc_types_;
+    GPU_Vector<double> zv_; /**< Valence charges for each atom type */
     int num_types_ = 0;
     ComplexField v_g_; /**< Persistent buffer for G-space potential */
 };

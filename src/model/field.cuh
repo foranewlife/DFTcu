@@ -56,6 +56,12 @@ class RealField : public Expr<RealField> {
     void copy_from_host(const double* h_data) { data_.copy_from_host(h_data, grid_.stream()); }
     void copy_to_host(double* h_data) const { data_.copy_to_host(h_data, grid_.stream()); }
 
+    /** @brief Copy data from another RealField (device to device) */
+    void copy_from(const RealField& other) {
+        CHECK(cudaMemcpyAsync(data_.data(), other.data_.data(), data_.size() * sizeof(double),
+                              cudaMemcpyDeviceToDevice, grid_.stream()));
+    }
+
     double* data() { return data_.data(); }
     const double* data() const { return data_.data(); }
     size_t size() const { return data_.size(); }

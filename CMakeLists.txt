@@ -102,6 +102,7 @@ if(BUILD_WITH_CUDA)
     # Core library sources
     set(DFTCU_CORE_SOURCES
         src/model/grid.cu
+        src/model/density_builder.cu
         src/model/wavefunction.cu
         src/functional/hartree.cu
         src/functional/ewald.cu
@@ -118,6 +119,7 @@ if(BUILD_WITH_CUDA)
         src/solver/evaluator.cu
         src/solver/hamiltonian.cu
         src/solver/davidson.cu
+        src/solver/scf.cu
         src/solver/optimizer.cu
         src/solver/tn_optimizer_legacy.cu
         src/utilities/kernels.cu

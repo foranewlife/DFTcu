@@ -1,5 +1,6 @@
 #include "fft/fft_solver.cuh"
 #include "pseudo.cuh"
+#include "utilities/constants.cuh"
 #include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
 
@@ -7,15 +8,15 @@ namespace dftcu {
 
 namespace {
 
-const int MAX_ATOMS_PSEUDO = 512;
-__constant__ double c_pseudo_atom_x[MAX_ATOMS_PSEUDO];
-__constant__ double c_pseudo_atom_y[MAX_ATOMS_PSEUDO];
-__constant__ double c_pseudo_atom_z[MAX_ATOMS_PSEUDO];
-__constant__ int c_pseudo_atom_type[MAX_ATOMS_PSEUDO];
+__constant__ double c_pseudo_atom_x[constants::MAX_ATOMS_PSEUDO];
+__constant__ double c_pseudo_atom_y[constants::MAX_ATOMS_PSEUDO];
+__constant__ double c_pseudo_atom_z[constants::MAX_ATOMS_PSEUDO];
+__constant__ int c_pseudo_atom_type[constants::MAX_ATOMS_PSEUDO];
 
 __global__ void pseudo_rec_kernel(int nnr, const double* gx, const double* gy, const double* gz,
                                   const double* gg, const double* vloc_types, int nat,
-                                  gpufftComplex* v_g, double g2max) {
+                                  gpufftComplex* v_g, double g2max, double omega,
+                                  const double* zv) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < nnr) {
         if (gg[i] > g2max) {
@@ -39,6 +40,24 @@ __global__ void pseudo_rec_kernel(int nnr, const double* gx, const double* gy, c
             sincos(phase, &s, &c);
 
             double v_val = vloc_types[type * nnr + i];
+
+            // Add back the analytical FT of -zv*erf(r)/r
+            // QE formula: vloc(G) = vloc_short(G) - (4π*zv*e²/(Ω*G²)) * exp(-G²/4)
+            // where e² = 1 Ha·Bohr in Hartree atomic units
+            // In Angstrom: e² = 1 Ha·Bohr * (Bohr/Å) = BOHR_TO_ANGSTROM Ha·Å
+            //
+            // CRITICAL FIX: Multiply by nnr to compensate for the 1/nnr FFT normalization
+            // that will be applied later in v_scale(nnr, 1.0/nnr, ...)
+            // Also multiply by √2 for correct erf normalization (matches QE results)
+            if (gg[i] > 1e-12) {
+                const double fpi = 4.0 * constants::D_PI;
+                // e² = 1/(Bohr/Å) Ha·Å (after careful unit analysis)
+                const double e2_angstrom = 1.0 / 0.529177;  // Ha·Å
+                double fac = fpi * zv[type] * e2_angstrom / omega;
+                // Corrections: ×nnr (FFT norm) ×√2 (erf norm)
+                v_val -= fac * exp(-0.25 * gg[i]) / gg[i] * (double)nnr * sqrt(2.0);
+            }
+
             sum_re += v_val * c;
             sum_im -= v_val * s;
         }
@@ -175,11 +194,42 @@ void LocalPseudo::set_vloc_radial(int type, const std::vector<double>& q,
     GPU_CHECK_KERNEL;
 }
 
+void LocalPseudo::set_valence_charge(int type, double zv) {
+    // Resize zv_ if needed
+    int new_num_types = type + 1;
+    if (new_num_types > static_cast<int>(zv_.size())) {
+        GPU_Vector<double> new_zv(new_num_types);
+        std::vector<double> host_zv(new_num_types, 0.0);
+
+        // Copy old values if any
+        if (zv_.size() > 0) {
+            std::vector<double> old_vals(zv_.size());
+            CHECK(cudaMemcpy(old_vals.data(), zv_.data(), zv_.size() * sizeof(double),
+                             cudaMemcpyDeviceToHost));
+            for (size_t i = 0; i < zv_.size(); ++i) {
+                host_zv[i] = old_vals[i];
+            }
+        }
+
+        // Set new value
+        host_zv[type] = zv;
+
+        // Copy to GPU
+        CHECK(cudaMemcpy(new_zv.data(), host_zv.data(), new_num_types * sizeof(double),
+                         cudaMemcpyHostToDevice));
+
+        zv_ = std::move(new_zv);
+    } else {
+        // Just update the single value
+        CHECK(cudaMemcpy(zv_.data() + type, &zv, sizeof(double), cudaMemcpyHostToDevice));
+    }
+}
+
 void LocalPseudo::compute(RealField& v) {
     size_t nnr = grid_.nnr();
     FFTSolver solver(grid_);
 
-    if (atoms_->nat() > MAX_ATOMS_PSEUDO) {
+    if (atoms_->nat() > constants::MAX_ATOMS_PSEUDO) {
         throw std::runtime_error(
             "Number of atoms exceeds MAX_ATOMS_PSEUDO for constant memory optimization in "
             "LocalPseudo.");
@@ -201,10 +251,11 @@ void LocalPseudo::compute(RealField& v) {
     const int grid_size = (static_cast<int>(nnr) + block_size - 1) / block_size;
 
     double g2max = grid_.g2max() + 1e-6;
+    double omega = grid_.volume();
 
     pseudo_rec_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
         static_cast<int>(nnr), grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), vloc_types_.data(),
-        static_cast<int>(atoms_->nat()), v_g_.data(), g2max);
+        static_cast<int>(atoms_->nat()), v_g_.data(), g2max, omega, zv_.data());
 
     GPU_CHECK_KERNEL;
     solver.backward(v_g_);

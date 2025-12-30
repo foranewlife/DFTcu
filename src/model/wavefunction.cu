@@ -71,6 +71,31 @@ __global__ void accumulate_density_kernel(size_t n, const gpufftComplex* psi_r, 
     }
 }
 
+__global__ void kinetic_energy_kernel(size_t n, const double* gg, const gpufftComplex* psi,
+                                      double* out) {
+    extern __shared__ double sdata[];
+    int tid = threadIdx.x;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    double val = 0.0;
+    if (i < n) {
+        val = 0.5 * gg[i] * (psi[i].x * psi[i].x + psi[i].y * psi[i].y);
+    }
+    sdata[tid] = val;
+    __syncthreads();
+
+    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            sdata[tid] += sdata[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        atomicAdd(out, sdata[0]);
+    }
+}
+
 }  // namespace
 
 Wavefunction::Wavefunction(Grid& grid, int num_bands, double encut)
@@ -235,6 +260,37 @@ void Wavefunction::compute_norms(std::vector<double>& norms) {
     }
 }
 
+double Wavefunction::compute_kinetic_energy(const std::vector<double>& occupations) {
+    size_t n = grid_.nnr();
+    double total_ek = 0.0;
+
+    double* d_ek;
+    CHECK(cudaMalloc(&d_ek, sizeof(double)));
+
+    const int block_size = 256;
+    const int grid_size = (n + block_size - 1) / block_size;
+
+    for (int nb = 0; nb < num_bands_; ++nb) {
+        if (occupations[nb] < 1e-12)
+            continue;
+
+        CHECK(cudaMemset(d_ek, 0, sizeof(double)));
+        kinetic_energy_kernel<<<grid_size, block_size, block_size * sizeof(double),
+                                grid_.stream()>>>(n, grid_.gg(), band_data(nb), d_ek);
+        GPU_CHECK_KERNEL;
+
+        double h_ek;
+        CHECK(cudaMemcpy(&h_ek, d_ek, sizeof(double), cudaMemcpyDeviceToHost));
+        total_ek += occupations[nb] * h_ek;
+    }
+
+    CHECK(cudaFree(d_ek));
+    // FIXED: QE wavefunction normalization is sum |C_G|^2 = 1 (no volume factor)
+    // Kinetic energy: T = sum f_n * sum_G 0.5 * G^2 * |C_G|^2
+    // Do NOT multiply by volume
+    return total_ek;
+}
+
 std::complex<double> Wavefunction::dot(int band_a, int band_b) {
     size_t n = grid_.nnr();
     using Complex = thrust::complex<double>;
@@ -257,7 +313,7 @@ std::vector<int> Wavefunction::get_pw_indices() {
     size_t n = grid_.nnr();
     std::vector<int> host_mask(n);
     pw_mask_.copy_to_host(host_mask.data());
-    
+
     std::vector<int> indices;
     indices.reserve(num_pw_);
     for (int i = 0; i < n; ++i) {
