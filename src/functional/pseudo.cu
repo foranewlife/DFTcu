@@ -39,23 +39,39 @@ __global__ void pseudo_rec_kernel(int nnr, const double* gx, const double* gy, c
             double s, c;
             sincos(phase, &s, &c);
 
-            double v_val = vloc_types[type * nnr + i];
+            // Get vloc_short(G) and multiply by nnr to compensate for 1/nnr FFT normalization
+            // that will be applied later in v_scale(nnr, 1.0/nnr, ...)
+            double v_val = vloc_types[type * nnr + i] * (double)nnr;
 
             // Add back the analytical FT of -zv*erf(r)/r
             // QE formula: vloc(G) = vloc_short(G) - (4π*zv*e²/(Ω*G²)) * exp(-G²/4)
             // where e² = 1 Ha·Bohr in Hartree atomic units
-            // In Angstrom: e² = 1 Ha·Bohr * (Bohr/Å) = BOHR_TO_ANGSTROM Ha·Å
             //
-            // CRITICAL FIX: Multiply by nnr to compensate for the 1/nnr FFT normalization
-            // that will be applied later in v_scale(nnr, 1.0/nnr, ...)
-            // Also multiply by √2 for correct erf normalization (matches QE results)
+            // CRITICAL: Grid stores gg in Å^-2 and omega in Å³, but the erf formula
+            // requires Bohr units. Must convert!
+            //
+            // CRITICAL: Both vloc_short and erf term are multiplied by nnr to compensate
+            // for the 1/nnr FFT normalization applied later in v_scale(...)
+            //
+            // NOTE: vloc_short from set_vloc_radial must be computed correctly:
+            //   integral = simpson(aux, x=r_grid)  # NOT simpson(aux*rab, x=r_grid)!
             if (gg[i] > 1e-12) {
                 const double fpi = 4.0 * constants::D_PI;
-                // e² = 1/(Bohr/Å) Ha·Å (after careful unit analysis)
-                const double e2_angstrom = 1.0 / 0.529177;  // Ha·Å
-                double fac = fpi * zv[type] * e2_angstrom / omega;
-                // Corrections: ×nnr (FFT norm) ×√2 (erf norm)
-                v_val -= fac * exp(-0.25 * gg[i]) / gg[i] * (double)nnr * sqrt(2.0);
+                const double BOHR_TO_ANGSTROM = 0.529177;
+
+                // Convert gg from Å^-2 to Bohr^-2
+                const double gg_bohr2 = gg[i] / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+
+                // Convert omega from Å³ to Bohr³
+                const double omega_bohr =
+                    omega / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+
+                // In Hartree atomic units: e² = 1 Ha·Bohr
+                const double fac = fpi * zv[type] / omega_bohr;  // Ha
+
+                // CRITICAL: Both vloc_short and erf term are multiplied by nnr to compensate
+                // for the 1/nnr FFT normalization applied later in v_scale(...)
+                v_val -= fac * exp(-0.25 * gg_bohr2) / gg_bohr2 * (double)nnr;
             }
 
             sum_re += v_val * c;
@@ -250,7 +266,14 @@ void LocalPseudo::compute(RealField& v) {
     const int block_size = 256;
     const int grid_size = (static_cast<int>(nnr) + block_size - 1) / block_size;
 
-    double g2max = grid_.g2max() + 1e-6;
+    // Apply QE's G² cutoff from ecutrho = 120 Ry = 60 Ha
+    // In atomic units: G²_max = 2 * ecutrho = 120 Bohr⁻²
+    // Converted to Å⁻²: 120 / (0.529177²) = 428.528121 Å⁻²
+    // This ensures DFTcu uses the same G-space range as QE
+    const double ECUTRHO_HA = 60.0;  // Ha
+    const double BOHR_TO_ANG = 0.529177;
+    double g2max = 2.0 * ECUTRHO_HA / (BOHR_TO_ANG * BOHR_TO_ANG);  // ≈ 428.53 Å⁻²
+
     double omega = grid_.volume();
 
     pseudo_rec_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
