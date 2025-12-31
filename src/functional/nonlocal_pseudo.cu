@@ -158,8 +158,12 @@ __global__ void manual_apply_nl_kernel(int num_proj, int nbands, int n, double o
             sum_x += p.x * proj_val.x - p.y * proj_val.y;
             sum_y += p.x * proj_val.y + p.y * proj_val.x;
         }
-        hpsi[idx].x += omega * sum_x;
-        hpsi[idx].y += omega * sum_y;
+        // Physical projectors Beta_lm(G) already include 1/sqrt(Omega)
+        // Overlaps P = sum beta* psi. Energy E = D |P|^2.
+        // The action H|psi> = V_nl|psi> = Sum D |beta><beta|psi>
+        // No extra Omega factor is needed for discrete G-sum logic.
+        hpsi[idx].x += sum_x;
+        hpsi[idx].y += sum_y;
     }
 }
 
@@ -244,7 +248,8 @@ void NonLocalPseudo::init_dij(int type, const std::vector<double>& dij) {
     d_ij_[type].resize(nbeta, std::vector<double>(nbeta));
     for (int i = 0; i < nbeta; ++i) {
         for (int j = 0; j < nbeta; ++j) {
-            d_ij_[type][i][j] = dij[i * nbeta + j];
+            // Convert Ry (QE) to Ha (DFTcu)
+            d_ij_[type][i][j] = dij[i * nbeta + j] * 0.5;
         }
     }
 }
@@ -430,7 +435,7 @@ double NonLocalPseudo::calculate_energy(const Wavefunction& psi,
         energy += occupations[n_idx] * band_energy;
     }
 
-    return energy * omega_;
+    return energy;
 }
 
 }  // namespace dftcu
