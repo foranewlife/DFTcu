@@ -79,7 +79,9 @@ __global__ void kinetic_energy_kernel(size_t n, const double* gg, const gpufftCo
 
     double val = 0.0;
     if (i < n) {
-        val = 0.5 * gg[i] * (psi[i].x * psi[i].x + psi[i].y * psi[i].y);
+        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        double g2_bohr = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+        val = 0.5 * g2_bohr * (psi[i].x * psi[i].x + psi[i].y * psi[i].y);
     }
     sdata[tid] = val;
     __syncthreads();
@@ -185,7 +187,7 @@ void Wavefunction::compute_density(const std::vector<double>& occupations, RealF
     const int grid_size_v = (n + block_size - 1) / block_size;
     // Physical Normalization:
     // rho(r) = 1/Volume * sum( f_n * |IFFT_unnorm(C_G)|^2 )
-    double inv_vol = 1.0 / grid_.volume();
+    double inv_vol = 1.0 / grid_.volume_bohr();
 
     for (int nb = 0; nb < num_bands_; ++nb) {
         if (occupations[nb] < 1e-12)

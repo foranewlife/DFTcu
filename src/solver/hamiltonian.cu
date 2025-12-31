@@ -19,7 +19,9 @@ __global__ void apply_kinetic_kernel(size_t n, int num_bands, const double* gg,
     size_t total_size = n * num_bands;
     if (i < total_size) {
         int grid_idx = i % n;
-        double t = 0.5 * gg[grid_idx];
+        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        double g2_bohr = gg[grid_idx] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+        double t = 0.5 * g2_bohr;
         h_psi[i].x = t * psi[i].x;
         h_psi[i].y = t * psi[i].y;
     }
@@ -51,28 +53,13 @@ Hamiltonian::Hamiltonian(Grid& grid, Evaluator& evaluator,
 
 void Hamiltonian::update_potentials(const RealField& rho) {
     // Compute the local potential from all functionals
-    double energy = evaluator_.compute(rho, v_loc_tot_);
+    // This includes V_loc, V_H, and V_XC.
+    // The G=0 component of V_loc (Alpha term) is naturally included.
+    evaluator_.compute(rho, v_loc_tot_);
 
-    // Adjust potential zero-point to match QE convention
-    // QE sets the vacuum level (or average potential) as the reference zero
-    // This is crucial for correct eigenvalue alignment
-    double v_avg = v_loc_tot_.integral() / grid_.volume();
-
-    printf("DEBUG: v_avg = %.10f Ha\n", v_avg);
-
-    // Shift potential to set average to zero
-    // This makes eigenvalues relative to the vacuum level
-    size_t n = v_loc_tot_.size();
-    double* d_v = v_loc_tot_.data();
-
-    int threads = 256;
-    int blocks = (n + threads - 1) / threads;
-
-    shift_potential_kernel<<<blocks, threads>>>(n, d_v, v_avg);
-    CHECK(cudaGetLastError());
+    // No longer shifting potential average to zero.
+    // We follow QE's convention where the zero-point is defined by the pseudopotential.
     grid_.synchronize();
-
-    printf("DEBUG: Potential shifted by %.10f Ha\n", v_avg);
 }
 
 void Hamiltonian::apply(Wavefunction& psi, Wavefunction& h_psi) {
@@ -102,9 +89,6 @@ void Hamiltonian::apply(Wavefunction& psi, Wavefunction& h_psi) {
         GPU_CHECK_KERNEL;
 
         fft.forward(tmp_g);
-        // Normalize the FFT output to match physical conventions
-        v_scale(2 * n, 1.0 / (double)n, (const double*)tmp_g.data(), (double*)tmp_g.data(),
-                grid_.stream());
 
         accumulate_hpsi_kernel<<<grid_size_v, block_size, 0, grid_.stream()>>>(n, tmp_g.data(),
                                                                                h_psi.band_data(nb));

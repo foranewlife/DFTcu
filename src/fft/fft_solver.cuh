@@ -44,6 +44,12 @@ class FFTSolver {
     void forward(ComplexField& field) {
         CUFFT_CHECK(cufftExecZ2Z(plan_, (cufftDoubleComplex*)field.data(),
                                  (cufftDoubleComplex*)field.data(), CUFFT_FORWARD));
+        // Add 1/N scaling to get physical quantity in G-space
+        size_t n = grid_.nnr();
+        const int block_size = 256;
+        const int grid_size = (n + block_size - 1) / block_size;
+        scale_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, field.data(),
+                                                                   1.0 / (double)n);
     }
 
     void backward(ComplexField& field) {

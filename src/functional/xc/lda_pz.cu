@@ -96,7 +96,7 @@ double LDA_PZ::compute(const RealField& rho, RealField& v_xc) {
     for (double s : h_partial_sums)
         total_energy += s;
 
-    return total_energy * dv;
+    return total_energy * grid.dv_bohr();
 }
 
 }  // namespace dftcu
