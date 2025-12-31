@@ -133,51 +133,19 @@ PYBIND11_MODULE(dftcu, m) {
     py::class_<dftcu::Evaluator>(m, "Evaluator")
         .def(py::init<dftcu::Grid&>())
         .def("add_functional", &dftcu::Evaluator::add_functional)
-        .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::ThomasFermi> f) {
-                 self.add_functional(f);
-             })
-        .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::vonWeizsacker> f) {
-                 self.add_functional(f);
-             })
-        .def("add_functional", [](dftcu::Evaluator& self,
-                                  std::shared_ptr<dftcu::WangTeter> f) { self.add_functional(f); })
-        .def("add_functional", [](dftcu::Evaluator& self,
-                                  std::shared_ptr<dftcu::revHC> f) { self.add_functional(f); })
-        .def("add_functional", [](dftcu::Evaluator& self,
-                                  std::shared_ptr<dftcu::Hartree> f) { self.add_functional(f); })
-        .def("add_functional", [](dftcu::Evaluator& self,
-                                  std::shared_ptr<dftcu::LDA_PZ> f) { self.add_functional(f); })
-        .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::PBE> f) { self.add_functional(f); })
-        .def("add_functional", [](dftcu::Evaluator& self,
-                                  std::shared_ptr<dftcu::Ewald> f) { self.add_functional(f); })
-        .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::LocalPseudo> f) {
-                 self.add_functional(f);
-             })
         .def("compute", &dftcu::Evaluator::compute);
 
     py::class_<dftcu::Hartree, std::shared_ptr<dftcu::Hartree>>(m, "Hartree")
         .def(py::init<>())
-        .def(py::init([](dftcu::Grid& grid) {
-            auto ptr = std::make_shared<dftcu::Hartree>();
-            dftcu::RealField rho(grid);
-            rho.fill(0.0);
-            dftcu::RealField vh(grid);
-            double energy = 0.0;
-            ptr->compute(rho, vh, energy);
-            return ptr;
-        }))
         .def(
             "compute",
-            [](dftcu::Hartree& self, const dftcu::RealField& rho, dftcu::RealField& v_out) {
+            [](dftcu::Hartree& self, const dftcu::RealField& rho, dftcu::RealField& vh) {
                 double energy = 0.0;
-                self.compute(rho, v_out, energy);
+                self.compute(rho, vh, energy);
                 return energy;
             },
-            py::arg("rho"), py::arg("potential"));
+            py::arg("rho"), py::arg("vh"));
+
     py::class_<dftcu::LDA_PZ, std::shared_ptr<dftcu::LDA_PZ>>(m, "LDA_PZ")
         .def(py::init<>())
         .def(
@@ -186,6 +154,7 @@ PYBIND11_MODULE(dftcu, m) {
                 return self.compute(rho, v_out);
             },
             py::arg("rho"), py::arg("potential"));
+
     py::class_<dftcu::PBE, std::shared_ptr<dftcu::PBE>>(m, "PBE")
         .def(py::init<dftcu::Grid&>())
         .def(
@@ -194,6 +163,7 @@ PYBIND11_MODULE(dftcu, m) {
                 return self.compute(rho, v_out);
             },
             py::arg("rho"), py::arg("potential"));
+
     py::class_<dftcu::ThomasFermi, std::shared_ptr<dftcu::ThomasFermi>>(m, "ThomasFermi")
         .def(py::init<double>(), py::arg("coeff") = 1.0);
     py::class_<dftcu::vonWeizsacker, std::shared_ptr<dftcu::vonWeizsacker>>(m, "vonWeizsacker")
@@ -203,6 +173,7 @@ PYBIND11_MODULE(dftcu, m) {
              py::arg("alpha") = 5.0 / 6.0, py::arg("beta") = 5.0 / 6.0);
     py::class_<dftcu::revHC, std::shared_ptr<dftcu::revHC>>(m, "revHC")
         .def(py::init<double, double>(), py::arg("alpha") = 2.0, py::arg("beta") = 2.0 / 3.0);
+
     py::class_<dftcu::Ewald, std::shared_ptr<dftcu::Ewald>>(m, "Ewald")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>, double, double>(),
              py::arg("grid"), py::arg("atoms"), py::arg("precision") = 1e-8,
@@ -282,18 +253,8 @@ PYBIND11_MODULE(dftcu, m) {
             return result;
         });
 
-    py::class_<dftcu::Hartree>(m, "Hartree")
-        .def(py::init<>())
-        .def(
-            "compute",
-            [](dftcu::Hartree& self, const dftcu::RealField& rho, dftcu::RealField& vh) {
-                double energy = 0.0;
-                self.compute(rho, vh, energy);
-                return energy;
-            },
-            py::arg("rho"), py::arg("vh"));
-
-    .def(py::init<dftcu::Grid&>())
+    py::class_<dftcu::NonLocalPseudo, std::shared_ptr<dftcu::NonLocalPseudo>>(m, "NonLocalPseudo")
+        .def(py::init<dftcu::Grid&>())
         .def(
             "add_projector",
             [](dftcu::NonLocalPseudo& self, py::object beta_obj, double coupling) {

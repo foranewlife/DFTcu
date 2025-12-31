@@ -57,8 +57,18 @@ class Grid {
     size_t nnr() const { return nnr_; }
 
     double volume() const { return volume_; }
-    /** @brief Differential volume element dv = Volume / N */
+    /** @brief Unit cell volume in Bohr³ */
+    double volume_bohr() const {
+        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        return volume_ / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+    }
+    /** @brief Differential volume element dv = Volume / N (in Angstrom³) */
     double dv() const { return volume_ / (double)nnr_; }
+    /** @brief Differential volume element in Bohr³ */
+    double dv_bohr() const {
+        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        return dv() / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+    }
     const int* nr() const { return nr_; }
 
     /**
