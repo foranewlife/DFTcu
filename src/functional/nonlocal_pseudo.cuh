@@ -2,6 +2,7 @@
 #include <complex>
 #include <vector>
 
+#include "model/atoms.cuh"
 #include "model/grid.cuh"
 #include "model/wavefunction.cuh"
 #include "utilities/gpu_vector.cuh"
@@ -48,11 +49,61 @@ class NonLocalPseudo {
     /** @brief Calculate non-local energy contribution for a wavefunction */
     double calculate_energy(const Wavefunction& psi, const std::vector<double>& occupations);
 
+    /**
+     * @brief Initialize interpolation table for non-local projectors from radial data.
+     *
+     * This mimics QE's init_tab_beta. It computes:
+     *   tab(q, nb) = (4π/sqrt(Ω)) ∫ r β(r) j_l(qr) r dr
+     *
+     * @param type Atom type index.
+     * @param r_grid Radial grid points (Bohr).
+     * @param beta_r Projector functions on radial grid (units vary, usually Ha/Bohr).
+     *               beta_r[nb][ir] corresponds to r*beta_l(r).
+     * @param rab Radial grid integration weights.
+     * @param l_list Angular momentum for each projector.
+     * @param omega_angstrom Unit cell volume (Angstrom³).
+     */
+    void init_tab_beta(int type, const std::vector<double>& r_grid,
+                       const std::vector<std::vector<double>>& beta_r,
+                       const std::vector<double>& rab, const std::vector<int>& l_list,
+                       double omega_angstrom);
+
+    /**
+     * @brief Initialize the DIJ coupling matrix from radial data.
+     * @param type Atom type index.
+     * @param dij Coupling matrix (nb x nb) from UPF, provided as a flat vector.
+     */
+    void init_dij(int type, const std::vector<double>& dij);
+
+    /**
+     * @brief Compute projectors on the FFT grid using interpolation and structure factor.
+     * This fills the internal d_projectors_ buffer.
+     * @param atoms Atom positions and types.
+     */
+    void update_projectors(const Atoms& atoms);
+
     int num_projectors() const { return num_projectors_; }
 
   private:
     Grid& grid_;
     int num_projectors_ = 0;
+
+    // Interpolation table: tab_beta_[type][beta_idx][iq]
+    // Stores (4π/sqrt(Ω)) ∫ r² β(r) j_l(qr) dr
+    std::vector<std::vector<std::vector<double>>> tab_beta_;
+
+    // Angular momenta for each projector
+    std::vector<std::vector<int>> l_list_;
+
+    // Interpolation parameters (matching QE)
+    static constexpr double dq_ = 0.01;  // Bohr^-1
+    int nqx_ = 0;
+
+    // Unit cell volume in Bohr³
+    double omega_ = 0.0;
+
+    // Coupling matrix from UPF: d_ij_[type][nb1][nb2]
+    std::vector<std::vector<std::vector<double>>> d_ij_;
 
     // Projectors stored as [num_projectors][grid_nnr]
     GPU_Vector<gpufftComplex> d_projectors_;
