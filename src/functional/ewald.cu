@@ -21,12 +21,20 @@ __global__ void ewald_recip_kernel(size_t nnr, int nat, const double* gx, const 
                                    const double* gz, double eta, double gcut, double* energy) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < nnr) {
-        double g2 = gx[i] * gx[i] + gy[i] * gy[i] + gz[i] * gz[i];
+        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        double cur_gx = gx[i] * BOHR_TO_ANGSTROM;
+        double cur_gy = gy[i] * BOHR_TO_ANGSTROM;
+        double cur_gz = gz[i] * BOHR_TO_ANGSTROM;
+        double g2 = cur_gx * cur_gx + cur_gy * cur_gy + cur_gz * cur_gz;
+
         if (g2 > 1e-12 && g2 <= gcut) {
             double str_fac_real = 0.0;
             double str_fac_imag = 0.0;
             for (int ia = 0; ia < nat; ++ia) {
-                double gr = gx[i] * c_atom_x[ia] + gy[i] * c_atom_y[ia] + gz[i] * c_atom_z[ia];
+                double ax = c_atom_x[ia] / BOHR_TO_ANGSTROM;
+                double ay = c_atom_y[ia] / BOHR_TO_ANGSTROM;
+                double az = c_atom_z[ia] / BOHR_TO_ANGSTROM;
+                double gr = cur_gx * ax + cur_gy * ay + cur_gz * az;
                 str_fac_real += c_atom_q[ia] * cos(gr);
                 str_fac_imag -= c_atom_q[ia] * sin(gr);
             }
@@ -44,17 +52,18 @@ __global__ void ewald_real_kernel(int nat, const double* pos_x, const double* po
                                   double* energy_out) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < nat) {
+        const double BOHR_TO_ANGSTROM = 0.529177210903;
         double ei = 0.0;
-        double xi = pos_x[i];
-        double yi = pos_y[i];
-        double zi = pos_z[i];
+        double xi = pos_x[i] / BOHR_TO_ANGSTROM;
+        double yi = pos_y[i] / BOHR_TO_ANGSTROM;
+        double zi = pos_z[i] / BOHR_TO_ANGSTROM;
         double qi = charge[i];
 
         for (int j = 0; j < nat; ++j) {
             double qj = charge[j];
-            double xj = pos_x[j];
-            double yj = pos_y[j];
-            double zj = pos_z[j];
+            double xj = pos_x[j] / BOHR_TO_ANGSTROM;
+            double yj = pos_y[j] / BOHR_TO_ANGSTROM;
+            double zj = pos_z[j] / BOHR_TO_ANGSTROM;
 
             for (int nx = -3; nx <= 3; ++nx) {
                 for (int ny = -3; ny <= 3; ++ny) {
@@ -62,9 +71,9 @@ __global__ void ewald_real_kernel(int nat, const double* pos_x, const double* po
                         if (i == j && nx == 0 && ny == 0 && nz == 0)
                             continue;
 
-                        double dx = xi - (xj + nx * a00 + ny * a10 + nz * a20);
-                        double dy = yi - (yj + nx * a01 + ny * a11 + nz * a21);
-                        double dz = zi - (zj + nx * a02 + ny * a12 + nz * a22);
+                        double dx = xi - (xj + (nx * a00 + ny * a10 + nz * a20) / BOHR_TO_ANGSTROM);
+                        double dy = yi - (yj + (nx * a01 + ny * a11 + nz * a21) / BOHR_TO_ANGSTROM);
+                        double dz = zi - (zj + (nx * a02 + ny * a12 + nz * a22) / BOHR_TO_ANGSTROM);
                         double r2 = dx * dx + dy * dy + dz * dz;
                         if (r2 < rmax * rmax && r2 > 1e-14) {
                             double r = sqrt(r2);
@@ -85,20 +94,13 @@ Ewald::Ewald(Grid& grid, std::shared_ptr<Atoms> atoms, double precision, double 
     for (double c : atoms_->h_charge())
         charge_sum += c;
 
-    // Use actual gcut for alpha optimization
     double gcut = (gcut_hint > 0) ? gcut_hint : grid_.g2max();
 
-    // QE-style alpha selection:
-    // Find largest alpha such that error at gcut is below precision
-
-    // Initial value for alpha in the QE-style optimization algorithm.
     constexpr double INITIAL_ALPHA = 2.9;
-    // Decrement step for alpha in the QE-style optimization algorithm.
     constexpr double ALPHA_DECREMENT = 0.1;
 
     double alpha = INITIAL_ALPHA;
     for (int i = 0; i < 100; ++i) {
-        // Error estimate: 2 * Q^2 * sqrt(2*alpha/pi) * erfc(sqrt(gcut / 4 / alpha))
         double upperbound = 2.0 * charge_sum * charge_sum * sqrt(2.0 * alpha / constants::D_PI) *
                             erfc(sqrt(gcut / 4.0 / alpha));
         if (upperbound < precision_)
@@ -119,7 +121,6 @@ double Ewald::get_best_eta() {
 }
 
 double Ewald::compute_legacy() {
-    // Save current eta and use legacy one
     double saved_eta = eta_;
     eta_ = get_best_eta();
     double real = compute_real();
@@ -167,7 +168,11 @@ double Ewald::compute_recip_exact(double gcut) {
     double h_energy;
     energy.copy_to_host(&h_energy, grid_.stream());
     grid_.synchronize();
-    return 2.0 * constants::D_PI / grid_.volume() * h_energy;
+
+    const double BOHR_TO_ANGSTROM = 0.529177210903;
+    double vol_bohr = grid_.volume() / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+
+    return 2.0 * constants::D_PI / vol_bohr * h_energy;
 }
 
 double Ewald::compute_real() {
@@ -201,11 +206,11 @@ double Ewald::compute_corr() {
         charge_sq_sum += c * c;
     }
 
-    // QE style in Hartree (e2=1):
-    // E_self = -Z^2 * sqrt(alpha/pi)
-    double e_self = -sqrt(eta_ / constants::D_PI) * charge_sq_sum;
-    // E_bg   = -pi*Q^2 / (2*Omega*alpha)
-    double e_bg = -0.5 * constants::D_PI * charge_sum * charge_sum / (eta_ * grid_.volume());
+    const double BOHR_TO_ANGSTROM = 0.529177210903;
+    double vol_bohr = grid_.volume() / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+
+    double e_self = -charge_sq_sum * sqrt(eta_ / constants::D_PI);
+    double e_bg = -0.5 * constants::D_PI * charge_sum * charge_sum / (eta_ * vol_bohr);
 
     return e_self + e_bg;
 }

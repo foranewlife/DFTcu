@@ -282,8 +282,18 @@ PYBIND11_MODULE(dftcu, m) {
             return result;
         });
 
-    py::class_<dftcu::NonLocalPseudo, std::shared_ptr<dftcu::NonLocalPseudo>>(m, "NonLocalPseudo")
-        .def(py::init<dftcu::Grid&>())
+    py::class_<dftcu::Hartree>(m, "Hartree")
+        .def(py::init<>())
+        .def(
+            "compute",
+            [](dftcu::Hartree& self, const dftcu::RealField& rho, dftcu::RealField& vh) {
+                double energy = 0.0;
+                self.compute(rho, vh, energy);
+                return energy;
+            },
+            py::arg("rho"), py::arg("vh"));
+
+    .def(py::init<dftcu::Grid&>())
         .def(
             "add_projector",
             [](dftcu::NonLocalPseudo& self, py::object beta_obj, double coupling) {
