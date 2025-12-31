@@ -133,6 +133,30 @@ PYBIND11_MODULE(dftcu, m) {
     py::class_<dftcu::Evaluator>(m, "Evaluator")
         .def(py::init<dftcu::Grid&>())
         .def("add_functional", &dftcu::Evaluator::add_functional)
+        .def("add_functional",
+             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::ThomasFermi> f) {
+                 self.add_functional(f);
+             })
+        .def("add_functional",
+             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::vonWeizsacker> f) {
+                 self.add_functional(f);
+             })
+        .def("add_functional", [](dftcu::Evaluator& self,
+                                  std::shared_ptr<dftcu::WangTeter> f) { self.add_functional(f); })
+        .def("add_functional", [](dftcu::Evaluator& self,
+                                  std::shared_ptr<dftcu::revHC> f) { self.add_functional(f); })
+        .def("add_functional", [](dftcu::Evaluator& self,
+                                  std::shared_ptr<dftcu::Hartree> f) { self.add_functional(f); })
+        .def("add_functional", [](dftcu::Evaluator& self,
+                                  std::shared_ptr<dftcu::LDA_PZ> f) { self.add_functional(f); })
+        .def("add_functional",
+             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::PBE> f) { self.add_functional(f); })
+        .def("add_functional", [](dftcu::Evaluator& self,
+                                  std::shared_ptr<dftcu::Ewald> f) { self.add_functional(f); })
+        .def("add_functional",
+             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::LocalPseudo> f) {
+                 self.add_functional(f);
+             })
         .def("compute", &dftcu::Evaluator::compute);
 
     py::class_<dftcu::Hartree, std::shared_ptr<dftcu::Hartree>>(m, "Hartree")
