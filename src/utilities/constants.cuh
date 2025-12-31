@@ -7,6 +7,7 @@ namespace constants {
 // Physical constants
 const double D_PI = 3.14159265358979323846;
 const double D_PI2 = D_PI * D_PI;
+const double BOHR_TO_ANGSTROM = 0.529177;  // Bohr radius in Angstrom
 
 // Common density thresholds for numerical stability
 const double RHO_THRESHOLD = 1e-16;

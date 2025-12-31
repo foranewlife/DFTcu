@@ -217,13 +217,20 @@ PYBIND11_MODULE(dftcu, m) {
     py::class_<dftcu::LocalPseudo, std::shared_ptr<dftcu::LocalPseudo>>(m, "LocalPseudo")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>(), py::arg("grid"),
              py::arg("atoms"))
-        .def("set_vloc", &dftcu::LocalPseudo::set_vloc)
-        .def("set_vloc_radial", &dftcu::LocalPseudo::set_vloc_radial)
-        .def("set_valence_charge", &dftcu::LocalPseudo::set_valence_charge)
+        .def("init_tab_vloc", &dftcu::LocalPseudo::init_tab_vloc, py::arg("type"),
+             py::arg("r_grid"), py::arg("vloc_r"), py::arg("rab"), py::arg("zp"), py::arg("omega"))
+        .def("set_valence_charge", &dftcu::LocalPseudo::set_valence_charge, py::arg("type"),
+             py::arg("zp"))
         .def("compute_potential",
              [](dftcu::LocalPseudo& self, dftcu::RealField& vloc) { self.compute(vloc); })
         .def("compute", [](dftcu::LocalPseudo& self, const dftcu::RealField& rho,
-                           dftcu::RealField& v_out) { return self.compute(rho, v_out); });
+                           dftcu::RealField& v_out) { return self.compute(rho, v_out); })
+        .def("get_tab_vloc", &dftcu::LocalPseudo::get_tab_vloc, py::arg("type"))
+        .def("get_vloc_g_shells", &dftcu::LocalPseudo::get_vloc_g_shells, py::arg("type"),
+             py::arg("g_shells"))
+        .def("get_dq", &dftcu::LocalPseudo::get_dq)
+        .def("get_nqx", &dftcu::LocalPseudo::get_nqx)
+        .def("get_omega", &dftcu::LocalPseudo::get_omega);
 
     py::class_<dftcu::Hamiltonian>(m, "Hamiltonian")
         .def(py::init<dftcu::Grid&, dftcu::Evaluator&>())
