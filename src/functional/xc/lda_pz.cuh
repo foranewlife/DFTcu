@@ -37,6 +37,7 @@ class LDA_PZ {
     const char* name() const { return "LDA_PZ"; }
 
     void set_parameters(const Parameters& params) { params_ = params; }
+    void set_rho_threshold(double threshold) { params_.rho_threshold = threshold; }
 
   private:
     Parameters params_;

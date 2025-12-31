@@ -6,12 +6,15 @@
 namespace dftcu {
 
 namespace {
-void __global__ hartree_kernel(size_t size, gpufftComplex* rho_g, const double* gg) {
+void __global__ hartree_kernel(size_t size, gpufftComplex* rho_g, const double* gg, double gcut) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < size) {
         const double BOHR_TO_ANGSTROM = 0.529177210903;
-        double g2 = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
-        if (g2 > 1e-12) {
+        double g2_ang = gg[i];
+        double g2 = g2_ang * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+
+        // Match QE's sphere truncation: set VH=0 if G^2 > gcut
+        if (g2 > 1e-12 && (gcut < 0 || g2 <= gcut)) {
             double factor = 4.0 * constants::D_PI / g2;
             rho_g[i].x *= factor;
             rho_g[i].y *= factor;
@@ -47,7 +50,8 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
 
     const int block_size = 256;
     const int grid_size = (nnr + block_size - 1) / block_size;
-    hartree_kernel<<<grid_size, block_size, 0, grid.stream()>>>(nnr, rho_g_->data(), grid.gg());
+    hartree_kernel<<<grid_size, block_size, 0, grid.stream()>>>(nnr, rho_g_->data(), grid.gg(),
+                                                                gcut_);
     GPU_CHECK_KERNEL;
 
     fft_->backward(*rho_g_);

@@ -46,6 +46,10 @@ class Evaluator {
      */
     double compute(const RealField& rho, RealField& v_tot);
 
+    /** @brief Get access to functional components */
+    std::vector<Functional>& get_components() { return components_; }
+    const std::vector<Functional>& get_components() const { return components_; }
+
   private:
     Grid& grid_;                         /**< Associated simulation grid reference */
     std::vector<Functional> components_; /**< List of functional components */

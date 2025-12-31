@@ -29,8 +29,10 @@ __global__ void initialize_mask_kernel(size_t n, const double* gg, double encut,
                                        int* count) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
+        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        double g2_bohr = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
         // Plane wave condition: G^2/2 <= ENCUT
-        if (0.5 * gg[i] <= encut) {
+        if (0.5 * g2_bohr <= encut) {
             mask[i] = 1;
             atomicAdd(count, 1);
         } else {

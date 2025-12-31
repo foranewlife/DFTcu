@@ -72,6 +72,12 @@ class LocalPseudo {
     void compute(RealField& vloc_r);
 
     /**
+     * @brief Set G-vector cutoff for the local potential (in Bohr^-2).
+     * Set to -1 to use the full FFT grid.
+     */
+    void set_gcut(double gcut) { gcut_ = gcut; }
+
+    /**
      * @brief Unified interface for Evaluator: compute energy and add to potential.
      */
     double compute(const RealField& rho, RealField& v_out);
@@ -86,6 +92,18 @@ class LocalPseudo {
             return std::vector<double>();
         }
         return tab_vloc_[type];
+    }
+
+    /**
+     * @brief Get the G=0 term (alpha) for an atom type.
+     * @param type Atom type index.
+     * @return Alpha term in Hartree.
+     */
+    double get_alpha(int type) const {
+        if (type >= static_cast<int>(tab_vloc_.size()) || tab_vloc_[type].empty()) {
+            return 0.0;
+        }
+        return tab_vloc_[type][0];
     }
 
     /**
@@ -118,6 +136,9 @@ class LocalPseudo {
 
     // Unit cell volume in Bohr³
     double omega_ = 0.0;
+
+    // G-vector cutoff
+    double gcut_ = -1.0;
 
     // Interpolation parameters (matching QE)
     static constexpr double dq_ = 0.01;  // Bohr^-1

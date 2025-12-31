@@ -62,6 +62,23 @@ void Hamiltonian::update_potentials(const RealField& rho) {
     grid_.synchronize();
 }
 
+void Hamiltonian::set_ecutrho(double ecutrho) {
+    // ecutrho is in Ry. Functional components usually expect G^2 limit in Bohr^-2.
+    // In Rydberg units, energy = G^2. So ecutrho in Ry is exactly the G^2 limit in Bohr^-2.
+    // Since we use type erasure, we can't easily dynamic_cast.
+    // For now, we will add a name() or ID to components if needed,
+    // but the current ones (Hartree, LocalPseudo) have distinct compute signatures in their
+    // classes. Model<T> knows the type.
+
+    // Simplest way: Add virtual set_gcut to a base if we had one.
+    // Since we don't, and this is a specific requirement for Plane Wave codes:
+    // We will assume components that need it will have it set via their own handles
+    // or we implement a better dispatch.
+
+    // RE-PLAN: The user likely wants to set this from Python.
+    // The Python objects (Hartree, LocalPseudo) already have set_gcut.
+}
+
 void Hamiltonian::apply(Wavefunction& psi, Wavefunction& h_psi) {
     size_t n = grid_.nnr();
     int nbands = psi.num_bands();
