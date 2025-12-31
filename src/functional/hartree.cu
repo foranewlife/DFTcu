@@ -9,8 +9,12 @@ namespace {
 void __global__ hartree_kernel(size_t size, gpufftComplex* rho_g, const double* gg) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < size) {
-        if (gg[i] > 1e-12) {
-            double factor = 4.0 * constants::D_PI / gg[i];
+        // Convert G² from Å⁻² to Bohr⁻²
+        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        double g2 = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+
+        if (g2 > 1e-12) {
+            double factor = 4.0 * constants::D_PI / g2;
             rho_g[i].x *= factor;
             rho_g[i].y *= factor;
         } else {
