@@ -87,6 +87,18 @@ double SCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<d
             std::cout << std::setw(6) << iter << std::setw(20) << std::fixed
                       << std::setprecision(10) << e_total << std::setw(15) << std::scientific
                       << std::setprecision(2) << delta_e << std::setw(15) << delta_rho << "\n";
+
+            // Component breakdown
+            Evaluator& eval = ham.get_evaluator();
+            RealField vt(grid_);
+            double e_f = eval.compute(rho, vt);
+            double e_k = psi.compute_kinetic_energy(occupations) * 2.0;  // To Ry
+            double e_nl = 0.0;
+            if (ham.has_nonlocal())
+                e_nl = ham.get_nonlocal().calculate_energy(psi, occupations) * 2.0;
+
+            printf("      DEBUG Components (Ry): E_kin=%.6f, E_nl=%.6f, E_eval=%.6f\n", e_k, e_nl,
+                   e_f * 2.0);
         }
 
         // Check convergence (skip first iteration for delta_e check)
@@ -125,64 +137,35 @@ double SCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<d
 double SCFSolver::compute_total_energy(const std::vector<double>& eigenvalues,
                                        const std::vector<double>& occupations, Hamiltonian& ham,
                                        const RealField& rho) {
-    // KS-DFT Total Energy Formula with Double-Counting Correction:
-    // E_total = eband + deband + E_H + E_XC + E_Ewald
+    // Exact KS-DFT Total Energy Formula:
+    // E_total = E_band - ∫ ρ(r)V_eff(r) dr + E_functional(ρ)
     //
     // where:
-    //   eband  = Σ f_i · ε_i                   (band energy sum)
-    //   deband = -∫ ρ(r) · [V_H(r) + V_XC(r)] dr  (double-counting correction)
-    //   E_H    = Hartree energy
-    //   E_XC   = Exchange-correlation energy
-    //   E_Ewald = Ewald energy (ion-ion repulsion)
+    //   E_band = Σ f_i · ε_i is the sum of eigenvalues (in Hartree).
+    //   V_eff  = V_loc + V_H + V_XC is the total local potential.
+    //   E_functional = E_vloc + E_H + E_XC + E_ewald is the sum of energies from functionals.
     //
-    // The deband term corrects for the fact that E_H and E_XC are already
-    // included in the eigenvalues through the KS potential.
+    // Note: Since V_eff is unscaled (contains N_nr factor) if it comes from raw IFFT,
+    // and dv_bohr contains 1/N_nr factor, the product rho.dot(v_eff) * dv_bohr
+    // yields the correct physical energy in Hartree.
 
-    // 1. Calculate eband = Σ f_i · ε_i
+    // 1. Calculate E_band
     double eband = 0.0;
     for (size_t i = 0; i < eigenvalues.size(); ++i) {
         eband += occupations[i] * eigenvalues[i];
     }
 
-    // 2. Get the current local potential V_tot = V_H + V_XC + V_loc
-    const RealField& v_tot = ham.v_loc();
+    // 2. Calculate <rho | V_eff> using the total potential from the Hamiltonian
+    const RealField& v_eff = ham.v_loc();
+    double rho_dot_veff = rho.dot(v_eff) * grid_.dv_bohr();
 
-    // 3. We need to extract V_H and V_XC separately
-    // To do this, we need to compute them individually from the evaluator
-    // For now, use a simplified approach: compute all energies from evaluator
-
-    // Get evaluator to compute individual energies
+    // 3. Calculate E_functional from Evaluator
     Evaluator& evaluator = ham.get_evaluator();
+    RealField v_eval_tmp(grid_, 1);
+    double e_eval = evaluator.compute(rho, v_eval_tmp);
 
-    // Compute total potential and energy
-    RealField v_eval(grid_, 1);
-    double e_eval = evaluator.compute(rho, v_eval);
-
-    // e_eval includes: E_loc + E_H + E_XC + E_Ewald
-    // But for the KS formula, we need to separate them and apply double-counting correction
-
-    // The correct formula is:
-    // E_total = eband + (-∫ρV_H - ∫ρV_XC) + E_H + E_XC + E_Ewald + E_loc
-    //         = eband - ∫ρ(V_H + V_XC) + (E_H + E_XC + E_Ewald + E_loc)
-    //         = eband + deband + e_eval
-    //
-    // where deband = -∫ρV_tot + ∫ρV_loc (exclude V_loc from double-counting)
-    //
-    // But since V_tot = V_H + V_XC + V_loc, we have:
-    // deband = -∫ρ·V_tot + ∫ρ·V_loc = -∫ρ(V_H + V_XC)
-
-    // Calculate ∫ρ·V_tot
-    double rho_dot_vtot = rho.dot(v_tot) * grid_.dv();
-
-    // For now, use a simplified formula that assumes V_loc contribution
-    // is small compared to V_H + V_XC
-    // TODO: Separate V_loc to get exact deband = -∫ρ(V_H + V_XC)
-
-    // Approximate: deband ≈ -∫ρ·V_tot (includes V_loc in double-counting)
-    double deband = -rho_dot_vtot;
-
-    // Total energy
-    double e_total = eband + deband + e_eval;
+    // Final Total Energy in Hartree
+    double e_total = eband - rho_dot_veff + e_eval;
 
     return e_total;
 }
@@ -205,12 +188,12 @@ void SCFSolver::mix_density(RealField& rho_old, const RealField& rho_new, double
 }
 
 double SCFSolver::density_difference(const RealField& rho1, const RealField& rho2) {
-    // Compute ∫|ρ₁ - ρ₂|dr = Σ|ρ₁(i) - ρ₂(i)| * dV
+    // Compute ∫|ρ₁ - ρ₂|dr = Σ|ρ₁(i) - ρ₂(i)| * dV (in e⁻)
 
     size_t n = rho1.size();
     const double* d_rho1 = rho1.data();
     const double* d_rho2 = rho2.data();
-    double dv = grid_.dv();
+    double dv = grid_.dv_bohr();
 
     // Allocate temporary buffer for absolute differences
     GPU_Vector<double> diff(n);
