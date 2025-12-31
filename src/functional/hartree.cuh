@@ -23,6 +23,12 @@ class Hartree {
     void compute(const RealField& rho, RealField& vh, double& energy);
 
     /**
+     * @brief Set the G-vector cutoff (in Bohr^-2).
+     * Set to -1 to disable cutoff (use full FFT grid).
+     */
+    void set_gcut(double gcut) { gcut_ = gcut; }
+
+    /**
      * @brief Unified interface for Evaluator.
      */
     double compute(const RealField& rho, RealField& v_out) {
@@ -37,6 +43,7 @@ class Hartree {
     void initialize_buffers(Grid& grid);
 
     Grid* grid_ = nullptr;
+    double gcut_ = -1.0;
     std::unique_ptr<FFTSolver> fft_;
     std::unique_ptr<ComplexField> rho_g_;
     std::unique_ptr<RealField> v_tmp_;

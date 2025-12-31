@@ -5,6 +5,7 @@
 #include "model/wavefunction.cuh"
 #include "solver/davidson.cuh"
 #include "solver/hamiltonian.cuh"
+#include "solver/mixer.cuh"
 
 namespace dftcu {
 
@@ -21,20 +22,26 @@ namespace dftcu {
  */
 class SCFSolver {
   public:
+    enum class MixingType { Linear, Broyden };
+
     struct Options {
-        int max_iter;           ///< Maximum SCF iterations
-        double e_conv;          ///< Energy convergence threshold (Ha)
-        double rho_conv;        ///< Density convergence threshold (electrons)
-        double mixing_beta;     ///< Density mixing parameter (0 < β ≤ 1)
-        int davidson_max_iter;  ///< Davidson solver max iterations
-        double davidson_tol;    ///< Davidson solver tolerance
-        bool verbose;           ///< Print iteration info
+        int max_iter;            ///< Maximum SCF iterations
+        double e_conv;           ///< Energy convergence threshold (Ha)
+        double rho_conv;         ///< Density convergence threshold (electrons)
+        MixingType mixing_type;  ///< Type of density mixing
+        double mixing_beta;      ///< Density mixing parameter (0 < β ≤ 1)
+        int mixing_history;      ///< History size for Broyden mixing
+        int davidson_max_iter;   ///< Davidson solver max iterations
+        double davidson_tol;     ///< Davidson solver tolerance
+        bool verbose;            ///< Print iteration info
 
         Options()
             : max_iter(100),
               e_conv(1e-8),
               rho_conv(1e-6),
+              mixing_type(MixingType::Broyden),
               mixing_beta(0.5),
+              mixing_history(8),
               davidson_max_iter(50),
               davidson_tol(1e-8),
               verbose(true) {}
@@ -79,6 +86,7 @@ class SCFSolver {
     Grid& grid_;
     Options options_;
     DavidsonSolver davidson_;
+    std::unique_ptr<Mixer> mixer_;
 
     // Convergence tracking
     bool converged_ = false;

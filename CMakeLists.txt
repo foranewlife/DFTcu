@@ -120,6 +120,7 @@ if(BUILD_WITH_CUDA)
         src/solver/hamiltonian.cu
         src/solver/davidson.cu
         src/solver/scf.cu
+        src/solver/mixer.cu
         src/solver/optimizer.cu
         src/solver/tn_optimizer_legacy.cu
         src/utilities/kernels.cu
@@ -158,24 +159,25 @@ if(BUILD_WITH_CUDA)
     )
 
     # Create Python module
-    pybind11_add_module(dftcu src/api/dftcu_api.cu)
+    pybind11_add_module(_dftcu src/api/dftcu_api.cu)
 
     # Link Python module to core library
-    target_link_libraries(dftcu PRIVATE dftcu_core)
+    target_link_libraries(_dftcu PRIVATE dftcu_core)
 
     # Set output directory for Python module
-    set_target_properties(dftcu PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    set_target_properties(_dftcu PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/dftcu
+        OUTPUT_NAME _dftcu
     )
 
     # Profiling flags
     if(ENABLE_PROFILING)
-        target_compile_options(dftcu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
+        target_compile_options(_dftcu PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
     endif()
 
     # Installation
-    install(TARGETS dftcu
-        LIBRARY DESTINATION .
+    install(TARGETS _dftcu
+        LIBRARY DESTINATION dftcu
     )
 
     # Option to auto-install Python package after build
@@ -189,7 +191,7 @@ if(BUILD_WITH_CUDA)
                 COMMAND ${CMAKE_COMMAND} -E echo "Installing Python package with uv..."
                 COMMAND ${UV_EXECUTABLE} pip install -e ${CMAKE_SOURCE_DIR} --no-deps
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                DEPENDS dftcu
+                DEPENDS _dftcu
                 COMMENT "Running uv pip install -e ."
             )
             message(STATUS "AUTO_PIP_INSTALL enabled - will run 'uv pip install -e .' after build")

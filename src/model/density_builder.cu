@@ -183,7 +183,8 @@ void DensityBuilder::build_density(RealField& rho) {
     GPU_CHECK_KERNEL;
     solver.backward(rho_g);
     complex_to_real(nnr, rho_g.data(), rho.data(), grid_.stream());
-    v_scale(nnr, 1.0 / (double)nnr, rho.data(), rho.data(), grid_.stream());
+    // v_scale(nnr, 1.0 / (double)nnr, rho.data(), rho.data(), grid_.stream()); // Remove redundant
+    // scaling
     grid_.synchronize();
 }
 

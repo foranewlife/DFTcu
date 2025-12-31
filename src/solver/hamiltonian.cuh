@@ -46,6 +46,12 @@ class Hamiltonian {
     /** @brief Update the local potential from the evaluator */
     void update_potentials(const RealField& rho);
 
+    /**
+     * @brief Set the G-vector cutoff for all local potential components (matching QE's ecutrho).
+     * @param ecutrho Energy cutoff in Ry (internally uses Bohr^-2).
+     */
+    void set_ecutrho(double ecutrho);
+
     /** @brief Check if non-local pseudopotential is present */
     bool has_nonlocal() const { return nonlocal_ != nullptr; }
 

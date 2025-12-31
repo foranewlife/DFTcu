@@ -29,6 +29,13 @@ SCFSolver::SCFSolver(Grid& grid, const Options& options)
       options_(options),
       davidson_(grid, options.davidson_max_iter, options.davidson_tol) {
     history_.reserve(options_.max_iter);
+
+    if (options_.mixing_type == MixingType::Linear) {
+        mixer_ = std::make_unique<LinearMixer>(grid, options_.mixing_beta);
+    } else {
+        mixer_ =
+            std::make_unique<BroydenMixer>(grid, options_.mixing_beta, options_.mixing_history);
+    }
 }
 
 double SCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<double>& occupations,
@@ -36,6 +43,7 @@ double SCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<d
     converged_ = false;
     num_iterations_ = 0;
     history_.clear();
+    mixer_->reset();
 
     if (options_.verbose) {
         std::cout << "\n" << std::string(70, '=') << "\n";
@@ -116,7 +124,7 @@ double SCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<d
         }
 
         // Step 6: Mix densities for next iteration
-        mix_density(rho, rho_new, options_.mixing_beta);
+        mixer_->mix(rho, rho_new, rho);
         rho_old.copy_from(rho);
 
         e_total_old = e_total;
@@ -171,20 +179,8 @@ double SCFSolver::compute_total_energy(const std::vector<double>& eigenvalues,
 }
 
 void SCFSolver::mix_density(RealField& rho_old, const RealField& rho_new, double beta) {
-    // Simple linear mixing: ρ = (1-β)ρ_old + βρ_new
-    // This is done in-place on rho_old
-
-    size_t n = rho_old.size();
-    double* d_rho_old = rho_old.data();
-    const double* d_rho_new = rho_new.data();
-
-    double alpha = 1.0 - beta;
-
-    int threads = 256;
-    int blocks = (n + threads - 1) / threads;
-
-    mix_density_kernel<<<blocks, threads>>>(n, d_rho_old, d_rho_new, alpha, beta);
-    CHECK(cudaGetLastError());
+    // Legacy method, no longer used as we use Mixer class
+    LinearMixer(grid_, beta).mix(rho_old, rho_new, rho_old);
 }
 
 double SCFSolver::density_difference(const RealField& rho1, const RealField& rho2) {

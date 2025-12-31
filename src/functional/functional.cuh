@@ -38,11 +38,15 @@ class Functional {
         return self_->compute_impl(rho, v_out);
     }
 
+    /** @brief Access the underlying functional object (returns as void* or shared_ptr<void>) */
+    std::shared_ptr<void> underlying() const { return self_->get_data(); }
+
   private:
     /** @brief Internal interface for type erasure. */
     struct Concept {
         virtual ~Concept() = default;
         virtual double compute_impl(const RealField& rho, RealField& v_out) const = 0;
+        virtual std::shared_ptr<void> get_data() const = 0;
     };
 
     /** @brief Internal template implementation for type erasure. */
@@ -52,6 +56,7 @@ class Functional {
         double compute_impl(const RealField& rho, RealField& v_out) const override {
             return data->compute(rho, v_out);
         }
+        std::shared_ptr<void> get_data() const override { return data; }
         std::shared_ptr<T> data;
     };
 

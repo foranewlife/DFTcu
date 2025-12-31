@@ -26,7 +26,7 @@
 
 namespace py = pybind11;
 
-PYBIND11_MODULE(dftcu, m) {
+PYBIND11_MODULE(_dftcu, m) {
     m.doc() = "DFTcu: A GPU-accelerated orbital-free DFT code";
 
     m.def("spherical_bessel_jl", &dftcu::spherical_bessel_jl, py::arg("l"), py::arg("x"));
@@ -34,7 +34,9 @@ PYBIND11_MODULE(dftcu, m) {
     py::class_<dftcu::Grid>(m, "Grid")
         .def(py::init<const std::vector<double>&, const std::vector<int>&>())
         .def("volume", &dftcu::Grid::volume)
+        .def("volume_bohr", &dftcu::Grid::volume_bohr)
         .def("dv", &dftcu::Grid::dv)
+        .def("dv_bohr", &dftcu::Grid::dv_bohr)
         .def("nnr", &dftcu::Grid::nnr)
         .def("g2max", &dftcu::Grid::g2max)
         .def("synchronize", &dftcu::Grid::synchronize)
@@ -70,6 +72,7 @@ PYBIND11_MODULE(dftcu, m) {
         .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
         .def("integral", &dftcu::RealField::integral)
         .def("fill", &dftcu::RealField::fill)
+        .def("dot", &dftcu::RealField::dot)
         .def("copy_from_host",
              [](dftcu::RealField& self, py::array_t<double> arr) {
                  py::buffer_info buf = arr.request();
@@ -161,6 +164,7 @@ PYBIND11_MODULE(dftcu, m) {
 
     py::class_<dftcu::Hartree, std::shared_ptr<dftcu::Hartree>>(m, "Hartree")
         .def(py::init<>())
+        .def("set_gcut", &dftcu::Hartree::set_gcut, py::arg("gcut"))
         .def(
             "compute",
             [](dftcu::Hartree& self, const dftcu::RealField& rho, dftcu::RealField& vh) {
@@ -172,6 +176,7 @@ PYBIND11_MODULE(dftcu, m) {
 
     py::class_<dftcu::LDA_PZ, std::shared_ptr<dftcu::LDA_PZ>>(m, "LDA_PZ")
         .def(py::init<>())
+        .def("set_rho_threshold", &dftcu::LDA_PZ::set_rho_threshold, py::arg("threshold"))
         .def(
             "compute",
             [](dftcu::LDA_PZ& self, const dftcu::RealField& rho, dftcu::RealField& v_out) {
@@ -219,11 +224,13 @@ PYBIND11_MODULE(dftcu, m) {
              py::arg("r_grid"), py::arg("vloc_r"), py::arg("rab"), py::arg("zp"), py::arg("omega"))
         .def("set_valence_charge", &dftcu::LocalPseudo::set_valence_charge, py::arg("type"),
              py::arg("zp"))
+        .def("set_gcut", &dftcu::LocalPseudo::set_gcut, py::arg("gcut"))
         .def("compute_potential",
              [](dftcu::LocalPseudo& self, dftcu::RealField& vloc) { self.compute(vloc); })
         .def("compute", [](dftcu::LocalPseudo& self, const dftcu::RealField& rho,
                            dftcu::RealField& v_out) { return self.compute(rho, v_out); })
         .def("get_tab_vloc", &dftcu::LocalPseudo::get_tab_vloc, py::arg("type"))
+        .def("get_alpha", &dftcu::LocalPseudo::get_alpha, py::arg("type"))
         .def("get_vloc_g_shells", &dftcu::LocalPseudo::get_vloc_g_shells, py::arg("type"),
              py::arg("g_shells"))
         .def("get_dq", &dftcu::LocalPseudo::get_dq)
@@ -243,12 +250,19 @@ PYBIND11_MODULE(dftcu, m) {
         .def("solve", &dftcu::DavidsonSolver::solve);
 
     // SCF Solver
+    py::enum_<dftcu::SCFSolver::MixingType>(m, "MixingType")
+        .value("Linear", dftcu::SCFSolver::MixingType::Linear)
+        .value("Broyden", dftcu::SCFSolver::MixingType::Broyden)
+        .export_values();
+
     py::class_<dftcu::SCFSolver::Options>(m, "SCFOptions")
         .def(py::init<>())
         .def_readwrite("max_iter", &dftcu::SCFSolver::Options::max_iter)
         .def_readwrite("e_conv", &dftcu::SCFSolver::Options::e_conv)
         .def_readwrite("rho_conv", &dftcu::SCFSolver::Options::rho_conv)
+        .def_readwrite("mixing_type", &dftcu::SCFSolver::Options::mixing_type)
         .def_readwrite("mixing_beta", &dftcu::SCFSolver::Options::mixing_beta)
+        .def_readwrite("mixing_history", &dftcu::SCFSolver::Options::mixing_history)
         .def_readwrite("davidson_max_iter", &dftcu::SCFSolver::Options::davidson_max_iter)
         .def_readwrite("davidson_tol", &dftcu::SCFSolver::Options::davidson_tol)
         .def_readwrite("verbose", &dftcu::SCFSolver::Options::verbose);
