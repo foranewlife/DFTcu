@@ -1,4 +1,5 @@
 #include "model/wavefunction.cuh"
+#include "utilities/constants.cuh"
 #include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
 
@@ -54,14 +55,30 @@ __global__ void apply_mask_kernel(size_t n, int num_bands, const int* mask, gpuf
     }
 }
 
-__global__ void randomize_wavefunction_kernel(size_t total_size, gpufftComplex* data,
-                                              unsigned int seed) {
+__global__ void randomize_wavefunction_kernel(size_t n, int num_bands, const double* gg,
+                                              gpufftComplex* data, unsigned int seed) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t total_size = n * num_bands;
     if (i < total_size) {
+        int grid_idx = i % n;
         curandState state;
         curand_init(seed, i, 0, &state);
-        data[i].x = curand_uniform(&state) - 0.5;
-        data[i].y = curand_uniform(&state) - 0.5;
+
+        // QE Scaling: rr1 = randy() / (G^2 + 1.0)
+        // G^2 is in Rydberg (same as Bohr^-2)
+        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        double g2_ry = gg[grid_idx] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+
+        double r1 = curand_uniform(&state);
+        double r2 = curand_uniform(&state);
+
+        double amp = r1 / (g2_ry + 1.0);
+        double phase = r2 * 2.0 * constants::D_PI;
+
+        double s, c;
+        sincos(phase, &s, &c);
+        data[i].x = amp * c;
+        data[i].y = amp * s;
     }
 }
 
@@ -135,16 +152,17 @@ void Wavefunction::set_coefficients(const std::vector<std::complex<double>>& coe
 }
 
 void Wavefunction::randomize(unsigned int seed) {
-    size_t total_size = data_.size();
+    size_t n = grid_.nnr();
     const int block_size = 256;
-    const int grid_size = (total_size + block_size - 1) / block_size;
+    const int grid_size = (n * num_bands_ + block_size - 1) / block_size;
 
-    randomize_wavefunction_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(total_size,
-                                                                                data_.data(), seed);
+    randomize_wavefunction_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+        n, num_bands_, grid_.gg(), data_.data(), seed);
     GPU_CHECK_KERNEL;
 
     apply_mask();
-    // Note: Normalization would ideally happen here via cuBLAS dot products
+    // Normalize to orthonormal set (Gram-Schmidt for now)
+    orthonormalize();
 }
 
 void Wavefunction::apply_mask() {
@@ -192,6 +210,7 @@ void Wavefunction::compute_density(const std::vector<double>& occupations, RealF
         fft.backward(psi_r);
 
         // 3. Accumulate: rho += (f_n / Volume) * |psi_r|^2
+        // Volume is grid_.volume_bohr() for atomic units
         accumulate_density_kernel<<<grid_size_v, block_size, 0, grid_.stream()>>>(
             n, psi_r.data(), occupations[nb] * inv_vol, rho.data());
         GPU_CHECK_KERNEL;
@@ -246,10 +265,20 @@ void Wavefunction::compute_occupations(const std::vector<double>& eigenvalues, d
     }
 }
 
-void Wavefunction::compute_norms(std::vector<double>& norms) {
-    norms.resize(num_bands_);
-    for (int i = 0; i < num_bands_; ++i) {
-        norms[i] = std::sqrt(dot(i, i).real());
+void Wavefunction::orthonormalize() {
+    // Gram-Schmidt process: psi_n = psi_n - sum_{m < n} <psi_m | psi_n> psi_m
+    // and then psi_n = psi_n / sqrt(<psi_n | psi_n>)
+    for (int n = 0; n < num_bands_; ++n) {
+        for (int m = 0; m < n; ++m) {
+            std::complex<double> overlap = dot(m, n);
+            // psi_n = psi_n - overlap * psi_m
+            v_axpy(grid_.nnr(), -overlap, band_data(m), band_data(n), grid_.stream());
+        }
+        std::complex<double> self_dot = dot(n, n);
+        double norm = std::sqrt(self_dot.real());
+        if (norm > 1e-15) {
+            v_scale(grid_.nnr(), 1.0 / norm, band_data(n), band_data(n), grid_.stream());
+        }
     }
 }
 

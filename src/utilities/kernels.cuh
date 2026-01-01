@@ -1,4 +1,6 @@
 #pragma once
+#include <complex>
+
 #include "utilities/gpu_macro.cuh"
 
 namespace dftcu {
@@ -22,7 +24,13 @@ v_mul(size_t n, const double* a, const double* b, double* out, cudaStream_t stre
 void __attribute__((visibility("default")))
 v_axpy(size_t n, double alpha, const double* x, double* y, cudaStream_t stream = nullptr);
 void __attribute__((visibility("default")))
+v_axpy(size_t n, std::complex<double> alpha, const gpufftComplex* x, gpufftComplex* y,
+       cudaStream_t stream = nullptr);
+void __attribute__((visibility("default")))
 v_scale(size_t n, double alpha, const double* x, double* out, cudaStream_t stream = nullptr);
+void __attribute__((visibility("default")))
+v_scale(size_t n, double alpha, const gpufftComplex* x, gpufftComplex* out,
+        cudaStream_t stream = nullptr);
 void __attribute__((visibility("default")))
 v_sqrt(size_t n, const double* x, double* out, cudaStream_t stream = nullptr);
 double __attribute__((visibility("default")))

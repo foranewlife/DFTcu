@@ -72,6 +72,30 @@ def parse_upf(filename):
     else:
         rho_core_r = None
 
+    # 8. Atomic Orbitals (CHI or fallback to BETA)
+    chi_list = []
+    chi_l_list = []
+
+    # Try PP_CHI nodes first
+    chi_nodes = root.findall(".//PP_CHI.*")
+    if not chi_nodes:
+        # Fallback to PP_PSWFC children if present
+        pswfc_node = root.find(".//PP_PSWFC")
+        if pswfc_node is not None:
+            chi_nodes = [child for child in pswfc_node if child.tag.startswith("PP_CHI.")]
+
+    if chi_nodes:
+        # Sort and extract
+        # Note: We need to handle index like PP_CHI.1
+        try:
+            sorted_nodes = sorted(chi_nodes, key=lambda x: int(x.tag.split(".")[-1]))
+        except Exception:
+            sorted_nodes = chi_nodes
+
+        for child in sorted_nodes:
+            chi_list.append(np.fromstring(child.text, sep=" "))
+            chi_l_list.append(int(child.attrib.get("l", child.attrib.get("angular_momentum", 0))))
+
     return {
         "r": r_grid,
         "rab": rab,
@@ -82,6 +106,8 @@ def parse_upf(filename):
         "zp": z_valence,
         "rho_at": rho_at_r,
         "rho_core": rho_core_r,
+        "chi": chi_list,
+        "chi_l": chi_l_list,
     }
 
 

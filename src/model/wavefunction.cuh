@@ -62,6 +62,9 @@ class Wavefunction {
     /** @brief Project bands onto the valid plane-wave sphere (G^2/2 < ENCUT) */
     void apply_mask();
 
+    /** @brief Orthonormalize bands using Gram-Schmidt process on GPU */
+    void orthonormalize();
+
     /**
      * @brief Compute real-space charge density: rho(r) = sum_n f_n |psi_n(r)|^2
      * @param occupations Band occupation numbers (Fermi weights)

@@ -1,3 +1,4 @@
+#include "fft/fft_solver.cuh"
 #include "functional/ewald.cuh"
 #include "functional/hartree.cuh"
 #include "functional/kedf/hc.cuh"
@@ -15,6 +16,7 @@
 #include "model/field.cuh"
 #include "model/grid.cuh"
 #include "model/wavefunction.cuh"
+#include "model/wavefunction_builder.cuh"
 #include "solver/davidson.cuh"
 #include "solver/evaluator.cuh"
 #include "solver/hamiltonian.cuh"
@@ -97,12 +99,7 @@ PYBIND11_MODULE(_dftcu, m) {
     py::class_<dftcu::Atom>(m, "Atom")
         .def(py::init<>())
         .def(py::init<double, double, double, double, int>(), py::arg("x"), py::arg("y"),
-             py::arg("z"), py::arg("charge"), py::arg("type"))
-        .def_readwrite("x", &dftcu::Atom::x)
-        .def_readwrite("y", &dftcu::Atom::y)
-        .def_readwrite("z", &dftcu::Atom::z)
-        .def_readwrite("charge", &dftcu::Atom::charge)
-        .def_readwrite("type", &dftcu::Atom::type);
+             py::arg("z"), py::arg("charge"), py::arg("type"));
 
     py::class_<dftcu::Atoms, std::shared_ptr<dftcu::Atoms>>(m, "Atoms")
         .def(py::init<const std::vector<dftcu::Atom>&>())
@@ -117,6 +114,8 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("compute_density", &dftcu::Wavefunction::compute_density)
         .def("randomize", &dftcu::Wavefunction::randomize, py::arg("seed") = 42U)
         .def("get_pw_indices", &dftcu::Wavefunction::get_pw_indices)
+        .def("orthonormalize", &dftcu::Wavefunction::orthonormalize)
+        .def("dot", &dftcu::Wavefunction::dot, py::arg("band_a"), py::arg("band_b"))
         .def("copy_from_host",
              [](dftcu::Wavefunction& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> arr) {
@@ -128,7 +127,7 @@ PYBIND11_MODULE(_dftcu, m) {
                  self.copy_from_host(static_cast<std::complex<double>*>(buf.ptr));
              })
         .def("copy_to_host",
-             [](dftcu::Wavefunction& self,
+             [](const dftcu::Wavefunction& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> arr) {
                  py::buffer_info buf = arr.request();
                  size_t expected = static_cast<size_t>(self.grid().nnr()) * self.num_bands();
@@ -137,12 +136,17 @@ PYBIND11_MODULE(_dftcu, m) {
                  }
                  self.copy_to_host(static_cast<std::complex<double>*>(buf.ptr));
              })
-        .def("get_coefficients", &dftcu::Wavefunction::get_coefficients)
-        .def("set_coefficients",
-             [](dftcu::Wavefunction& self, const std::vector<std::complex<double>>& coeffs,
-                int band) { self.set_coefficients(coeffs, band); })
-        .def("dot", &dftcu::Wavefunction::dot, py::arg("band_a"), py::arg("band_b"))
-        .def("compute_kinetic_energy", &dftcu::Wavefunction::compute_kinetic_energy);
+        .def("get_coefficients", &dftcu::Wavefunction::get_coefficients, py::arg("band"))
+        .def("set_coefficients", &dftcu::Wavefunction::set_coefficients, py::arg("coeffs"),
+             py::arg("band"))
+        .def("compute_kinetic_energy", &dftcu::Wavefunction::compute_kinetic_energy,
+             py::arg("occupations"));
+
+    py::class_<dftcu::WavefunctionBuilder>(m, "WavefunctionBuilder")
+        .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())
+        .def("add_atomic_orbital", &dftcu::WavefunctionBuilder::add_atomic_orbital)
+        .def("build_atomic_wavefunctions", &dftcu::WavefunctionBuilder::build_atomic_wavefunctions,
+             py::arg("psi"), py::arg("randomize_phase") = false);
 
     py::class_<dftcu::Evaluator>(m, "Evaluator")
         .def(py::init<dftcu::Grid&>())
@@ -238,12 +242,6 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("set_gcut", &dftcu::LocalPseudo::set_gcut, py::arg("gcut"))
         .def("compute_potential",
              [](dftcu::LocalPseudo& self, dftcu::RealField& vloc) { self.compute(vloc); })
-        .def("get_v_g",
-             [](dftcu::LocalPseudo& self) {
-                 // Need a way to access v_g_ which is private.
-                 // I'll add a temporary public getter in pseudo.cuh or just friend it.
-                 // Actually, for debugging, I'll just add it to the header.
-             })
         .def("compute", [](dftcu::LocalPseudo& self, const dftcu::RealField& rho,
                            dftcu::RealField& v_out) { return self.compute(rho, v_out); })
         .def("get_tab_vloc", &dftcu::LocalPseudo::get_tab_vloc, py::arg("type"))
@@ -254,12 +252,33 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("get_nqx", &dftcu::LocalPseudo::get_nqx)
         .def("get_omega", &dftcu::LocalPseudo::get_omega);
 
+    py::class_<dftcu::NonLocalPseudo, std::shared_ptr<dftcu::NonLocalPseudo>>(m, "NonLocalPseudo")
+        .def(py::init<dftcu::Grid&>())
+        .def("apply", &dftcu::NonLocalPseudo::apply, py::arg("psi_in"), py::arg("h_psi_out"))
+        .def("add_projector", &dftcu::NonLocalPseudo::add_projector, py::arg("beta_g"),
+             py::arg("coupling_constant"))
+        .def("init_tab_beta", &dftcu::NonLocalPseudo::init_tab_beta, py::arg("type"),
+             py::arg("r_grid"), py::arg("beta_r"), py::arg("rab"), py::arg("l_list"),
+             py::arg("omega_angstrom"))
+        .def("set_tab_beta", &dftcu::NonLocalPseudo::set_tab_beta, py::arg("type"), py::arg("nb"),
+             py::arg("tab"))
+        .def("init_dij", &dftcu::NonLocalPseudo::init_dij, py::arg("type"), py::arg("dij"))
+        .def("update_projectors", &dftcu::NonLocalPseudo::update_projectors, py::arg("atoms"))
+        .def("calculate_energy", &dftcu::NonLocalPseudo::calculate_energy, py::arg("psi"),
+             py::arg("occupations"))
+        .def("clear", &dftcu::NonLocalPseudo::clear)
+        .def("num_projectors", &dftcu::NonLocalPseudo::num_projectors)
+        .def("get_tab_beta", &dftcu::NonLocalPseudo::get_tab_beta, py::arg("type"), py::arg("nb"))
+        .def("get_projector", &dftcu::NonLocalPseudo::get_projector, py::arg("idx"))
+        .def("get_projections", &dftcu::NonLocalPseudo::get_projections);
+
     py::class_<dftcu::Hamiltonian>(m, "Hamiltonian")
         .def(py::init<dftcu::Grid&, dftcu::Evaluator&>())
         .def("update_potentials", &dftcu::Hamiltonian::update_potentials)
         .def("apply", &dftcu::Hamiltonian::apply)
         .def("set_nonlocal", &dftcu::Hamiltonian::set_nonlocal)
-        .def("v_loc", &dftcu::Hamiltonian::v_loc, py::return_value_policy::reference);
+        .def("v_loc", &dftcu::Hamiltonian::v_loc, py::return_value_policy::reference)
+        .def("set_ecutrho", &dftcu::Hamiltonian::set_ecutrho, py::arg("ecutrho"));
 
     py::class_<dftcu::DavidsonSolver>(m, "DavidsonSolver")
         .def(py::init<dftcu::Grid&, int, double>(), py::arg("grid"), py::arg("max_iter") = 50,
@@ -307,35 +326,6 @@ PYBIND11_MODULE(_dftcu, m) {
             }
             return result;
         });
-
-    py::class_<dftcu::NonLocalPseudo, std::shared_ptr<dftcu::NonLocalPseudo>>(m, "NonLocalPseudo")
-        .def(py::init<dftcu::Grid&>())
-        .def(
-            "add_projector",
-            [](dftcu::NonLocalPseudo& self, py::object beta_obj, double coupling) {
-                std::vector<std::complex<double>> host;
-                if (py::isinstance<py::array>(beta_obj)) {
-                    py::array array = beta_obj.cast<py::array>();
-                    py::buffer_info buf = array.request();
-                    auto ptr = static_cast<std::complex<double>*>(buf.ptr);
-                    host.assign(ptr, ptr + buf.size);
-                } else {
-                    host = beta_obj.cast<std::vector<std::complex<double>>>();
-                }
-                self.add_projector(host, coupling);
-            },
-            py::arg("beta_g"), py::arg("coupling_constant"))
-        .def("init_tab_beta", &dftcu::NonLocalPseudo::init_tab_beta, py::arg("type"),
-             py::arg("r_grid"), py::arg("beta_r"), py::arg("rab"), py::arg("l_list"),
-             py::arg("omega"))
-        .def("init_dij", &dftcu::NonLocalPseudo::init_dij, py::arg("type"), py::arg("dij"))
-        .def("update_projectors", &dftcu::NonLocalPseudo::update_projectors, py::arg("atoms"))
-        .def("get_tab_beta", &dftcu::NonLocalPseudo::get_tab_beta, py::arg("type"), py::arg("nb"))
-        .def("get_projector", &dftcu::NonLocalPseudo::get_projector, py::arg("idx"))
-        .def("get_projections", &dftcu::NonLocalPseudo::get_projections)
-        .def("clear", &dftcu::NonLocalPseudo::clear)
-        .def("calculate_energy", &dftcu::NonLocalPseudo::calculate_energy)
-        .def_property_readonly("num_projectors", &dftcu::NonLocalPseudo::num_projectors);
 
     py::class_<dftcu::DensityBuilder>(m, "DensityBuilder")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())
