@@ -154,18 +154,22 @@ void LocalPseudo::compute(RealField& v) {
                                   grid_.stream()));
 
     int stride = nqx_ + 1;
-    std::vector<double> flat(stride * tab_vloc_.size(), 0.0);
-    for (size_t t = 0; t < tab_vloc_.size(); ++t)
-        std::copy(tab_vloc_[t].begin(), tab_vloc_[t].end(), flat.begin() + t * stride);
+    if (d_tab_.size() != stride * tab_vloc_.size()) {
+        std::vector<double> flat(stride * tab_vloc_.size(), 0.0);
+        for (size_t t = 0; t < tab_vloc_.size(); ++t)
+            std::copy(tab_vloc_[t].begin(), tab_vloc_[t].end(), flat.begin() + t * stride);
+        d_tab_.resize(flat.size());
+        d_tab_.copy_from_host(flat.data(), grid_.stream());
+    }
 
-    GPU_Vector<double> d_tab(flat.size());
-    d_tab.copy_from_host(flat.data(), grid_.stream());
-    GPU_Vector<double> d_zp(zp_.size());
-    d_zp.copy_from_host(zp_.data(), grid_.stream());
+    if (d_zp_.size() != zp_.size()) {
+        d_zp_.resize(zp_.size());
+        d_zp_.copy_from_host(zp_.data(), grid_.stream());
+    }
 
     vloc_gspace_kernel<<<(grid_.nnr() + 255) / 256, 256, 0, grid_.stream()>>>(
-        grid_.nnr(), grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), atoms_->nat(), d_tab.data(),
-        d_zp.data(), stride, dq_, omega_, gcut_, v_g_->data());
+        grid_.nnr(), grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), atoms_->nat(), d_tab_.data(),
+        d_zp_.data(), stride, dq_, omega_, gcut_, v_g_->data());
 
     fft_solver_->backward(*v_g_);
     complex_to_real(grid_.nnr(), v_g_->data(), v.data(), grid_.stream());
