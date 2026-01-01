@@ -52,6 +52,7 @@ class DensityBuilder {
     static constexpr double dq_ = 0.01;  // Matches QE's dq
     int nqx_ = 0;
     std::vector<std::vector<double>> tab_rho_g_;
+    GPU_Vector<double> d_tab_;
 };
 
 }  // namespace dftcu

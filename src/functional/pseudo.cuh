@@ -148,6 +148,10 @@ class LocalPseudo {
     Grid* grid_ptr_ = nullptr;
     std::unique_ptr<ComplexField> v_g_;
     std::unique_ptr<FFTSolver> fft_solver_;
+
+    // Device-side caches for interpolation table and charges
+    GPU_Vector<double> d_tab_;
+    GPU_Vector<double> d_zp_;
 };
 
 }  // namespace dftcu

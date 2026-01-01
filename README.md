@@ -11,10 +11,11 @@
   - ✅ **计算图优化** - Evaluator 自动融合势能累加操作，减少内存带宽占用
   - 增量编译支持 - 2-5s 快速重建（CMake）/ ~21s（Python 安装）
 
-- **⚛️ DFT 泛函实现**
-  - ✅ Hartree 势 - 基于 cuFFT 的快速求解器
-  - ✅ Ewald 求和 - 精确离子-离子相互作用
-  - ✅ 局域赝势 - 倒空间局域赝势计算
+- **⚛️ DFT 泛函与对齐**
+  - ✅ Hartree 势 - 机器精度对齐 ($10^{-15}$ Ha)
+  - ✅ 局域赝势 - 严格 ecutrho 截断，支持 4 点拉格朗日插值 ($10^{-14}$ Ha)
+  - ✅ LDA/GGA - 支持核心电荷修正 (NLCC)，与 QE 完美对齐 ($10^{-16}$ Ha)
+  - ✅ **标准化初始化** - `initialize_hamiltonian` 一键复现 QE 初始态
   - ✅ Thomas-Fermi KEDF - 机器精度验证
   - ✅ von Weizsäcker KEDF - 梯度动能修正
   - ✅ Wang-Teter KEDF - 非局域动能泛函
@@ -94,28 +95,26 @@ cd build && ctest
 
 ## 📖 使用示例
 
-### Python 示例
+### Python 示例 (QE 流程初始化)
 
 ```python
 import dftcu
 import numpy as np
 
-# 创建网格 (10 Bohr 立方晶胞)
-lattice = np.eye(3) * 10.0
-grid = dftcu.Grid(lattice.flatten().tolist(), [32, 32, 32])
+# 1. 设置晶格与网格
+lattice = np.eye(3) * 10.0 # Angstrom
+grid = dftcu.Grid(lattice.flatten().tolist(), [72, 72, 72])
 
-# 创建密度场并初始化
-rho = dftcu.RealField(grid, 1)
-rho.fill(0.01)
+# 2. 定义原子
+atoms = dftcu.Atoms([dftcu.Atom(5.0, 5.0, 5.0, 6.0, 0)]) # O at center
 
-# 使用组合式 Evaluator 计算多个泛函
-evaluator = dftcu.Evaluator(grid)
-evaluator.add_functional(dftcu.ThomasFermi())
-evaluator.add_functional(dftcu.LDA_PZ())
+# 3. 标准化初始化 (自动处理 rho_at 叠加与 V_eff 生成)
+# ecutwfc 单位为 Rydberg, 内部自动对齐 QE 物理逻辑
+upf_files = ["O_ONCV_PBE-1.2.upf"]
+rho, ham = dftcu.initialize_hamiltonian(grid, atoms, upf_files, ecutwfc=30.0)
 
-# 高效计算总能量和势 (内部利用表达式模板进行 Kernel 融合)
-v_tot = dftcu.RealField(grid, 1)
-energy = evaluator.compute(rho, v_tot)
+# 现在 ham 已包含对齐到 10^-14 的初始 V_eff
+v_eff = ham.v_loc()
 ```
 
 ## 🛠️ 常用命令

@@ -139,21 +139,23 @@ void DensityBuilder::build_density(RealField& rho) {
                                   0, cudaMemcpyHostToDevice, grid_.stream()));
 
     // Prepare flat table for GPU
-    std::vector<double> flat_table(num_types_ * nqx_, 0.0);
-    for (int t = 0; t < num_types_; ++t) {
-        if (tab_rho_g_[t].size() >= nqx_) {
-            std::copy(tab_rho_g_[t].begin(), tab_rho_g_[t].begin() + nqx_,
-                      flat_table.begin() + t * nqx_);
+    if (d_tab_.size() != num_types_ * nqx_) {
+        std::vector<double> flat_table(num_types_ * nqx_, 0.0);
+        for (int t = 0; t < num_types_; ++t) {
+            if (tab_rho_g_[t].size() >= nqx_) {
+                std::copy(tab_rho_g_[t].begin(), tab_rho_g_[t].begin() + nqx_,
+                          flat_table.begin() + t * nqx_);
+            }
         }
+        d_tab_.resize(flat_table.size());
+        d_tab_.copy_from_host(flat_table.data(), grid_.stream());
     }
-    GPU_Vector<double> d_tab(flat_table.size());
-    d_tab.copy_from_host(flat_table.data(), grid_.stream());
 
     const int block_size = 256;
     const int grid_size = (static_cast<int>(nnr) + block_size - 1) / block_size;
 
     density_sum_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
-        static_cast<int>(nnr), grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), d_tab.data(),
+        static_cast<int>(nnr), grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), d_tab_.data(),
         static_cast<int>(atoms_->nat()), nqx_, dq_, gcut_, rho_g.data());
 
     GPU_CHECK_KERNEL;
