@@ -105,7 +105,9 @@ PYBIND11_MODULE(_dftcu, m) {
         .def_readwrite("type", &dftcu::Atom::type);
 
     py::class_<dftcu::Atoms, std::shared_ptr<dftcu::Atoms>>(m, "Atoms")
-        .def(py::init<const std::vector<dftcu::Atom>&>());
+        .def(py::init<const std::vector<dftcu::Atom>&>())
+        .def("nat", &dftcu::Atoms::nat)
+        .def("h_type", &dftcu::Atoms::h_type);
 
     py::class_<dftcu::Wavefunction, std::shared_ptr<dftcu::Wavefunction>>(m, "Wavefunction")
         .def(py::init<dftcu::Grid&, int, double>(), py::arg("grid"), py::arg("num_bands"),
@@ -338,5 +340,7 @@ PYBIND11_MODULE(_dftcu, m) {
     py::class_<dftcu::DensityBuilder>(m, "DensityBuilder")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())
         .def("set_atomic_rho_g", &dftcu::DensityBuilder::set_atomic_rho_g)
-        .def("build_density", &dftcu::DensityBuilder::build_density);
+        .def("set_atomic_rho_r", &dftcu::DensityBuilder::set_atomic_rho_r)
+        .def("build_density", &dftcu::DensityBuilder::build_density)
+        .def("set_gcut", &dftcu::DensityBuilder::set_gcut, py::arg("gcut"));
 }
