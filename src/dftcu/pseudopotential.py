@@ -65,6 +65,13 @@ def parse_upf(filename):
     else:
         rho_at_r = np.array([])
 
+    # 7. Core Charge Density (for NLCC)
+    rho_core_node = root.find(".//PP_NLCC")
+    if rho_core_node is not None:
+        rho_core_r = np.fromstring(rho_core_node.text, sep=" ")
+    else:
+        rho_core_r = None
+
     return {
         "r": r_grid,
         "rab": rab,
@@ -74,6 +81,7 @@ def parse_upf(filename):
         "dij": dij_flat,
         "zp": z_valence,
         "rho_at": rho_at_r,
+        "rho_core": rho_core_r,
     }
 
 

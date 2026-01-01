@@ -17,28 +17,41 @@ class DensityBuilder {
     ~DensityBuilder() = default;
 
     /**
-     * @brief Set the radial charge density for an atom type in G-space.
-     * @param type Atom type index.
-     * @param q Radial G-grid points (Bohr^-1).
-     * @param rho_q Radial charge density values rho(q).
-     *
-     * Note: rho(q) should be the Fourier transform of the atomic charge density.
+     * @brief Set atomic radial density in G-space.
      */
     void set_atomic_rho_g(int type, const std::vector<double>& q, const std::vector<double>& rho_q);
 
     /**
-     * @brief Build the total charge density on the real space grid.
+     * @brief Set atomic radial density in real-space (will be transformed to G-space).
+     * @param type Atom type index.
+     * @param r Radial grid points.
+     * @param rho_r Radial charge density (4*pi*r^2 * rho(r)).
+     * @param rab Integration weights dr/di.
+     */
+    void set_atomic_rho_r(int type, const std::vector<double>& r, const std::vector<double>& rho_r,
+                          const std::vector<double>& rab);
+
+    /**
+     * @brief Build initial charge density from atomic superposition.
      * @param rho Output real space density field.
      */
     void build_density(RealField& rho);
+
+    /**
+     * @brief Set G-vector cutoff for the density (in Rydberg).
+     * Set to -1 to use the full FFT grid.
+     */
+    void set_gcut(double gcut) { gcut_ = gcut; }
 
   private:
     Grid& grid_;
     std::shared_ptr<Atoms> atoms_;
 
-    // Store radial rho(G) for each type
     int num_types_ = 0;
-    GPU_Vector<double> rho_types_g_;
+    double gcut_ = -1.0;
+    static constexpr double dq_ = 0.01;  // Matches QE's dq
+    int nqx_ = 0;
+    std::vector<std::vector<double>> tab_rho_g_;
 };
 
 }  // namespace dftcu
