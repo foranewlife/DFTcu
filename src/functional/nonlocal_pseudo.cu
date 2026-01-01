@@ -120,6 +120,16 @@ void NonLocalPseudo::init_tab_beta(int type, const std::vector<double>& r,
     }
 }
 
+void NonLocalPseudo::set_tab_beta(int type, int nb, const std::vector<double>& tab) {
+    if (type >= (int)tab_beta_.size())
+        tab_beta_.resize(type + 1);
+    if (nb >= (int)tab_beta_[type].size())
+        tab_beta_[type].resize(nb + 1);
+    tab_beta_[type][nb] = tab;
+    if (nqx_ < (int)tab.size())
+        nqx_ = (int)tab.size() - 1;
+}
+
 void NonLocalPseudo::init_dij(int type, const std::vector<double>& dij) {
     if (type >= (int)d_ij_.size())
         d_ij_.resize(type + 1);

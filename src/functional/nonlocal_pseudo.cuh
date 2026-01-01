@@ -69,6 +69,12 @@ class NonLocalPseudo {
                        double omega_angstrom);
 
     /**
+     * @brief Manually set the radial interpolation table for a specific atom type and projector.
+     * Useful for importing high-precision tables from external codes like QE.
+     */
+    void set_tab_beta(int type, int nb, const std::vector<double>& tab);
+
+    /**
      * @brief Initialize the DIJ coupling matrix from radial data.
      * @param type Atom type index.
      * @param dij Coupling matrix (nb x nb) from UPF, provided as a flat vector.

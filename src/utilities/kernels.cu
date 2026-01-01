@@ -107,13 +107,32 @@ void v_axpy(size_t n, double alpha, const double* x, double* y, cudaStream_t str
     CUBLAS_SAFE_CALL(cublasSetStream(handle, stream));
     // Set pointer mode to host for the alpha scalar
     CublasPointerModeGuard mode_guard(handle, CUBLAS_POINTER_MODE_HOST);
-    CUBLAS_SAFE_CALL(cublasDaxpy(handle, n, &alpha, x, 1, y, 1));
+    CUBLAS_SAFE_CALL(cublasDaxpy(handle, (int)n, &alpha, x, 1, y, 1));
 }
+
+void v_axpy(size_t n, std::complex<double> alpha, const gpufftComplex* x, gpufftComplex* y,
+            cudaStream_t stream) {
+    cublasHandle_t handle = CublasManager::instance().handle();
+    CUBLAS_SAFE_CALL(cublasSetStream(handle, stream));
+    cuDoubleComplex ca = {alpha.real(), alpha.imag()};
+    CublasPointerModeGuard mode_guard(handle, CUBLAS_POINTER_MODE_HOST);
+    CUBLAS_SAFE_CALL(
+        cublasZaxpy(handle, (int)n, &ca, (const cuDoubleComplex*)x, 1, (cuDoubleComplex*)y, 1));
+}
+
 void v_scale(size_t n, double alpha, const double* x, double* out, cudaStream_t stream) {
     const int block_size = 256;
     const int grid_size = (n + block_size - 1) / block_size;
     v_scale_kernel<<<grid_size, block_size, 0, stream>>>(n, alpha, x, out);
     GPU_CHECK_KERNEL;
+}
+
+void v_scale(size_t n, double alpha, const gpufftComplex* x, gpufftComplex* out,
+             cudaStream_t stream) {
+    cublasHandle_t handle = CublasManager::instance().handle();
+    CUBLAS_SAFE_CALL(cublasSetStream(handle, stream));
+    // cublasZdscal scales a complex vector by a real scalar
+    CUBLAS_SAFE_CALL(cublasZdscal(handle, (int)n, &alpha, (cuDoubleComplex*)out, 1));
 }
 void v_sqrt(size_t n, const double* x, double* out, cudaStream_t stream) {
     const int block_size = 256;

@@ -12,7 +12,7 @@ namespace dftcu {
 class LDA_PZ {
   public:
     struct Parameters {
-        double rho_threshold = 1e-16;
+        double rho_threshold = 1e-10;
         // Constants from DFTpy (semilocal_xc.py)
         double a = 0.0311;
         double b = -0.048;
