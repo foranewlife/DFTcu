@@ -1,5 +1,6 @@
-import dftcu
 import numpy as np
+
+import dftcu
 
 
 def test_grid_initialization():

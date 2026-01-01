@@ -13,12 +13,13 @@ import pytest
 sys.path.insert(0, "/workplace/chenys/project/DFTcu/external/DFTpy/src")
 
 try:
-    import dftcu  # noqa: E402
     from dftpy.density import DensityGenerator  # noqa: E402
     from dftpy.field import DirectField  # noqa: E402
     from dftpy.functional.kedf.tf import TF as DFTpy_TF  # noqa: E402
     from dftpy.grid import DirectGrid  # noqa: E402
     from dftpy.ions import Ions  # noqa: E402
+
+    import dftcu  # noqa: E402
 
     DFTPY_AVAILABLE = True
 except ImportError:

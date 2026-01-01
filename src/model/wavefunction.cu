@@ -6,6 +6,7 @@
 #include <thrust/complex.h>
 #include <thrust/execution_policy.h>
 #include <thrust/functional.h>
+#include <thrust/iterator/counting_iterator.h>
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/tuple.h>
@@ -73,32 +74,19 @@ __global__ void accumulate_density_kernel(size_t n, const gpufftComplex* psi_r, 
     }
 }
 
-__global__ void kinetic_energy_kernel(size_t n, const double* gg, const gpufftComplex* psi,
-                                      double* out) {
-    extern __shared__ double sdata[];
-    int tid = threadIdx.x;
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+struct KineticEnergyOp {
+    const double* gg;
+    const double BOHR_TO_ANGSTROM = 0.529177210903;
 
-    double val = 0.0;
-    if (i < n) {
-        const double BOHR_TO_ANGSTROM = 0.529177210903;
+    KineticEnergyOp(const double* g) : gg(g) {}
+
+    __host__ __device__ double operator()(const thrust::tuple<gpufftComplex, size_t>& tpl) const {
+        const gpufftComplex& psi = thrust::get<0>(tpl);
+        size_t i = thrust::get<1>(tpl);
         double g2_bohr = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
-        val = 0.5 * g2_bohr * (psi[i].x * psi[i].x + psi[i].y * psi[i].y);
+        return 0.5 * g2_bohr * (psi.x * psi.x + psi.y * psi.y);
     }
-    sdata[tid] = val;
-    __syncthreads();
-
-    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
-        if (tid < s) {
-            sdata[tid] += sdata[tid + s];
-        }
-        __syncthreads();
-    }
-
-    if (tid == 0) {
-        atomicAdd(out, sdata[0]);
-    }
-}
+};
 
 }  // namespace
 
@@ -108,6 +96,7 @@ Wavefunction::Wavefunction(Grid& grid, int num_bands, double encut)
       encut_(encut),
       data_(grid.nnr() * num_bands),
       pw_mask_(grid.nnr()) {
+    data_.fill({0.0, 0.0}, grid_.stream());
     initialize_mask();
 }
 
@@ -268,30 +257,24 @@ double Wavefunction::compute_kinetic_energy(const std::vector<double>& occupatio
     size_t n = grid_.nnr();
     double total_ek = 0.0;
 
-    double* d_ek;
-    CHECK(cudaMalloc(&d_ek, sizeof(double)));
-
-    const int block_size = 256;
-    const int grid_size = (n + block_size - 1) / block_size;
+    auto counting_begin = thrust::make_counting_iterator<size_t>(0);
+    auto counting_end = counting_begin + n;
 
     for (int nb = 0; nb < num_bands_; ++nb) {
         if (occupations[nb] < 1e-12)
             continue;
 
-        CHECK(cudaMemset(d_ek, 0, sizeof(double)));
-        kinetic_energy_kernel<<<grid_size, block_size, block_size * sizeof(double),
-                                grid_.stream()>>>(n, grid_.gg(), band_data(nb), d_ek);
-        GPU_CHECK_KERNEL;
+        gpufftComplex* psi_ptr = band_data(nb);
+        auto zipped_begin = thrust::make_zip_iterator(thrust::make_tuple(psi_ptr, counting_begin));
+        auto zipped_end = zipped_begin + n;
 
-        double h_ek;
-        CHECK(cudaMemcpy(&h_ek, d_ek, sizeof(double), cudaMemcpyDeviceToHost));
-        total_ek += occupations[nb] * h_ek;
+        double band_ek =
+            thrust::transform_reduce(thrust::cuda::par.on(grid_.stream()), zipped_begin, zipped_end,
+                                     KineticEnergyOp(grid_.gg()), 0.0, thrust::plus<double>());
+
+        total_ek += occupations[nb] * band_ek;
     }
 
-    CHECK(cudaFree(d_ek));
-    // FIXED: QE wavefunction normalization is sum |C_G|^2 = 1 (no volume factor)
-    // Kinetic energy: T = sum f_n * sum_G 0.5 * G^2 * |C_G|^2
-    // Do NOT multiply by volume
     return total_ek;
 }
 

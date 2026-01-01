@@ -1,8 +1,9 @@
-import dftcu
 import numpy as np
 from dftpy.field import DirectField
 from dftpy.grid import DirectGrid
 from test_utils import get_pp_path, get_system, setup_pseudo, to_dftcu_atoms
+
+import dftcu
 
 
 def test_pseudo_fcc():

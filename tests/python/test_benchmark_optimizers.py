@@ -1,7 +1,8 @@
-import dftcu
 import numpy as np
 import pytest
 from test_utils import get_system, setup_pseudo, to_dftcu_atoms
+
+import dftcu
 
 
 @pytest.fixture(scope="module")

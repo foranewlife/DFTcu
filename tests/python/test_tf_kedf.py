@@ -1,9 +1,10 @@
-import dftcu
 import numpy as np
 from dftpy.field import DirectField
 from dftpy.functional import Functional
 from dftpy.grid import DirectGrid
 from test_utils import get_system
+
+import dftcu
 
 
 def test_tf_fcc():

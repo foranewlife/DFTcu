@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-import dftcu
 import numpy as np
 from dftpy.ewald import ewald as DFTpy_Ewald
 from dftpy.grid import DirectGrid
 from dftpy.ions import Ions
+
+import dftcu
 
 
 def test_ewald_multi_atoms():

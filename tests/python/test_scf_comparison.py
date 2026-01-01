@@ -1,6 +1,5 @@
 import time
 
-import dftcu
 from dftpy.density import DensityGenerator
 from dftpy.ewald import ewald as DFTpy_Ewald
 from dftpy.functional import Functional
@@ -8,6 +7,8 @@ from dftpy.functional import Hartree as DFTpy_Hartree
 from dftpy.grid import DirectGrid
 from dftpy.optimization.optimization import Optimization
 from test_utils import get_pp_path, get_system, setup_pseudo, to_dftcu_atoms
+
+import dftcu
 
 
 def test_scf_comparison_dftpy():

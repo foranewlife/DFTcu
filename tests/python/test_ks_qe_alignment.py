@@ -1,9 +1,10 @@
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import dftcu
 import numpy as np
 import pytest
+
+import dftcu
 
 RUN_DIR = Path("run_qe_final_align")
 RHO_FILE = RUN_DIR / "qe_rho_golden.npy"

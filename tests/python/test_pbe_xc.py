@@ -1,8 +1,9 @@
-import dftcu
 import numpy as np
 from dftpy.density import DensityGenerator
 from dftpy.grid import DirectGrid
 from test_utils import get_pp_path, get_system
+
+import dftcu
 
 
 def pbe_reference_implementation(rho, sigma):

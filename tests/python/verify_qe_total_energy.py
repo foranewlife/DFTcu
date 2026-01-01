@@ -2,8 +2,9 @@
 import struct
 import xml.etree.ElementTree as ET
 
-import dftcu
 import numpy as np
+
+import dftcu
 
 BOHR_TO_ANGSTROM = 0.529177210903
 HARTREE_TO_RY = 2.0

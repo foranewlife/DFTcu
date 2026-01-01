@@ -9,6 +9,7 @@
 #include "functional/xc/lda_pz.cuh"
 #include "functional/xc/pbe.cuh"
 #include "math/bessel.cuh"
+#include "math/ylm.cuh"
 #include "model/atoms.cuh"
 #include "model/density_builder.cuh"
 #include "model/field.cuh"
@@ -30,6 +31,8 @@ PYBIND11_MODULE(_dftcu, m) {
     m.doc() = "DFTcu: A GPU-accelerated orbital-free DFT code";
 
     m.def("spherical_bessel_jl", &dftcu::spherical_bessel_jl, py::arg("l"), py::arg("x"));
+    m.def("ylm", &dftcu::get_ylm, py::arg("l"), py::arg("m_idx"), py::arg("gx"), py::arg("gy"),
+          py::arg("gz"), py::arg("gmod"));
 
     py::class_<dftcu::Grid>(m, "Grid")
         .def(py::init<const std::vector<double>&, const std::vector<int>&>())
@@ -38,6 +41,10 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("dv", &dftcu::Grid::dv)
         .def("dv_bohr", &dftcu::Grid::dv_bohr)
         .def("nnr", &dftcu::Grid::nnr)
+        .def("nr",
+             [](dftcu::Grid& self) {
+                 return std::vector<int>{self.nr()[0], self.nr()[1], self.nr()[2]};
+             })
         .def("g2max", &dftcu::Grid::g2max)
         .def("synchronize", &dftcu::Grid::synchronize)
         .def("gg",
@@ -104,6 +111,7 @@ PYBIND11_MODULE(_dftcu, m) {
         .def(py::init<dftcu::Grid&, int, double>(), py::arg("grid"), py::arg("num_bands"),
              py::arg("encut"))
         .def("num_pw", &dftcu::Wavefunction::num_pw)
+        .def("num_bands", &dftcu::Wavefunction::num_bands)
         .def("compute_density", &dftcu::Wavefunction::compute_density)
         .def("randomize", &dftcu::Wavefunction::randomize, py::arg("seed") = 42U)
         .def("get_pw_indices", &dftcu::Wavefunction::get_pw_indices)
@@ -131,6 +139,7 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("set_coefficients",
              [](dftcu::Wavefunction& self, const std::vector<std::complex<double>>& coeffs,
                 int band) { self.set_coefficients(coeffs, band); })
+        .def("dot", &dftcu::Wavefunction::dot, py::arg("band_a"), py::arg("band_b"))
         .def("compute_kinetic_energy", &dftcu::Wavefunction::compute_kinetic_energy);
 
     py::class_<dftcu::Evaluator>(m, "Evaluator")
@@ -313,6 +322,9 @@ PYBIND11_MODULE(_dftcu, m) {
              py::arg("omega"))
         .def("init_dij", &dftcu::NonLocalPseudo::init_dij, py::arg("type"), py::arg("dij"))
         .def("update_projectors", &dftcu::NonLocalPseudo::update_projectors, py::arg("atoms"))
+        .def("get_tab_beta", &dftcu::NonLocalPseudo::get_tab_beta, py::arg("type"), py::arg("nb"))
+        .def("get_projector", &dftcu::NonLocalPseudo::get_projector, py::arg("idx"))
+        .def("get_projections", &dftcu::NonLocalPseudo::get_projections)
         .def("clear", &dftcu::NonLocalPseudo::clear)
         .def("calculate_energy", &dftcu::NonLocalPseudo::calculate_energy)
         .def_property_readonly("num_projectors", &dftcu::NonLocalPseudo::num_projectors);
