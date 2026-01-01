@@ -1,6 +1,7 @@
-import dftcu
 import numpy as np
 import pytest
+
+import dftcu
 
 
 def test_grid_gvectors():

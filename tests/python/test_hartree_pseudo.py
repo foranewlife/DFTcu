@@ -1,10 +1,11 @@
-import dftcu
 import numpy as np
 from dftpy.field import DirectField
 from dftpy.functional import Hartree as DFTpy_Hartree
 from dftpy.functional.pseudo import LocalPseudo as DFTpy_LocalPseudo
 from dftpy.grid import DirectGrid
 from test_utils import get_pp_path, get_system, setup_pseudo, to_dftcu_atoms
+
+import dftcu
 
 
 def test_hartree_and_pseudo():

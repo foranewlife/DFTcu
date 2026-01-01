@@ -84,6 +84,34 @@ class NonLocalPseudo {
 
     int num_projectors() const { return num_projectors_; }
 
+    /**
+     * @brief Get the radial interpolation table for a specific projector.
+     * @param type Atom type index.
+     * @param nb Projector index for this atom type.
+     * @return Vector of values at q = i * dq_
+     */
+    std::vector<double> get_tab_beta(int type, int nb) const {
+        if (type < (int)tab_beta_.size() && nb < (int)tab_beta_[type].size()) {
+            return tab_beta_[type][nb];
+        }
+        return {};
+    }
+
+    std::vector<std::complex<double>> get_projector(int idx) const {
+        size_t nnr = grid_.nnr();
+        std::vector<std::complex<double>> host(nnr);
+        CHECK(cudaMemcpy(host.data(), d_projectors_.data() + idx * nnr, nnr * sizeof(gpufftComplex),
+                         cudaMemcpyDeviceToHost));
+        return host;
+    }
+
+    std::vector<std::complex<double>> get_projections() const {
+        std::vector<std::complex<double>> host(d_projections_.size());
+        CHECK(cudaMemcpy(host.data(), d_projections_.data(),
+                         d_projections_.size() * sizeof(gpufftComplex), cudaMemcpyDeviceToHost));
+        return host;
+    }
+
   private:
     Grid& grid_;
     int num_projectors_ = 0;

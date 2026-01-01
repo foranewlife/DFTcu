@@ -1,9 +1,10 @@
 import os
 
-import dftcu
 import numpy as np
 from ase.build import bulk
 from dftpy.ions import Ions
+
+import dftcu
 
 # Project root is expected to be 2 levels up from this file
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))

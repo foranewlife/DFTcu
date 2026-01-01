@@ -1,10 +1,11 @@
-import dftcu
 import numpy as np
 import pytest
 from dftpy.field import DirectField
 from dftpy.functional import Functional, TotalFunctional
 from dftpy.grid import DirectGrid
 from test_utils import get_pp_path, get_system, setup_pseudo, to_dftcu_atoms
+
+import dftcu
 
 
 def test_tn_alignment_step10():

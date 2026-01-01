@@ -1,6 +1,7 @@
-import dftcu
 import numpy as np
 import pytest
+
+import dftcu
 
 HARTREE_TO_EV = 27.211386245988
 ANGSTROM_TO_BOHR = 1.0 / 0.529177249

@@ -1,8 +1,9 @@
-import dftcu
 from dftpy.density import DensityGenerator
 from dftpy.functional.kedf.hc import revHC as DFTpy_revHC
 from dftpy.grid import DirectGrid
 from test_utils import get_pp_path, get_system
+
+import dftcu
 
 
 def test_revhc_functional():

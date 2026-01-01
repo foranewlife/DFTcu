@@ -1,7 +1,8 @@
-import dftcu
 from dftpy.ewald import ewald as EwaldPy
 from dftpy.grid import DirectGrid
 from test_utils import get_system, to_dftcu_atoms
+
+import dftcu
 
 
 def test_ewald_fcc():

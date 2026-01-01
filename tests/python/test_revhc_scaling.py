@@ -1,11 +1,12 @@
 import os
 
-import dftcu
 import numpy as np
 from dftpy.density import DensityGenerator
 from dftpy.functional.kedf.hc import revHC as DFTpy_revHC
 from dftpy.grid import DirectGrid
 from dftpy.ions import Ions
+
+import dftcu
 
 
 def test_revhc_scaling():

@@ -3,13 +3,14 @@ TN Optimizer Detailed Debug Script
 详细对比 DFTpy 和 DFTcu 每一步的中间变量
 """
 
-import dftcu
 import numpy as np
 from dftpy.field import DirectField
 from dftpy.functional import Functional, TotalFunctional
 from dftpy.grid import DirectGrid
 from dftpy.optimization import Optimization
 from test_utils import get_pp_path, get_system, setup_pseudo, to_dftcu_atoms
+
+import dftcu
 
 
 def analyze_density(rho, grid, label=""):

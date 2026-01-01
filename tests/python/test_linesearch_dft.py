@@ -2,7 +2,6 @@
 """
 Test C++ line search implementation on DFT energy landscape
 """
-import dftcu
 import numpy as np
 from dftpy.ewald import ewald as DFTpy_Ewald
 from dftpy.field import DirectField
@@ -11,6 +10,8 @@ from dftpy.functional.pseudo import LocalPseudo as LP
 from dftpy.grid import DirectGrid
 from dftpy.ions import Ions
 from scipy.optimize._linesearch import scalar_search_wolfe1
+
+import dftcu
 
 # Setup
 a0, lattice, nr = 7.6, np.eye(3) * 7.6, [32, 32, 32]
