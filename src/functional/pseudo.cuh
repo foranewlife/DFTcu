@@ -72,8 +72,8 @@ class LocalPseudo {
     void compute(RealField& vloc_r);
 
     /**
-     * @brief Set G-vector cutoff for the local potential (in Bohr^-2).
-     * Set to -1 to use the full FFT grid.
+     * @brief Set G-vector cutoff for the local potential (in Rydberg).
+     * @param gcut Cutoff energy in Rydberg. Set to -1 to use full grid.
      */
     void set_gcut(double gcut) { gcut_ = gcut; }
 

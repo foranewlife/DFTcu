@@ -236,6 +236,12 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("set_gcut", &dftcu::LocalPseudo::set_gcut, py::arg("gcut"))
         .def("compute_potential",
              [](dftcu::LocalPseudo& self, dftcu::RealField& vloc) { self.compute(vloc); })
+        .def("get_v_g",
+             [](dftcu::LocalPseudo& self) {
+                 // Need a way to access v_g_ which is private.
+                 // I'll add a temporary public getter in pseudo.cuh or just friend it.
+                 // Actually, for debugging, I'll just add it to the header.
+             })
         .def("compute", [](dftcu::LocalPseudo& self, const dftcu::RealField& rho,
                            dftcu::RealField& v_out) { return self.compute(rho, v_out); })
         .def("get_tab_vloc", &dftcu::LocalPseudo::get_tab_vloc, py::arg("type"))

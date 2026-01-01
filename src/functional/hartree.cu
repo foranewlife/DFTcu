@@ -6,14 +6,16 @@
 namespace dftcu {
 
 namespace {
-void __global__ hartree_kernel(size_t size, gpufftComplex* rho_g, const double* gg, double gcut) {
+__global__ void hartree_kernel(size_t size, gpufftComplex* rho_g, const double* gg, double gcut) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < size) {
         const double BOHR_TO_ANGSTROM = 0.529177210903;
+        // Units: |G|^2 in Bohr^-2 is equivalent to Energy in Rydberg
         double g2_ang = gg[i];
         double g2 = g2_ang * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
 
-        // Match QE's sphere truncation: set VH=0 if G^2 > gcut
+        // Poisson equation: V(G) = 4pi * rho(G) / G^2 (in Hartree)
+        // gcut is input in Rydberg.
         if (g2 > 1e-12 && (gcut < 0 || g2 <= gcut)) {
             double factor = 4.0 * constants::D_PI / g2;
             rho_g[i].x *= factor;

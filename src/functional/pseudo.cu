@@ -21,12 +21,14 @@ __global__ void vloc_gspace_kernel(int nnr, const double* gx, const double* gy, 
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= nnr)
         return;
+
     const double BOHR_TO_ANGSTROM = 0.529177210903;
-    double g2_ang = gg[i];
-    double g2 = g2_ang * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+    // Units: |G|^2 in Bohr^-2 is equivalent to Energy in Rydberg
+    double g2 = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
     double gmod = sqrt(g2);
 
-    if (gcut > 0 && g2 > gcut + 1e-8) {
+    // G-vector truncation (gcut input in Rydberg)
+    if (gcut > 0 && g2 > gcut) {
         v_g[i].x = 0.0;
         v_g[i].y = 0.0;
         return;
@@ -39,24 +41,32 @@ __global__ void vloc_gspace_kernel(int nnr, const double* gx, const double* gy, 
     for (int iat = 0; iat < nat; ++iat) {
         int type = c_pseudo_atom_type[iat];
         double vlocg = 0.0;
+
         if (gmod < 1e-8) {
-            vlocg = tab_vloc[type * nqx];  // Alpha term (G=0 limit)
+            // G=0 limit: QE's tab_vloc(0) which is in Rydberg, convert to Hartree (Ha = 0.5 Ry)
+            vlocg = tab_vloc[type * nqx] * 0.5;
         } else {
+            // Interpolate V_short(q) from tab_vloc[1...nqx] (stored in Ry)
             double gx_val = gmod;
             int i0 = (int)(gx_val / dq) + 1;
             i0 = min(max(i0, 1), nqx - 4);
-            double px = gx_val / dq - floor(gx_val / dq);
+            double px = gx_val / dq - (double)(i0 - 1);
             double ux = 1.0 - px;
             double vx = 2.0 - px;
             double wx = 3.0 - px;
-            double w0 = ux * vx * wx / 6.0;
-            double w1 = px * vx * wx / 2.0;
-            double w2 = -px * ux * wx / 2.0;
-            double w3 = px * ux * vx / 6.0;
-            vlocg = tab_vloc[type * nqx + i0] * w0 + tab_vloc[type * nqx + i0 + 1] * w1 +
-                    tab_vloc[type * nqx + i0 + 2] * w2 + tab_vloc[type * nqx + i0 + 3] * w3;
+
+            vlocg = tab_vloc[type * nqx + i0] * ux * vx * wx / 6.0 +
+                    tab_vloc[type * nqx + i0 + 1] * px * vx * wx / 2.0 -
+                    tab_vloc[type * nqx + i0 + 2] * px * ux * wx / 2.0 +
+                    tab_vloc[type * nqx + i0 + 3] * px * ux * vx / 6.0;
+
+            vlocg *= 0.5;  // Convert interpolated Rydberg to Hartree
+
+            // Subtract long-range term (erf) in Hartree: (4pi*Z/Omega/G^2) * exp(-G^2/4)
+            // Units: fpi (pure), zp (e), omega (Bohr^3), g2 (Bohr^-2) => Ha
             vlocg -= (fpi * zp[type] / omega) * exp(-0.25 * g2) / g2;
         }
+
         double phase = -(gx[i] * c_pseudo_atom_x[iat] + gy[i] * c_pseudo_atom_y[iat] +
                          gz[i] * c_pseudo_atom_z[iat]);
         double s, c;
@@ -70,6 +80,7 @@ __global__ void vloc_gspace_kernel(int nnr, const double* gx, const double* gy, 
 }  // namespace
 
 LocalPseudo::LocalPseudo(Grid& grid, std::shared_ptr<Atoms> atoms) : grid_(grid), atoms_(atoms) {}
+
 void LocalPseudo::initialize_buffers(Grid& grid) {
     if (grid_ptr_ == &grid)
         return;
@@ -84,10 +95,13 @@ void LocalPseudo::init_tab_vloc(int type, const std::vector<double>& r_grid,
                                 const std::vector<double>& vloc_r, const std::vector<double>& rab,
                                 double zp, double omega_ang) {
     const double BOHR_TO_ANGSTROM = 0.529177210903;
+    // Units: Atomic units (Bohr)
     omega_ = omega_ang / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+
     if (type >= static_cast<int>(zp_.size()))
         zp_.resize(type + 1, 0.0);
     zp_[type] = zp;
+
     double qmax = sqrt(grid_.g2max() * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM) * 1.2;
     int required_nqx = static_cast<int>(qmax / dq_) + 4;
     if (required_nqx > nqx_) {
@@ -98,22 +112,29 @@ void LocalPseudo::init_tab_vloc(int type, const std::vector<double>& r_grid,
     if (type >= static_cast<int>(tab_vloc_.size()))
         tab_vloc_.resize(type + 1);
     tab_vloc_[type].resize(nqx_ + 1, 0.0);
+
     const double fpi = 4.0 * constants::D_PI;
     int msh = r_grid.size();
     std::vector<double> aux(msh);
+
+    // tab_vloc[1...nqx]: V_short(q) = (4pi/Omega) * integral [ (r*Vloc + 2*Z*erf(r)) * sin(qr)/q ]
+    // Note: QE uses e2=2.0 Ry, so we use 2.0*zp here to stay in Ry.
     for (int iq = 1; iq <= nqx_; ++iq) {
         double q = (iq - 1) * dq_;
-        if (iq == 1)
+        if (iq == 1) {
             for (int ir = 0; ir < msh; ++ir)
-                aux[ir] = r_grid[ir] * (r_grid[ir] * vloc_r[ir] * 0.5 + zp * erf(r_grid[ir]));
-        else
+                aux[ir] = r_grid[ir] * (r_grid[ir] * vloc_r[ir] + 2.0 * zp * erf(r_grid[ir]));
+        } else {
             for (int ir = 0; ir < msh; ++ir)
-                aux[ir] = (r_grid[ir] * vloc_r[ir] * 0.5 + zp * erf(r_grid[ir])) *
+                aux[ir] = (r_grid[ir] * vloc_r[ir] + 2.0 * zp * erf(r_grid[ir])) *
                           sin(q * r_grid[ir]) / q;
+        }
         tab_vloc_[type][iq] = simpson_integrate(aux, rab) * fpi / omega_;
     }
+
+    // tab_vloc[0]: Alpha term = (4pi/Omega) * integral [ r^2 * Vloc + Z*r*e2 ]
     for (int ir = 0; ir < msh; ++ir)
-        aux[ir] = r_grid[ir] * (r_grid[ir] * vloc_r[ir] * 0.5 + zp);
+        aux[ir] = r_grid[ir] * (r_grid[ir] * vloc_r[ir] + 2.0 * zp);
     tab_vloc_[type][0] = simpson_integrate(aux, rab) * fpi / omega_;
 }
 
@@ -131,17 +152,21 @@ void LocalPseudo::compute(RealField& v) {
     CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_type, atoms_->h_type().data(),
                                   atoms_->nat() * sizeof(int), 0, cudaMemcpyHostToDevice,
                                   grid_.stream()));
+
     int stride = nqx_ + 1;
     std::vector<double> flat(stride * tab_vloc_.size(), 0.0);
     for (size_t t = 0; t < tab_vloc_.size(); ++t)
         std::copy(tab_vloc_[t].begin(), tab_vloc_[t].end(), flat.begin() + t * stride);
+
     GPU_Vector<double> d_tab(flat.size());
     d_tab.copy_from_host(flat.data(), grid_.stream());
     GPU_Vector<double> d_zp(zp_.size());
     d_zp.copy_from_host(zp_.data(), grid_.stream());
+
     vloc_gspace_kernel<<<(grid_.nnr() + 255) / 256, 256, 0, grid_.stream()>>>(
         grid_.nnr(), grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), atoms_->nat(), d_tab.data(),
         d_zp.data(), stride, dq_, omega_, gcut_, v_g_->data());
+
     fft_solver_->backward(*v_g_);
     complex_to_real(grid_.nnr(), v_g_->data(), v.data(), grid_.stream());
 }
@@ -153,42 +178,35 @@ double LocalPseudo::compute(const RealField& rho, RealField& v_out) {
     v_add(grid_.nnr(), v_out.data(), v_ps.data(), v_out.data(), grid_.stream());
     return energy;
 }
+
 std::vector<double> LocalPseudo::get_vloc_g_shells(int type,
                                                    const std::vector<double>& g_shells) const {
     if (type >= static_cast<int>(tab_vloc_.size()) || tab_vloc_[type].empty())
         return {};
-
     const double fpi = 4.0 * constants::D_PI;
     std::vector<double> results(g_shells.size());
-
     for (size_t i = 0; i < g_shells.size(); ++i) {
         double gmod = g_shells[i];
         double g2 = gmod * gmod;
-
         if (g2 < 1e-12) {
-            results[i] = tab_vloc_[type][0];
+            results[i] = tab_vloc_[type][0] * 0.5;
         } else {
             int i0 = (int)(gmod / dq_) + 1;
-            // Matches kernel interpolation logic
             i0 = std::min(std::max(i0, 1), nqx_ - 4);
-            double px = gmod / dq_ - std::floor(gmod / dq_);
+            double px = gmod / dq_ - (double)(i0 - 1);
             double ux = 1.0 - px;
             double vx = 2.0 - px;
             double wx = 3.0 - px;
-            double w0 = ux * vx * wx / 6.0;
-            double w1 = px * vx * wx / 2.0;
-            double w2 = -px * ux * wx / 2.0;
-            double w3 = px * ux * vx / 6.0;
-
-            double vlocg = tab_vloc_[type][i0] * w0 + tab_vloc_[type][i0 + 1] * w1 +
-                           tab_vloc_[type][i0 + 2] * w2 + tab_vloc_[type][i0 + 3] * w3;
-
-            vlocg -= (fpi * zp_[type] / omega_) * std::exp(-0.25 * g2) / g2;
-            results[i] = vlocg;
+            double vlocg = tab_vloc_[type][i0] * ux * vx * wx / 6.0 +
+                           tab_vloc_[type][i0 + 1] * px * vx * wx / 2.0 -
+                           tab_vloc_[type][i0 + 2] * px * ux * wx / 2.0 +
+                           tab_vloc_[type][i0 + 3] * px * ux * vx / 6.0;
+            results[i] = vlocg * 0.5 - (fpi * zp_[type] / omega_) * std::exp(-0.25 * g2) / g2;
         }
     }
     return results;
 }
+
 void LocalPseudo::set_valence_charge(int t, double z) {
     if (t >= static_cast<int>(zp_.size()))
         zp_.resize(t + 1);

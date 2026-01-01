@@ -60,3 +60,6 @@ Thumbs.db
 # *.save/
 
 external/vasp*
+alignment_tests/
+run_qe_lda/qe_*.txt
+run_qe_lda/qe_*.dat
