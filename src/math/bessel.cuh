@@ -7,8 +7,6 @@ namespace dftcu {
 
 /**
  * @brief Spherical Bessel functions j_l(x) for small l, mimicking QE implementation.
- *
- * Uses Taylor series for small x < 0.05 to avoid numerical cancellation.
  */
 __host__ __device__ inline double spherical_bessel_jl(int l, double x) {
     const double xseries = 0.05;
@@ -18,18 +16,18 @@ __host__ __device__ inline double spherical_bessel_jl(int l, double x) {
         double x2 = x * x;
         double xl = (l == 0) ? 1.0 : std::pow(abs_x, l);
 
-        long long semifact = 1;
+        double semifact = 1.0;
         for (int i = 2 * l + 1; i >= 1; i -= 2) {
             semifact *= i;
         }
 
+        // Match QE's 4-term expansion
         double term = 1.0 - x2 / (2.0 * (2.0 * l + 3.0)) *
                                 (1.0 - x2 / (4.0 * (2.0 * l + 5.0)) *
                                            (1.0 - x2 / (6.0 * (2.0 * l + 7.0)) *
                                                       (1.0 - x2 / (8.0 * (2.0 * l + 9.0)))));
 
-        double res = xl / static_cast<double>(semifact) * term;
-        // For l odd, j_l(-x) = (-1)^l j_l(x). Since xl = |x|^l, we need to restore sign.
+        double res = xl / semifact * term;
         if (l % 2 != 0 && x < 0)
             return -res;
         return res;
@@ -56,6 +54,31 @@ __host__ __device__ inline double spherical_bessel_jl(int l, double x) {
     }
 
     return 0.0;
+}
+
+/**
+ * @brief Computes j_l(x) / x^l stably for small x.
+ */
+__host__ __device__ inline double spherical_bessel_jl_scaled(int l, double x) {
+    const double xseries = 0.5;
+    double abs_x = std::abs(x);
+
+    if (abs_x < xseries) {
+        double x2 = x * x;
+        double semifact = 1.0;
+        for (int i = 2 * l + 1; i >= 1; i -= 2)
+            semifact *= i;
+
+        double term =
+            1.0 - x2 / (2.0 * (2.0 * l + 3.0)) *
+                      (1.0 - x2 / (4.0 * (2.0 * l + 5.0)) *
+                                 (1.0 - x2 / (6.0 * (2.0 * l + 7.0)) *
+                                            (1.0 - x2 / (8.0 * (2.0 * l + 9.0)) *
+                                                       (1.0 - x2 / (10.0 * (2.0 * l + 11.0))))));
+        return term / semifact;
+    }
+
+    return spherical_bessel_jl(l, x) / std::pow(x, (double)l);
 }
 
 }  // namespace dftcu

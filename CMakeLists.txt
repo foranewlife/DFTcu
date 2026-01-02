@@ -120,6 +120,7 @@ if(BUILD_WITH_CUDA)
         src/solver/evaluator.cu
         src/solver/hamiltonian.cu
         src/solver/davidson.cu
+        src/solver/subspace_solver.cu
         src/solver/scf.cu
         src/solver/mixer.cu
         src/solver/optimizer.cu

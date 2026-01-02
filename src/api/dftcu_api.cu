@@ -21,6 +21,8 @@
 #include "solver/evaluator.cuh"
 #include "solver/hamiltonian.cuh"
 #include "solver/scf.cuh"
+#include "solver/subspace_solver.cuh"
+#include "utilities/gpu_vector.cuh"
 
 #include <pybind11/complex.h>
 #include <pybind11/numpy.h>
@@ -259,7 +261,7 @@ PYBIND11_MODULE(_dftcu, m) {
              py::arg("coupling_constant"))
         .def("init_tab_beta", &dftcu::NonLocalPseudo::init_tab_beta, py::arg("type"),
              py::arg("r_grid"), py::arg("beta_r"), py::arg("rab"), py::arg("l_list"),
-             py::arg("omega_angstrom"))
+             py::arg("kkbeta_list"), py::arg("omega_angstrom"))
         .def("set_tab_beta", &dftcu::NonLocalPseudo::set_tab_beta, py::arg("type"), py::arg("nb"),
              py::arg("tab"))
         .def("init_dij", &dftcu::NonLocalPseudo::init_dij, py::arg("type"), py::arg("dij"))
@@ -279,6 +281,30 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("set_nonlocal", &dftcu::Hamiltonian::set_nonlocal)
         .def("v_loc", &dftcu::Hamiltonian::v_loc, py::return_value_policy::reference)
         .def("set_ecutrho", &dftcu::Hamiltonian::set_ecutrho, py::arg("ecutrho"));
+
+    py::class_<dftcu::SubspaceSolver>(m, "SubspaceSolver")
+        .def(py::init<dftcu::Grid&>())
+        .def("solve_generalized",
+             [](dftcu::SubspaceSolver& self,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> h,
+                py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> s) {
+                 int nbands = h.shape(0);
+                 if (h.ndim() != 2 || h.shape(1) != nbands || s.ndim() != 2 ||
+                     s.shape(0) != nbands || s.shape(1) != nbands)
+                     throw std::runtime_error("Matrix dimensions mismatch");
+
+                 dftcu::GPU_Vector<gpufftComplex> d_h(nbands * nbands);
+                 d_h.copy_from_host((gpufftComplex*)h.data());
+                 dftcu::GPU_Vector<gpufftComplex> d_s(nbands * nbands);
+                 d_s.copy_from_host((gpufftComplex*)s.data());
+                 dftcu::GPU_Vector<double> d_e(nbands);
+
+                 self.solve_generalized(nbands, d_h.data(), d_s.data(), d_e.data(), nullptr);
+
+                 std::vector<double> h_e(nbands);
+                 d_e.copy_to_host(h_e.data());
+                 return h_e;
+             });
 
     py::class_<dftcu::DavidsonSolver>(m, "DavidsonSolver")
         .def(py::init<dftcu::Grid&, int, double>(), py::arg("grid"), py::arg("max_iter") = 50,

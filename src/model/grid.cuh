@@ -59,15 +59,15 @@ class Grid {
     double volume() const { return volume_; }
     /** @brief Unit cell volume in Bohr³ */
     double volume_bohr() const {
-        const double BOHR_TO_ANGSTROM = 0.529177210903;
-        return volume_ / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+        const double B = constants::BOHR_TO_ANGSTROM;
+        return volume_ / (B * B * B);
     }
     /** @brief Differential volume element dv = Volume / N (in Angstrom³) */
     double dv() const { return volume_ / (double)nnr_; }
     /** @brief Differential volume element in Bohr³ */
     double dv_bohr() const {
-        const double BOHR_TO_ANGSTROM = 0.529177210903;
-        return dv() / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+        const double B = constants::BOHR_TO_ANGSTROM;
+        return dv() / (B * B * B);
     }
     const int* nr() const { return nr_; }
 

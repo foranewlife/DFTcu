@@ -7,5 +7,6 @@ from .utils import (  # noqa: F401
     initialize_wavefunctions,
     load_qe_miller_indices,
     solve_generalized_eigenvalue_problem,
+    verify_native_subspace_alignment,
     verify_qe_subspace_alignment,
 )

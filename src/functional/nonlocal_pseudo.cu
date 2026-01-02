@@ -26,7 +26,7 @@ __global__ void build_projectors_kernel(int nnr, const double* gx, const double*
     if (ig >= nnr)
         return;
 
-    const double BOHR_TO_ANGSTROM = 0.529177210903;
+    const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
     double g2_ang = gg[ig];
     double gmod_ang = sqrt(g2_ang);
     double gmod = gmod_ang * BOHR_TO_ANGSTROM;
@@ -93,8 +93,8 @@ NonLocalPseudo::NonLocalPseudo(Grid& grid) : grid_(grid) {}
 void NonLocalPseudo::init_tab_beta(int type, const std::vector<double>& r,
                                    const std::vector<std::vector<double>>& b,
                                    const std::vector<double>& rb, const std::vector<int>& l,
-                                   double o) {
-    const double B = 0.529177210903;
+                                   const std::vector<int>& kkbeta, double o) {
+    const double B = constants::BOHR_TO_ANGSTROM;
     omega_ = o / (B * B * B);
     if (type >= (int)tab_beta_.size()) {
         tab_beta_.resize(type + 1);
@@ -109,13 +109,34 @@ void NonLocalPseudo::init_tab_beta(int type, const std::vector<double>& r,
     // Normalization matching QE: beta(q) = (4pi/sqrt(Omega)) * \int r j_l(qr) (r*beta) dr
     double pref = 4.0 * constants::D_PI / sqrt(omega_);
     for (size_t nb = 0; nb < b.size(); ++nb) {
+        int l_val = l[nb];
+        int msh = kkbeta[nb];
         tab_beta_[type][nb].resize(nqx_ + 1);
         for (int iq = 1; iq <= nqx_; ++iq) {
             double q = (iq - 1) * dq_;
-            std::vector<double> aux(r.size());
-            for (size_t ir = 0; ir < r.size(); ++ir)
-                aux[ir] = b[nb][ir] * spherical_bessel_jl(l[nb], q * r[ir]) * r[ir];
-            tab_beta_[type][nb][iq] = simpson_integrate(aux, rb) * pref;
+            std::vector<double> aux(msh);
+            std::vector<double> rb_sub(msh);
+            for (int ir = 0; ir < msh; ++ir)
+                rb_sub[ir] = rb[ir];
+
+            if (iq == 1) {  // q = 0 case
+                if (l_val == 0) {
+                    for (int ir = 0; ir < msh; ++ir)
+                        aux[ir] = b[nb][ir] * r[ir];
+                } else {
+                    for (int ir = 0; ir < msh; ++ir)
+                        aux[ir] = 0.0;
+                }
+                tab_beta_[type][nb][iq] = simpson_integrate(aux, rb_sub) * pref;
+            } else {
+                for (int ir = 0; ir < msh; ++ir) {
+                    double x = q * r[ir];
+                    double jl = spherical_bessel_jl(l_val, x);
+                    aux[ir] = b[nb][ir] * jl * r[ir];
+                }
+                double vqint = simpson_integrate(aux, rb_sub);
+                tab_beta_[type][nb][iq] = vqint * pref;
+            }
         }
     }
 }

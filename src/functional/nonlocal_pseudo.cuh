@@ -66,7 +66,7 @@ class NonLocalPseudo {
     void init_tab_beta(int type, const std::vector<double>& r_grid,
                        const std::vector<std::vector<double>>& beta_r,
                        const std::vector<double>& rab, const std::vector<int>& l_list,
-                       double omega_angstrom);
+                       const std::vector<int>& kkbeta_list, double omega_angstrom);
 
     /**
      * @brief Manually set the radial interpolation table for a specific atom type and projector.
