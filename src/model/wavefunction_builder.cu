@@ -22,7 +22,7 @@ __global__ void build_atomic_band_kernel(int nnr, const double* atom_x, const do
                                          gpufftComplex* band_out) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < nnr) {
-        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
         double g2_ry = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
 
         if (g2_ry > encut_hartree * 2.0 + 1e-5)
@@ -92,7 +92,7 @@ void WavefunctionBuilder::add_atomic_orbital(int type, int l, const std::vector<
     if (type >= (int)orbital_tables_.size())
         orbital_tables_.resize(type + 1);
 
-    const double BOHR_TO_ANGSTROM = 0.529177210903;
+    const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
     double qmax = sqrt(grid_.g2max() * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM) * 2.0;
     int nqx = static_cast<int>(qmax / dq_) + 10;
 

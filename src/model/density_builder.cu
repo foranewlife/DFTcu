@@ -22,7 +22,7 @@ __global__ void density_sum_kernel(int nnr, const double* gx, const double* gy, 
                                    double dq, double gcut, gpufftComplex* rho_g) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < nnr) {
-        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
         double g2 = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
         double gmod = sqrt(g2);
 
@@ -85,7 +85,7 @@ void DensityBuilder::set_atomic_rho_g(int type, const std::vector<double>& q,
 void DensityBuilder::set_atomic_rho_r(int type, const std::vector<double>& r,
                                       const std::vector<double>& rho_r,
                                       const std::vector<double>& rab) {
-    const double BOHR_TO_ANGSTROM = 0.529177210903;
+    const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
     double qmax = sqrt(grid_.g2max() * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM) * 1.5;
     nqx_ = static_cast<int>(qmax / dq_) + 5;
 
@@ -160,6 +160,7 @@ void DensityBuilder::build_density(RealField& rho) {
 
     GPU_CHECK_KERNEL;
     solver.backward(rho_g);
+
     complex_to_real(nnr, rho_g.data(), rho.data(), grid_.stream());
     grid_.synchronize();
 }

@@ -55,6 +55,19 @@ class Wavefunction {
     /** @brief Set coefficients of a specific band on the full grid */
     void set_coefficients(const std::vector<std::complex<double>>& coeffs, int band);
 
+    /**
+     * @brief Set coefficients using Miller indices (QE style).
+     * @param h Vector of Miller h indices
+     * @param k Vector of Miller k indices
+     * @param l Vector of Miller l indices
+     * @param values Flat vector of complex coefficients (num_bands * num_miller)
+     * @param expand_hermitian If true, applies C(-G) = C*(G) for G != 0
+     */
+    void set_coefficients_miller(const std::vector<int>& h, const std::vector<int>& k,
+                                 const std::vector<int>& l,
+                                 const std::vector<std::complex<double>>& values,
+                                 bool expand_hermitian = true);
+
     // --- Operations ---
     /** @brief Initialize with random coefficients and normalize */
     void randomize(unsigned int seed = 42);

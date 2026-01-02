@@ -21,7 +21,7 @@ __global__ void ewald_recip_kernel(size_t nnr, int nat, const double* gx, const 
                                    const double* gz, double eta, double gcut, double* energy) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < nnr) {
-        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
         double cur_gx = gx[i] * BOHR_TO_ANGSTROM;
         double cur_gy = gy[i] * BOHR_TO_ANGSTROM;
         double cur_gz = gz[i] * BOHR_TO_ANGSTROM;
@@ -52,7 +52,7 @@ __global__ void ewald_real_kernel(int nat, const double* pos_x, const double* po
                                   double* energy_out) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < nat) {
-        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
         double ei = 0.0;
         double xi = pos_x[i] / BOHR_TO_ANGSTROM;
         double yi = pos_y[i] / BOHR_TO_ANGSTROM;
@@ -169,7 +169,7 @@ double Ewald::compute_recip_exact(double gcut) {
     energy.copy_to_host(&h_energy, grid_.stream());
     grid_.synchronize();
 
-    const double BOHR_TO_ANGSTROM = 0.529177210903;
+    const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
     double vol_bohr = grid_.volume() / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
 
     return 2.0 * constants::D_PI / vol_bohr * h_energy;
@@ -206,7 +206,7 @@ double Ewald::compute_corr() {
         charge_sq_sum += c * c;
     }
 
-    const double BOHR_TO_ANGSTROM = 0.529177210903;
+    const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
     double vol_bohr = grid_.volume() / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
 
     double e_self = -charge_sq_sum * sqrt(eta_ / constants::D_PI);

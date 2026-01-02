@@ -72,6 +72,7 @@ class RealField : public Expr<RealField> {
         return dot_product(size(), data(), other.data(), grid_.stream());
     }
 
+    /** @brief Integral over the cell. */
     double integral() const { return v_sum(size(), data(), grid_.stream()) * grid_.dv(); }
 
     __device__ __forceinline__ double operator[](size_t i) const { return data_.data()[i]; }
@@ -87,7 +88,6 @@ class RealField : public Expr<RealField> {
 };
 
 /** @brief Alias for complex-valued scalar fields (G-space representations) */
-// Note: ComplexField does not yet support Expression Templates
 class ComplexField {
   public:
     ComplexField(Grid& grid, int rank = 1) : grid_(grid), rank_(rank), data_(grid.nnr() * rank) {}

@@ -41,6 +41,7 @@ class Hamiltonian {
     void set_nonlocal(std::shared_ptr<NonLocalPseudo> nl_pseudo) { nonlocal_ = nl_pseudo; }
 
     /** @brief Get the total local potential used by the Hamiltonian */
+    RealField& v_loc() { return v_loc_tot_; }
     const RealField& v_loc() const { return v_loc_tot_; }
 
     /** @brief Update the local potential from the evaluator */

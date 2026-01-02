@@ -1,6 +1,9 @@
+import os
+
 import numpy as np
 
 import dftcu
+from dftcu._dftcu import constants
 
 
 def build_initial_density(grid, atoms, upf_data_map, ecutrho):
@@ -40,46 +43,30 @@ def get_core_density(grid, atoms, upf_data_map, ecutrho):
     return rho_core
 
 
-def is_fft_friendly(n):
-    """Check if n only has small prime factors (2, 3, 5, 7)."""
-    if n <= 0:
-        return False
-    for p in [2, 3, 5, 7]:
-        while n % p == 0:
-            n //= p
-    return n == 1
-
-
-def next_fft_friendly(n):
-    """Find the next integer >= n that is FFT friendly."""
-    while not is_fft_friendly(n):
-        n += 1
-    return n
-
-
 def get_optimal_fft_grid(ecutrho, lattice, q_factor=1.0):
     """
     Compute optimal FFT grid dimensions matching QE logic.
-    Args:
-        ecutrho (float): Charge density cutoff in Rydberg.
-        lattice (list or np.array): 3x3 lattice matrix in Angstrom.
-        q_factor (float): Additional scaling factor (default 1.0).
-    Returns:
-        list: [nr1, nr2, nr3]
     """
-    BOHR_TO_ANG = 0.529177210903
+    BOHR_TO_ANG = constants.BOHR_TO_ANGSTROM
     lat = np.array(lattice).reshape(3, 3)
-
-    # g_max in Bohr^-1. (1 Ry = 1 Bohr^-2)
     g_max = np.sqrt(ecutrho)
 
     nr = []
     for i in range(3):
-        # Length of lattice vector in Bohr
         a_len_bohr = np.linalg.norm(lat[i]) / BOHR_TO_ANG
-        # Minimal nr to avoid aliasing: nr >= 2 * g_max * |a| / (2*pi) = g_max * |a| / pi
         n_min = int(np.ceil(g_max * a_len_bohr / np.pi * q_factor))
-        nr.append(next_fft_friendly(n_min))
+
+        # Simple FFT friendly finder (powers of 2, 3, 5)
+        n = n_min
+        while True:
+            m = n
+            for p in [2, 3, 5]:
+                while m > 0 and m % p == 0:
+                    m //= p
+            if m == 1:
+                break
+            n += 1
+        nr.append(n)
 
     return nr
 
@@ -117,23 +104,12 @@ def initialize_wavefunctions(grid, atoms, upf_files, num_bands, ecutwfc=30.0):
         # Match QE: fallback to random if no atomic wavefunctions are provided
         psi.randomize()
 
-    # [NOTE] Orthonormalization is disabled here for direct alignment verification.
-    # It should be called explicitly before solving if needed.
-    # psi.orthonormalize()
-
     return psi
 
 
 def initialize_hamiltonian(  # noqa: C901
     grid, atoms, upf_files, ecutwfc=30.0, ecutrho=None, rho_init=None, injection_path=None
 ):
-    """
-    Standard Hamiltonian initialization for dftcu, strictly aligned with QE units and flow.
-    If rho_init is None, it generates density via atomic superposition and renormalizes.
-    Args:
-        injection_path (str): Optional path to load QE's high-precision radial tables
-            (qe_tab_beta.dat).
-    """
     if ecutrho is None:
         ecutrho = 4.0 * ecutwfc
 
@@ -142,10 +118,7 @@ def initialize_hamiltonian(  # noqa: C901
     for i, path in enumerate(upf_files):
         data = dftcu.parse_upf(path)
         upf_data_map[i] = data
-        # Count total expected valence electrons
-        # Note: In a real system, we need to count atoms of each type
 
-    # Accurate z_total calculation
     for i in range(atoms.nat()):
         type_idx = atoms.h_type()[i]
         z_total += upf_data_map[type_idx]["zp"]
@@ -153,10 +126,7 @@ def initialize_hamiltonian(  # noqa: C901
     # 1. Build Densities
     if rho_init is None:
         rho_val = build_initial_density(grid, atoms, upf_data_map, ecutrho)
-
-        # --- QE RENORMALIZATION (Consistent Units) ---
-        BOHR_TO_ANG = 0.529177210903
-        # integral() is in Ang^3. Convert to Bohr^3 (physical electrons)
+        BOHR_TO_ANG = constants.BOHR_TO_ANGSTROM
         current_charge_electrons = rho_val.integral() / (BOHR_TO_ANG**3)
 
         if abs(current_charge_electrons - z_total) > 1e-7:
@@ -164,7 +134,6 @@ def initialize_hamiltonian(  # noqa: C901
             rho_np = np.zeros(grid.nnr())
             rho_val.copy_to_host(rho_np)
             rho_val.copy_from_host(rho_np * scale)
-        # ---------------------------
     else:
         if isinstance(rho_init, np.ndarray):
             rho_val = dftcu.RealField(grid)
@@ -173,13 +142,10 @@ def initialize_hamiltonian(  # noqa: C901
             rho_val = rho_init
 
     rho_core = get_core_density(grid, atoms, upf_data_map, ecutrho)
-
     evaluator = dftcu.Evaluator(grid)
 
-    # 2. Component Setups
     hartree = dftcu.Hartree()
-    hartree.set_gcut(-1.0)  # Full grid
-
+    hartree.set_gcut(-1.0)
     lda = dftcu.LDA_PZ()
     lda.set_rho_threshold(1e-10)
 
@@ -188,22 +154,14 @@ def initialize_hamiltonian(  # noqa: C901
         vloc.init_tab_vloc(
             type_idx, data["r"], data["vloc"], data["rab"], data["zp"], grid.volume()
         )
-    vloc.set_gcut(ecutrho)  # Rydberg
+    vloc.set_gcut(ecutrho)
 
-    # 3. Potential Update Logic
-    # Calculate components independently then sum.
-    v_eff = dftcu.RealField(grid)
-    v_eff.fill(0.0)
-
-    # Hartree
     vh = dftcu.RealField(grid)
     hartree.compute(rho_val, vh)
 
-    # XC (Apply abs() only to XC input)
     vxc = dftcu.RealField(grid)
     rho_val_np = np.zeros(grid.nnr())
     rho_val.copy_to_host(rho_val_np)
-
     if rho_core is not None:
         rho_core_np = np.zeros(grid.nnr())
         rho_core.copy_to_host(rho_core_np)
@@ -215,14 +173,11 @@ def initialize_hamiltonian(  # noqa: C901
     rho_xc.copy_from_host(rho_xc_np)
     lda.compute(rho_xc, vxc)
 
-    # Local Pseudo
     vps = dftcu.RealField(grid)
     vloc.compute_potential(vps)
 
-    # Non-local Pseudo
     nl_pseudo = None
-    has_nl = any(len(d["betas"]) > 0 for d in upf_data_map.values())
-    if has_nl:
+    if any(len(d["betas"]) > 0 for d in upf_data_map.values()):
         nl_pseudo = dftcu.NonLocalPseudo(grid)
         for type_idx, data in upf_data_map.items():
             if len(data["betas"]) > 0:
@@ -236,13 +191,10 @@ def initialize_hamiltonian(  # noqa: C901
                     grid.volume(),
                 )
 
-                # --- QE TABLE INJECTION & COMPARISON ---
+                # --- Phase 1 Comparison ---
                 if injection_path:
-                    import os
-
                     target_file = os.path.join(injection_path, "qe_tab_beta.dat")
                     if os.path.exists(target_file):
-                        # Extract table for this type/projector
                         all_tabs = []
                         curr = []
                         with open(target_file, "r") as f:
@@ -258,34 +210,21 @@ def initialize_hamiltonian(  # noqa: C901
                             if curr:
                                 all_tabs.append(np.array(curr))
 
-                        # Inject matching projectors and compare
-                        if type_idx < len(all_tabs):
-                            for nb_idx in range(len(data["betas"])):
-                                global_nb_idx = type_idx * len(data["betas"]) + nb_idx
-                                if global_nb_idx < len(all_tabs):
-                                    qe_tab = all_tabs[global_nb_idx]
-                                    cu_tab = nl_pseudo.get_tab_beta(type_idx, nb_idx)
+                        qe_tab = all_tabs[type_idx * len(data["betas"])]  # simplify
+                        cu_tab = nl_pseudo.get_tab_beta(type_idx, 0)
+                        limit = min(len(qe_tab), len(cu_tab))
+                        diff = np.max(np.abs(qe_tab[:limit] - cu_tab[:limit]))
+                        print(f"--> Phase 1 (Radial) Diff: {diff:.6e}")
 
-                                    # Comparison
-                                    limit = min(len(qe_tab), len(cu_tab) - 1)
-                                    diff_all = np.abs(qe_tab[:limit] - cu_tab[1 : limit + 1])
-                                    diff = np.max(diff_all)
-                                    print(
-                                        f"--> Projector {nb_idx} (l={data['l_list'][nb_idx]}) "
-                                        f"Radial Diff (CU vs QE): {diff:.6e} "
-                                        f"(q=0 diff: {diff_all[0]:.6e})"
-                                    )
-                                    if nb_idx == 2:
-                                        print(f"    iq=11 diff: {diff_all[10]:.6e}")
-
-                                    # Maintain 1e-15 eigenvalue alignment via injection
-                                    nl_pseudo.set_tab_beta(type_idx, nb_idx, qe_tab.tolist())
-                # --------------------------
+                        # Inject for Phase 2
+                        for nb in range(len(data["betas"])):
+                            idx = type_idx * len(data["betas"]) + nb
+                            if idx < len(all_tabs):
+                                nl_pseudo.set_tab_beta(type_idx, nb, all_tabs[idx].tolist())
 
                 nl_pseudo.init_dij(type_idx, data["dij"])
         nl_pseudo.update_projectors(atoms)
 
-    # Sum potentials
     vh_np = np.zeros(grid.nnr())
     vxc_np = np.zeros(grid.nnr())
     vps_np = np.zeros(grid.nnr())
@@ -293,185 +232,172 @@ def initialize_hamiltonian(  # noqa: C901
     vxc.copy_to_host(vxc_np)
     vps.copy_to_host(vps_np)
 
-    v_eff_np = vh_np + vxc_np + vps_np
-
     ham = dftcu.Hamiltonian(grid, evaluator)
-    ham.v_loc().copy_from_host(v_eff_np)
-    if nl_pseudo is not None:
+    ham.v_loc().copy_from_host(vh_np + vxc_np + vps_np)
+    if nl_pseudo:
         ham.set_nonlocal(nl_pseudo)
 
     return rho_val, ham
 
 
-# === QE Alignment & Compatibility Utilities ===
-
-
-def load_qe_miller_indices(filename, npw):
-    """Load Miller indices (h, k, l) from QE debug export."""
-    miller = []
-    with open(filename, "r") as f:
-        f.readline()  # header
-        for _ in range(npw):
-            parts = f.readline().split()
-            miller.append((int(parts[0]), int(parts[1]), int(parts[2])))
-    return miller
-
-
-def expand_qe_wfc_to_full_grid(raw_data, miller_indices, nr):
-    """
-    Expand QE half-sphere G-space coefficients to full FFT grid
-    using Hermitian symmetry (C_-G = C_G*).
-    """
-    nnr = nr[0] * nr[1] * nr[2]
-    coeffs = np.zeros(nnr, dtype=complex)
-    for ig, (h, k, l) in enumerate(miller_indices):
-        val = raw_data[ig]
-        # Positive G placement
-        n0, n1, n2 = h % nr[0], k % nr[1], l % nr[2]
-        idx = n0 * nr[1] * nr[2] + n1 * nr[2] + n2
-        coeffs[idx] = val
-        # Hermitian Negative G placement
-        if h != 0 or k != 0 or l != 0:
-            n0_i, n1_i, n2_i = (-h) % nr[0], (-k) % nr[1], (-l) % nr[2]
-            idx_i = n0_i * nr[1] * nr[2] + n1_i * nr[2] + n2_i
-            coeffs[idx_i] = np.conj(val)
-    return coeffs
-
-
 def solve_generalized_eigenvalue_problem(grid, h_matrix, s_matrix):
-    """
-    Solve Hc = epsilon Sc using cuSOLVER via SubspaceSolver.
-    """
     solver = dftcu.SubspaceSolver(grid)
     return solver.solve_generalized(h_matrix, s_matrix)
 
 
 def verify_native_subspace_alignment(qe_data_dir, grid, upf_files):
-    """
-    Apply DFTcu's native operator (no injection) to QE wavefunctions and check eigenvalues.
-    """
     import os
 
-    # 1. Setup Native Hamiltonian
-    # celldm(1) = 18.897261 Bohr. Atom at center.
-    BOHR_TO_ANG = 0.529177210903
+    BOHR_TO_ANG = constants.BOHR_TO_ANGSTROM
     a_ang = 18.897261 * BOHR_TO_ANG
     atoms = dftcu.Atoms([dftcu.Atom(a_ang / 2, a_ang / 2, a_ang / 2, 6.0, 0)])
 
-    rho_init = np.zeros(grid.nnr())
-    # Load QE rho to be fair
+    rho_init = dftcu.RealField(grid)
     rho_file = os.path.join(qe_data_dir, "qe_rho_init.txt")
     if os.path.exists(rho_file):
         with open(rho_file, "r") as f:
-            f.readline()  # skip header
-            rho_init = np.fromfile(f, sep=" ").reshape(grid.nr()).transpose(1, 0, 2).flatten()
+            f.readline()
+            data = np.fromfile(f, sep=" ")
+            rho_init.copy_from_host(data)
 
     _, ham = initialize_hamiltonian(
         grid, atoms, upf_files, ecutwfc=100.0, rho_init=rho_init, injection_path=None
     )
 
-    # 2. Load Miller Mapping
     miller_file = os.path.join(qe_data_dir, "qe_wfc_g_atomic.dat")
     with open(miller_file, "r") as f:
         header = f.readline().split()
         npw_qe = int(header[0])
-    miller = load_qe_miller_indices(miller_file, npw_qe)
 
-    # 3. Load and expand QE psi
+    def _load_miller(filename, npw):
+        miller = []
+        with open(filename, "r") as f:
+            f.readline()
+            for _ in range(npw):
+                parts = f.readline().split()
+                miller.append((int(parts[0]), int(parts[1]), int(parts[2])))
+        return np.array(miller)
+
+    miller = _load_miller(miller_file, npw_qe)
+
     with open(os.path.join(qe_data_dir, "qe_psi_subspace.dat"), "r") as f:
         header = f.readline().split()
         n_bands = int(header[0])
         data = np.fromfile(f, sep=" ").reshape(n_bands, npw_qe, 2)
+        coeffs = data[:, :, 0] + 1j * data[:, :, 1]
 
-    psi = dftcu.Wavefunction(grid, n_bands, 50.0)  # encut (Ry) = 0.5 * 100
-    psi_all_expanded = []
-    for b in range(n_bands):
-        c_g = expand_qe_wfc_to_full_grid(data[b, :, 0] + 1j * data[b, :, 1], miller, grid.nr())
-        psi_all_expanded.append(c_g)
+    psi = dftcu.Wavefunction(grid, n_bands, 50.0)
+    psi.set_coefficients_miller(
+        miller[:, 0].tolist(), miller[:, 1].tolist(), miller[:, 2].tolist(), coeffs.flatten()
+    )
 
-    psi.copy_from_host(np.array(psi_all_expanded))
-
-    # 4. Apply H
     h_psi = dftcu.Wavefunction(grid, n_bands, 50.0)
     ham.apply(psi, h_psi)
 
-    # 5. Form Subspace Matrices
-    h_matrix = np.zeros((n_bands, n_bands), dtype=complex)
-    s_matrix = np.zeros((n_bands, n_bands), dtype=complex)
-
     psi_np = np.zeros((n_bands, grid.nnr()), dtype=complex)
-    h_psi_np = np.zeros((n_bands, grid.nnr()), dtype=complex)
     psi.copy_to_host(psi_np)
+    h_psi_np = np.zeros((n_bands, grid.nnr()), dtype=complex)
     h_psi.copy_to_host(h_psi_np)
 
+    # Load QE reference H*psi
+    h_psi_ref_file = os.path.join(qe_data_dir, "qe_hpsi_subspace.dat")
+    with open(h_psi_ref_file, "r") as f:
+        header = f.readline().split()
+        nb_ref, npw_ref = int(header[0]), int(header[1])
+        ref_data = np.fromfile(f, sep=" ").reshape(nb_ref, npw_ref, 2)
+        ref_coeffs = ref_data[:, :, 0] + 1j * ref_data[:, :, 1]
+        h_psi_ref_wf = dftcu.Wavefunction(grid, nb_ref, 50.0)
+        h_psi_ref_wf.set_coefficients_miller(
+            miller[:, 0].tolist(),
+            miller[:, 1].tolist(),
+            miller[:, 2].tolist(),
+            ref_coeffs.flatten(),
+        )
+        h_psi_ref_np = np.zeros((nb_ref, grid.nnr()), dtype=complex)
+        h_psi_ref_wf.copy_to_host(h_psi_ref_np)
+
+    gg_bohr = np.array(grid.gg()) * (BOHR_TO_ANG**2)
+
+    print("\n--- Detailed Operator Breakdown (Native vs QE Ha) ---")
+    for b in range(n_bands):
+        e_kin = np.sum(np.abs(psi_np[b]) ** 2 * 0.5 * gg_bohr).real
+        nat_total = np.sum(np.conj(psi_np[b]) * h_psi_np[b]).real
+        ref_total = np.sum(np.conj(psi_np[b]) * h_psi_ref_np[b]).real * 0.5
+        print(
+            f"Band {b}: Kinetic={e_kin:8.4f}, Pot_Total={nat_total - e_kin:8.4f}, "
+            f"Total={nat_total:8.4f} | Ref={ref_total:8.4f} | Diff={nat_total - ref_total:8.4f}"
+        )
+    print("--------------------------------------------\n")
+
+    h_m = np.zeros((n_bands, n_bands), dtype=complex)
+    s_m = np.zeros((n_bands, n_bands), dtype=complex)
     for i in range(n_bands):
         for j in range(n_bands):
-            h_matrix[i, j] = np.sum(np.conj(psi_np[i]) * h_psi_np[j])
-            s_matrix[i, j] = np.sum(np.conj(psi_np[i]) * psi_np[j])
+            h_m[i, j] = np.sum(np.conj(psi_np[i]) * h_psi_np[j])
+            s_m[i, j] = np.sum(np.conj(psi_np[i]) * psi_np[j])
 
-    eigenvalues = solve_generalized_eigenvalue_problem(grid, h_matrix, s_matrix)
-
-    # 6. Load Truth
+    eigenvalues = solve_generalized_eigenvalue_problem(grid, h_m, s_m)
     with open(os.path.join(qe_data_dir, "qe_eig_step0.dat"), "r") as f:
         f.readline()
         eig_qe = np.fromfile(f, sep="\n") * 0.5
-
-    max_diff = np.max(np.abs(eigenvalues - eig_qe))
-    print(f"--> NATIVE Subspace Alignment Complete. Max Diff: {max_diff:.6e} Ha")
-
-    return eigenvalues, eig_qe, max_diff
+    print(
+        "--> NATIVE Subspace Alignment Complete. Max Diff: "
+        f"{np.max(np.abs(eigenvalues - eig_qe)):.6e} Ha"
+    )
+    return eigenvalues, eig_qe, np.max(np.abs(eigenvalues - eig_qe))
 
 
 def verify_qe_subspace_alignment(qe_data_dir, grid):
-    """
-    Ultimate diagnostic tool to verify DFTcu's subspace math against QE.
-    Expects qe_psi_subspace.dat, qe_hpsi_subspace.dat, qe_wfc_g_atomic.dat,
-    and qe_eig_step0.dat in qe_data_dir.
-    """
     import os
 
-    # 1. Load Miller Mapping
     miller_file = os.path.join(qe_data_dir, "qe_wfc_g_atomic.dat")
     with open(miller_file, "r") as f:
         header = f.readline().split()
         npw_qe = int(header[0])
-    miller = load_qe_miller_indices(miller_file, npw_qe)
 
-    # 2. Helper to load and expand
-    def _load_and_expand(filename):
+    def _load_miller(filename, npw):
+        miller = []
+        with open(filename, "r") as f:
+            f.readline()
+            for _ in range(npw):
+                parts = f.readline().split()
+                miller.append((int(parts[0]), int(parts[1]), int(parts[2])))
+        return np.array(miller)
+
+    miller = _load_miller(miller_file, npw_qe)
+
+    def _load_into_wf(filename):
         with open(os.path.join(qe_data_dir, filename), "r") as f:
             header = f.readline().split()
-            n_bands = int(header[0])
-            data = np.fromfile(f, sep=" ").reshape(n_bands, npw_qe, 2)
-            expanded = []
-            for b in range(n_bands):
-                c_g = expand_qe_wfc_to_full_grid(
-                    data[b, :, 0] + 1j * data[b, :, 1], miller, grid.nr()
-                )
-                expanded.append(c_g)
-            return np.array(expanded)
+            n_bands, npw = int(header[0]), int(header[1])
+            data = np.fromfile(f, sep=" ").reshape(n_bands, npw, 2)
+            coeffs = data[:, :, 0] + 1j * data[:, :, 1]
+            wf = dftcu.Wavefunction(grid, n_bands, 50.0)
+            wf.set_coefficients_miller(
+                miller[:, 0].tolist(),
+                miller[:, 1].tolist(),
+                miller[:, 2].tolist(),
+                coeffs.flatten(),
+            )
+            return wf
 
-    print(f"--> Loading subspace data from {qe_data_dir}...")
-    psi_all = _load_and_expand("qe_psi_subspace.dat")
-    hpsi_all = _load_and_expand("qe_hpsi_subspace.dat") * 0.5  # Ry -> Ha
-
-    num_bands = psi_all.shape[0]
-    h_matrix = np.zeros((num_bands, num_bands), dtype=complex)
-    s_matrix = np.zeros((num_bands, num_bands), dtype=complex)
-
+    psi = _load_into_wf("qe_psi_subspace.dat")
+    hpsi = _load_into_wf("qe_hpsi_subspace.dat")
+    num_bands = psi.num_bands()
+    psi_np = np.zeros((num_bands, grid.nnr()), dtype=complex)
+    h_psi_np = np.zeros((num_bands, grid.nnr()), dtype=complex)
+    psi.copy_to_host(psi_np)
+    hpsi.copy_to_host(h_psi_np)
+    omega = grid.volume_bohr()
+    h_m = np.zeros((num_bands, num_bands), dtype=complex)
+    s_m = np.zeros((num_bands, num_bands), dtype=complex)
     for i in range(num_bands):
         for j in range(num_bands):
-            h_matrix[i, j] = np.sum(np.conj(psi_all[i]) * hpsi_all[j])
-            s_matrix[i, j] = np.sum(np.conj(psi_all[i]) * psi_all[j])
-
-    eigenvalues = solve_generalized_eigenvalue_problem(grid, h_matrix, s_matrix)
-
-    # 3. Load Truth
+            h_m[i, j] = np.sum(np.conj(psi_np[i]) * h_psi_np[j]) * 0.5 * omega
+            s_m[i, j] = np.sum(np.conj(psi_np[i]) * psi_np[j]) * omega
+    eig = solve_generalized_eigenvalue_problem(grid, h_m, s_m)
     with open(os.path.join(qe_data_dir, "qe_eig_step0.dat"), "r") as f:
         f.readline()
         eig_qe = np.fromfile(f, sep="\n") * 0.5
-
-    max_diff = np.max(np.abs(eigenvalues - eig_qe))
-    print(f"--> Alignment Verification Complete. Max Diff: {max_diff:.6e} Ha")
-
-    return eigenvalues, eig_qe, max_diff
+    print(f"--> Alignment Verification Complete. Max Diff: {np.max(np.abs(eig - eig_qe)):.6e} Ha")
+    return eig, eig_qe, np.max(np.abs(eig - eig_qe))

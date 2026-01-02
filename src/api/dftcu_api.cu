@@ -34,6 +34,11 @@ namespace py = pybind11;
 PYBIND11_MODULE(_dftcu, m) {
     m.doc() = "DFTcu: A GPU-accelerated orbital-free DFT code";
 
+    // --- Constants ---
+    py::module m_const = m.def_submodule("constants", "Physical constants");
+    m_const.attr("BOHR_TO_ANGSTROM") = dftcu::constants::BOHR_TO_ANGSTROM;
+    m_const.attr("D_PI") = dftcu::constants::D_PI;
+
     m.def("spherical_bessel_jl", &dftcu::spherical_bessel_jl, py::arg("l"), py::arg("x"));
     m.def("ylm", &dftcu::get_ylm, py::arg("l"), py::arg("m_idx"), py::arg("gx"), py::arg("gy"),
           py::arg("gz"), py::arg("gmod"));
@@ -98,6 +103,23 @@ PYBIND11_MODULE(_dftcu, m) {
             self.copy_to_host((double*)buf.ptr);
         });
 
+    py::class_<dftcu::ComplexField>(m, "ComplexField")
+        .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
+        .def("fill", &dftcu::ComplexField::fill)
+        .def("copy_from_host",
+             [](dftcu::ComplexField& self, py::array_t<std::complex<double>> arr) {
+                 py::buffer_info buf = arr.request();
+                 if (buf.size != self.size())
+                     throw std::runtime_error("Size mismatch");
+                 self.copy_from_host((gpufftComplex*)buf.ptr);
+             })
+        .def("copy_to_host", [](dftcu::ComplexField& self, py::array_t<std::complex<double>> arr) {
+            py::buffer_info buf = arr.request();
+            if (buf.size != self.size())
+                throw std::runtime_error("Size mismatch");
+            self.copy_to_host((gpufftComplex*)buf.ptr);
+        });
+
     py::class_<dftcu::Atom>(m, "Atom")
         .def(py::init<>())
         .def(py::init<double, double, double, double, int>(), py::arg("x"), py::arg("y"),
@@ -141,6 +163,8 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("get_coefficients", &dftcu::Wavefunction::get_coefficients, py::arg("band"))
         .def("set_coefficients", &dftcu::Wavefunction::set_coefficients, py::arg("coeffs"),
              py::arg("band"))
+        .def("set_coefficients_miller", &dftcu::Wavefunction::set_coefficients_miller, py::arg("h"),
+             py::arg("k"), py::arg("l"), py::arg("values"), py::arg("expand_hermitian") = true)
         .def("compute_kinetic_energy", &dftcu::Wavefunction::compute_kinetic_energy,
              py::arg("occupations"));
 
@@ -279,7 +303,13 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("update_potentials", &dftcu::Hamiltonian::update_potentials)
         .def("apply", &dftcu::Hamiltonian::apply)
         .def("set_nonlocal", &dftcu::Hamiltonian::set_nonlocal)
-        .def("v_loc", &dftcu::Hamiltonian::v_loc, py::return_value_policy::reference)
+        .def("has_nonlocal", &dftcu::Hamiltonian::has_nonlocal)
+        .def(
+            "get_nonlocal",
+            [](dftcu::Hamiltonian& self) -> dftcu::NonLocalPseudo& { return self.get_nonlocal(); },
+            py::return_value_policy::reference)
+        .def("v_loc", (dftcu::RealField & (dftcu::Hamiltonian::*)()) & dftcu::Hamiltonian::v_loc,
+             py::return_value_policy::reference)
         .def("set_ecutrho", &dftcu::Hamiltonian::set_ecutrho, py::arg("ecutrho"));
 
     py::class_<dftcu::SubspaceSolver>(m, "SubspaceSolver")
@@ -295,6 +325,7 @@ PYBIND11_MODULE(_dftcu, m) {
 
                  dftcu::GPU_Vector<gpufftComplex> d_h(nbands * nbands);
                  d_h.copy_from_host((gpufftComplex*)h.data());
+                 d_h.copy_from_host((gpufftComplex*)h.data());  // Wait, this is just for safety
                  dftcu::GPU_Vector<gpufftComplex> d_s(nbands * nbands);
                  d_s.copy_from_host((gpufftComplex*)s.data());
                  dftcu::GPU_Vector<double> d_e(nbands);
@@ -342,7 +373,6 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("num_iterations", &dftcu::SCFSolver::num_iterations)
         .def("get_history", [](const dftcu::SCFSolver& self) {
             auto hist = self.get_history();
-            // Convert to numpy array for easy Python access
             py::array_t<double> result({(py::ssize_t)hist.size(), (py::ssize_t)4});
             auto r = result.mutable_unchecked<2>();
             for (size_t i = 0; i < hist.size(); ++i) {

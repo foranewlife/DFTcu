@@ -2,7 +2,9 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 
-BOHR_TO_ANGSTROM = 0.529177210903
+from ._dftcu import constants
+
+BOHR_TO_ANGSTROM = constants.BOHR_TO_ANGSTROM
 HARTREE_TO_RY = 2.0
 
 
@@ -105,6 +107,7 @@ def parse_upf(filename):
         "betas": betas,
         "l_list": l_list,
         "kkbeta_list": kkbeta_list,
+        "kkbeta": max(kkbeta_list) if kkbeta_list else len(r_grid),
         "dij": dij_flat,
         "zp": z_valence,
         "rho_at": rho_at_r,
@@ -130,7 +133,13 @@ def load_pseudo(filename, grid, atoms=None, type_idx=0):
     if len(data["betas"]) > 0:
         nl_pseudo = dftcu.NonLocalPseudo(grid)
         nl_pseudo.init_tab_beta(
-            type_idx, data["r"], data["betas"], data["rab"], data["l_list"], grid.volume()
+            type_idx,
+            data["r"],
+            data["betas"],
+            data["rab"],
+            data["l_list"],
+            data["kkbeta_list"],
+            grid.volume(),
         )
         nl_pseudo.init_dij(type_idx, data["dij"])
 

@@ -6,20 +6,13 @@ namespace dftcu {
 
 namespace {
 
-__global__ void shift_potential_kernel(size_t n, double* v, double shift) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        v[idx] -= shift;
-    }
-}
-
 __global__ void apply_kinetic_kernel(size_t n, int num_bands, const double* gg,
                                      const gpufftComplex* psi, gpufftComplex* h_psi) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     size_t total_size = n * num_bands;
     if (i < total_size) {
         int grid_idx = i % n;
-        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
         double g2_bohr = gg[grid_idx] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
         double t = 0.5 * g2_bohr;
         h_psi[i].x = t * psi[i].x;
@@ -52,36 +45,17 @@ Hamiltonian::Hamiltonian(Grid& grid, Evaluator& evaluator,
 }
 
 void Hamiltonian::update_potentials(const RealField& rho) {
-    // Compute the local potential from all functionals
-    // This includes V_loc, V_H, and V_XC.
-    // The G=0 component of V_loc (Alpha term) is naturally included.
     evaluator_.compute(rho, v_loc_tot_);
-
-    // No longer shifting potential average to zero.
-    // We follow QE's convention where the zero-point is defined by the pseudopotential.
     grid_.synchronize();
 }
 
-void Hamiltonian::set_ecutrho(double ecutrho) {
-    // ecutrho is in Ry. Functional components usually expect G^2 limit in Bohr^-2.
-    // In Rydberg units, energy = G^2. So ecutrho in Ry is exactly the G^2 limit in Bohr^-2.
-    // Since we use type erasure, we can't easily dynamic_cast.
-    // For now, we will add a name() or ID to components if needed,
-    // but the current ones (Hartree, LocalPseudo) have distinct compute signatures in their
-    // classes. Model<T> knows the type.
-
-    // Simplest way: Add virtual set_gcut to a base if we had one.
-    // Since we don't, and this is a specific requirement for Plane Wave codes:
-    // We will assume components that need it will have it set via their own handles
-    // or we implement a better dispatch.
-
-    // RE-PLAN: The user likely wants to set this from Python.
-    // The Python objects (Hartree, LocalPseudo) already have set_gcut.
-}
+void Hamiltonian::set_ecutrho(double ecutrho) {}
 
 void Hamiltonian::apply(Wavefunction& psi, Wavefunction& h_psi) {
     size_t n = grid_.nnr();
     int nbands = psi.num_bands();
+
+    cudaMemsetAsync(h_psi.data(), 0, n * nbands * sizeof(gpufftComplex), grid_.stream());
 
     // 1. Kinetic Term (Reciprocal Space)
     const int block_size = 256;
@@ -93,18 +67,22 @@ void Hamiltonian::apply(Wavefunction& psi, Wavefunction& h_psi) {
     // 2. Local Potential Term (Real Space)
     FFTSolver fft(grid_);
     ComplexField tmp_g(grid_);
-
     const int grid_size_v = (n + block_size - 1) / block_size;
 
     for (int nb = 0; nb < nbands; ++nb) {
         CHECK(cudaMemcpyAsync(tmp_g.data(), psi.band_data(nb), n * sizeof(gpufftComplex),
                               cudaMemcpyDeviceToDevice, grid_.stream()));
+
+        // G -> R (scaled by N by cufftExecZ2Z CUFFT_INVERSE)
         fft.backward(tmp_g);
 
+        // psi(r)*N * V(r)_phys
         apply_vloc_kernel<<<grid_size_v, block_size, 0, grid_.stream()>>>(n, v_loc_tot_.data(),
                                                                           tmp_g.data());
         GPU_CHECK_KERNEL;
 
+        // R -> G (scaled by 1/N by FFTSolver::forward)
+        // 1/N * FFT(V_phys * psi_r * N) = (V*psi)_G
         fft.forward(tmp_g);
 
         accumulate_hpsi_kernel<<<grid_size_v, block_size, 0, grid_.stream()>>>(n, tmp_g.data(),
@@ -117,7 +95,6 @@ void Hamiltonian::apply(Wavefunction& psi, Wavefunction& h_psi) {
         nonlocal_->apply(psi, h_psi);
     }
 
-    // 4. Project onto valid PW sphere
     h_psi.apply_mask();
     grid_.synchronize();
 }
