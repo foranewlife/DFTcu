@@ -31,7 +31,7 @@ __global__ void initialize_mask_kernel(size_t n, const double* gg, double encut,
                                        int* count) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
-        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
         double g2_bohr = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
         // Plane wave condition: G^2/2 <= ENCUT
         if (0.5 * g2_bohr <= encut) {
@@ -66,7 +66,7 @@ __global__ void randomize_wavefunction_kernel(size_t n, int num_bands, const dou
 
         // QE Scaling: rr1 = randy() / (G^2 + 1.0)
         // G^2 is in Rydberg (same as Bohr^-2)
-        const double BOHR_TO_ANGSTROM = 0.529177210903;
+        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
         double g2_ry = gg[grid_idx] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
 
         double r1 = curand_uniform(&state);
@@ -93,7 +93,7 @@ __global__ void accumulate_density_kernel(size_t n, const gpufftComplex* psi_r, 
 
 struct KineticEnergyOp {
     const double* gg;
-    const double BOHR_TO_ANGSTROM = 0.529177210903;
+    const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
 
     KineticEnergyOp(const double* g) : gg(g) {}
 
@@ -104,6 +104,38 @@ struct KineticEnergyOp {
         return 0.5 * g2_bohr * (psi.x * psi.x + psi.y * psi.y);
     }
 };
+
+__global__ void set_coefficients_miller_kernel(int nr0, int nr1, int nr2, int npw, const int* h,
+                                               const int* k, const int* l,
+                                               const gpufftComplex* values, int num_bands,
+                                               gpufftComplex* data, bool expand_hermitian) {
+    int ig = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ig < npw) {
+        int h_val = h[ig];
+        int k_val = k[ig];
+        int l_val = l[ig];
+
+        int n0 = (h_val % nr0 + nr0) % nr0;
+        int n1 = (k_val % nr1 + nr1) % nr1;
+        int n2 = (l_val % nr2 + nr2) % nr2;
+        size_t nnr = (size_t)nr0 * nr1 * nr2;
+        size_t idx = (size_t)n0 * nr1 * nr2 + n1 * nr2 + n2;
+
+        for (int b = 0; b < num_bands; ++b) {
+            gpufftComplex val = values[b * npw + ig];
+            data[b * nnr + idx] = val;
+
+            if (expand_hermitian && (h_val != 0 || k_val != 0 || l_val != 0)) {
+                int n0_i = (-h_val % nr0 + nr0) % nr0;
+                int n1_i = (-k_val % nr1 + nr1) % nr1;
+                int n2_i = (-l_val % nr2 + nr2) % nr2;
+                size_t idx_i = (size_t)n0_i * nr1 * nr2 + n1_i * nr2 + n2_i;
+                data[b * nnr + idx_i].x = val.x;
+                data[b * nnr + idx_i].y = -val.y;
+            }
+        }
+    }
+}
 
 }  // namespace
 
@@ -149,6 +181,40 @@ void Wavefunction::set_coefficients(const std::vector<std::complex<double>>& coe
     }
     CHECK(cudaMemcpy(data_.data() + band * nnr, coeffs.data(), nnr * sizeof(gpufftComplex),
                      cudaMemcpyHostToDevice));
+}
+
+void Wavefunction::set_coefficients_miller(const std::vector<int>& h, const std::vector<int>& k,
+                                           const std::vector<int>& l,
+                                           const std::vector<std::complex<double>>& values,
+                                           bool expand_hermitian) {
+    int npw = (int)h.size();
+    if (k.size() != (size_t)npw || l.size() != (size_t)npw) {
+        throw std::runtime_error(
+            "Wavefunction::set_coefficients_miller: Miller indices size mismatch");
+    }
+    if (values.size() != (size_t)num_bands_ * npw) {
+        throw std::runtime_error("Wavefunction::set_coefficients_miller: Values size mismatch");
+    }
+
+    GPU_Vector<int> d_h(npw), d_k(npw), d_l(npw);
+    GPU_Vector<gpufftComplex> d_values(values.size());
+
+    d_h.copy_from_host(h.data(), grid_.stream());
+    d_k.copy_from_host(k.data(), grid_.stream());
+    d_l.copy_from_host(l.data(), grid_.stream());
+    d_values.copy_from_host(reinterpret_cast<const gpufftComplex*>(values.data()), grid_.stream());
+
+    data_.fill({0.0, 0.0}, grid_.stream());
+
+    const int block_size = 256;
+    const int grid_size = (npw + block_size - 1) / block_size;
+
+    set_coefficients_miller_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+        grid_.nr()[0], grid_.nr()[1], grid_.nr()[2], npw, d_h.data(), d_k.data(), d_l.data(),
+        d_values.data(), num_bands_, data_.data(), expand_hermitian);
+
+    GPU_CHECK_KERNEL;
+    grid_.synchronize();
 }
 
 void Wavefunction::randomize(unsigned int seed) {

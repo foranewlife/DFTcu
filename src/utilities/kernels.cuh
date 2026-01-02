@@ -33,7 +33,16 @@ v_scale(size_t n, double alpha, const gpufftComplex* x, gpufftComplex* out,
         cudaStream_t stream = nullptr);
 void __attribute__((visibility("default")))
 v_sqrt(size_t n, const double* x, double* out, cudaStream_t stream = nullptr);
-double __attribute__((visibility("default")))
-v_sum(size_t n, const double* x, cudaStream_t stream = nullptr);
+/** @brief Add a constant shift to a real vector */
+void __attribute__((visibility("default")))
+v_shift(size_t n, double shift, const double* in, double* out, cudaStream_t stream = nullptr);
+/** @brief Sum all elements of a real vector on the GPU */
+double v_sum(size_t n, const double* x, cudaStream_t stream = nullptr);
+
+/** @brief Swap the first two axes of a 3D grid (X and Y) */
+void swap_xy(int nr0, int nr1, int nr2, const double* in, double* out,
+             cudaStream_t stream = nullptr);
+void swap_xy(int nr0, int nr1, int nr2, const gpufftComplex* in, gpufftComplex* out,
+             cudaStream_t stream = nullptr);
 
 }  // namespace dftcu

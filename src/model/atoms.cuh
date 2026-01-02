@@ -55,6 +55,14 @@ class Atoms {
     const std::vector<double>& h_charge() const { return h_charge_; }
     const std::vector<int>& h_type() const { return h_type_; }
 
+    int n_type(int type) const {
+        int count = 0;
+        for (int t : h_type_)
+            if (t == type)
+                count++;
+        return count;
+    }
+
     const GPU_Vector<double>& d_charge() const { return d_charge_; }
 
   private:

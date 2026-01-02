@@ -9,14 +9,12 @@ namespace {
 __global__ void hartree_kernel(size_t size, gpufftComplex* rho_g, const double* gg, double gcut) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < size) {
-        const double BOHR_TO_ANGSTROM = 0.529177210903;
-        // Units: |G|^2 in Bohr^-2 is equivalent to Energy in Rydberg
+        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
         double g2_ang = gg[i];
         double g2 = g2_ang * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
 
-        // Poisson equation: V(G) = 4pi * rho(G) / G^2 (in Hartree)
-        // gcut is input in Rydberg.
         if (g2 > 1e-12 && (gcut < 0 || g2 <= gcut)) {
+            // Factor 4pi/G^2 in Hartree
             double factor = 4.0 * constants::D_PI / g2;
             rho_g[i].x *= factor;
             rho_g[i].y *= factor;
@@ -48,6 +46,8 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
     size_t nnr = grid.nnr();
 
     real_to_complex(nnr, rho.data(), rho_g_->data());
+
+    // R -> G (rho_g scaled by 1/N by forward FFT)
     fft_->forward(*rho_g_);
 
     const int block_size = 256;
@@ -56,7 +56,9 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
                                                                 gcut_);
     GPU_CHECK_KERNEL;
 
+    // G -> R (scaled by N by cufftExecZ2Z)
     fft_->backward(*rho_g_);
+
     complex_to_real(nnr, rho_g_->data(), vh.data(), grid.stream());
 
     v_mul(nnr, rho.data(), vh.data(), v_tmp_->data(), grid.stream());

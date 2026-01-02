@@ -4,7 +4,7 @@ import dftcu
 def test_internal_verify():
     # Setup same grid as QE.
     # QE celldm(1) = 18.897261 Bohr.
-    BOHR_TO_ANG = 0.529177210903
+    BOHR_TO_ANG = dftcu.constants.BOHR_TO_ANGSTROM
     a_ang = 18.897261 * BOHR_TO_ANG
     grid = dftcu.Grid([a_ang, 0, 0, 0, a_ang, 0, 0, 0, a_ang], [125, 125, 125])
 
