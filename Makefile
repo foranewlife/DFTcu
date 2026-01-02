@@ -67,7 +67,7 @@ sync: ## Sync dependencies with uv
 .PHONY: install
 install: ## Install to venv using uv (compiles with CUDACXX)
 	@echo "$(YELLOW)Installing to venv using uv with $(CUDACXX)...$(NC)"
-	@CUDACXX=$(CUDACXX) $(UV) pip install .
+	@CUDACXX=$(CUDACXX) $(UV) pip install ".[dev]"
 
 .PHONY: install-dev
 install-dev: ## Install in editable mode (No Isolation + Dev Deps) - RECOMMENDED
@@ -78,7 +78,7 @@ install-dev: ## Install in editable mode (No Isolation + Dev Deps) - RECOMMENDED
 .PHONY: rebuild
 rebuild: ## Quick incremental rebuild (C++ changes)
 	@echo "$(YELLOW)Rebuilding C++ extensions...$(NC)"
-	@CUDACXX=$(CUDACXX) $(UV) pip install --no-build-isolation --no-deps -e .
+	@CUDACXX=$(CUDACXX) $(UV) pip install --no-build-isolation --no-deps -e ".[dev]"
 	@echo "$(GREEN)✓ Incremental rebuild complete$(NC)"
 
 ##@ Building
@@ -158,5 +158,5 @@ benchmark: build ## Run performance benchmarks
 .PHONY: debug
 debug: ## Build in debug mode
 	@echo "$(YELLOW)Building in debug mode...$(NC)"
-	@CUDACXX=$(CUDACXX) SKBUILD_CMAKE_BUILD_TYPE=Debug $(UV) pip install .
+	@CUDACXX=$(CUDACXX) SKBUILD_CMAKE_BUILD_TYPE=Debug $(UV) pip install -e ".[dev]" --no-build-isolation
 	@echo "$(GREEN)✓ Debug build installed$(NC)"

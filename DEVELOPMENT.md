@@ -57,7 +57,7 @@ make build
 make rebuild    # 超快，只编译变更的文件
 
 # 需要测试 Python 接口时
-uv pip install -e . --no-deps  # 使用已有构建产物，21s
+uv pip install -e ".[dev]" --no-deps  # 使用已有构建产物，21s
 pytest tests/python/
 
 # 或者一步到位
@@ -75,7 +75,7 @@ make rebuild        # 增量编译 + 安装，~21s
 pytest tests/python/
 
 # 或直接
-CUDACXX=/usr/local/cuda/bin/nvcc uv pip install -e . --no-deps
+CUDACXX=/usr/local/cuda/bin/nvcc uv pip install -e ".[dev]" --no-deps
 ```
 
 ## 🔧 详细命令说明
@@ -85,15 +85,15 @@ CUDACXX=/usr/local/cuda/bin/nvcc uv pip install -e . --no-deps
 ```bash
 # 标准安装（每次全新编译）
 make install
-# 等价于：CUDACXX=/usr/local/cuda/bin/nvcc uv pip install .
+# 等价于：CUDACXX=/usr/local/cuda/bin/nvcc uv pip install ".[dev]"
 
 # 开发模式安装（editable，支持增量）
 make install-dev
-# 等价于：CUDACXX=/usr/local/cuda/bin/nvcc uv pip install -e .
+# 等价于：CUDACXX=/usr/local/cuda/bin/nvcc uv pip install -e ".[dev]"
 
 # 增量重建（仅开发模式有效）
 make rebuild
-# 等价于：CUDACXX=/usr/local/cuda/bin/nvcc uv pip install -e . --no-deps
+# 等价于：CUDACXX=/usr/local/cuda/bin/nvcc uv pip install -e ".[dev]" --no-deps
 ```
 
 ### CMake 命令
@@ -106,7 +106,7 @@ make configure
 make build
 
 # 构建 C++ + 自动安装 Python
-make build-install  # 内部调用 uv pip install -e .
+make build-install  # 内部调用 uv pip install -e ".[dev]"
 
 # 清理
 make clean
@@ -264,7 +264,7 @@ ls build/Makefile     # ❌ 如果存在，删除 build/ 重新配置
    make build
 
    # 完成后安装 Python
-   uv pip install -e . --no-deps
+   uv pip install -e ".[dev]" --no-deps
    ```
 
 ## ⚡ 性能剖析指南

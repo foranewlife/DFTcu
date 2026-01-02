@@ -26,7 +26,7 @@ __host__ __device__ inline double get_ylm(int l, int m_idx, double gx, double gy
         return 0.0;
 
     double cost = gz / gmod;
-    double sent = std::sqrt(std::max(0.0, 1.0 - cost * cost));
+    double sent = std::sqrt(fmax(0.0, 1.0 - cost * cost));
 
     // Normalize Gx, Gy for phi
     double phi = 0.0;

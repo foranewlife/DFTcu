@@ -20,7 +20,7 @@
 ### 编译
 ```bash
 # 快速重装
-CUDACXX=/usr/local/cuda/bin/nvcc uv pip install --force-reinstall -e .
+CUDACXX=/usr/local/cuda/bin/nvcc uv pip install --force-reinstall -e ".[dev]"
 
 # 完整构建
 make clean && make build

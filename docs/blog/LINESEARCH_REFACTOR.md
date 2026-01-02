@@ -135,7 +135,7 @@ make clean
 make build
 
 # 使用uv快速重装（开发模式）
-CUDACXX=/usr/local/cuda/bin/nvcc uv pip install --force-reinstall -e .
+CUDACXX=/usr/local/cuda/bin/nvcc uv pip install --force-reinstall -e ".[dev]"
 
 # 运行C++测试
 ./build/tests/test_linesearch

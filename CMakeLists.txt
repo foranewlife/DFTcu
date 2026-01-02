@@ -183,7 +183,7 @@ if(BUILD_WITH_CUDA)
     )
 
     # Option to auto-install Python package after build
-    option(AUTO_PIP_INSTALL "Automatically run 'uv pip install -e .' after build" OFF)
+    option(AUTO_PIP_INSTALL "Automatically run 'uv pip install -e .[dev]' after build" OFF)
 
     if(AUTO_PIP_INSTALL)
         # Find uv executable
@@ -191,12 +191,12 @@ if(BUILD_WITH_CUDA)
         if(UV_EXECUTABLE)
             add_custom_target(pip_install ALL
                 COMMAND ${CMAKE_COMMAND} -E echo "Installing Python package with uv..."
-                COMMAND ${UV_EXECUTABLE} pip install -e ${CMAKE_SOURCE_DIR} --no-deps
+                COMMAND ${UV_EXECUTABLE} pip install -e ".[dev]" --no-deps --no-build-isolation
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
                 DEPENDS _dftcu
-                COMMENT "Running uv pip install -e ."
+                COMMENT "Running uv pip install --no-build-isolation -e .[dev]"
             )
-            message(STATUS "AUTO_PIP_INSTALL enabled - will run 'uv pip install -e .' after build")
+            message(STATUS "AUTO_PIP_INSTALL enabled - will run 'uv pip install -e .[dev]' after build")
         else()
             message(WARNING "uv executable not found - skipping auto pip install")
         endif()
