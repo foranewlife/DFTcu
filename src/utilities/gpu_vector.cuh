@@ -17,6 +17,8 @@ static void __global__ gpu_fill(const size_t size, const T value, T* data) {
         data[i] = value;
 }
 
+namespace dftcu {
+
 /**
  * @brief Types of GPU memory allocations.
  */
@@ -217,3 +219,5 @@ class GPU_Vector {
     Memory_Type memory_type_; /**< Type of memory (global/managed) */
     T* data_;                 /**< Device memory pointer */
 };
+
+}  // namespace dftcu

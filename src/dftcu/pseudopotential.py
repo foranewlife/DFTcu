@@ -34,6 +34,7 @@ def parse_upf(filename):
     # 3. Non-local Projectors (Betas)
     betas = []
     l_list = []
+    kkbeta_list = []
     nl_node = root.find(".//PP_NONLOCAL")
     if nl_node is not None:
         # Sort by index if available to maintain consistency
@@ -44,6 +45,7 @@ def parse_upf(filename):
         for child in beta_nodes:
             betas.append(np.fromstring(child.text, sep=" "))
             l_list.append(int(child.attrib.get("angular_momentum", 0)))
+            kkbeta_list.append(int(child.attrib.get("cutoff_radius_index", len(betas[-1]))))
 
         # 4. Dij Matrix
         dij_node = nl_node.find("PP_DIJ")
@@ -102,6 +104,7 @@ def parse_upf(filename):
         "vloc": vloc_r,  # Ry
         "betas": betas,
         "l_list": l_list,
+        "kkbeta_list": kkbeta_list,
         "dij": dij_flat,
         "zp": z_valence,
         "rho_at": rho_at_r,

@@ -2,6 +2,7 @@
 #include <vector>
 
 #include "solver/hamiltonian.cuh"
+#include "solver/subspace_solver.cuh"
 
 #include <cusolverDn.h>
 
@@ -40,10 +41,7 @@ class DavidsonSolver {
     double tol_;
 
     cusolverDnHandle_t cusolver_handle_ = nullptr;
-
-    // Subspace buffers
-    GPU_Vector<gpufftComplex> h_matrix_;  // [nbands][nbands]
-    GPU_Vector<double> eval_buffer_;      // Eigenvalues buffer for cuSOLVER
+    std::unique_ptr<SubspaceSolver> subspace_solver_;
 
     /** @brief Subspace rotation: psi = psi * U */
     void rotate_subspace(Wavefunction& psi, const GPU_Vector<gpufftComplex>& eigenvectors);

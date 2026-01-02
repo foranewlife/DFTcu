@@ -30,7 +30,7 @@ inline double simpson_integrate(const std::vector<double>& f, const std::vector<
         // Odd mesh
         asum = (asum + f[0] * rab[0] + f[mesh - 1] * rab[mesh - 1]) * r12;
     } else {
-        // Even mesh: last point (mesh-1 in Fortran, mesh-2 in C++) is subtracted
+        // Even mesh: QE style (ignore last point)
         asum = (asum + f[0] * rab[0] - f[mesh - 2] * rab[mesh - 2]) * r12;
     }
 

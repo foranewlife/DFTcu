@@ -227,38 +227,59 @@ def initialize_hamiltonian(  # noqa: C901
         for type_idx, data in upf_data_map.items():
             if len(data["betas"]) > 0:
                 nl_pseudo.init_tab_beta(
-                    type_idx, data["r"], data["betas"], data["rab"], data["l_list"], grid.volume()
+                    type_idx,
+                    data["r"],
+                    data["betas"],
+                    data["rab"],
+                    data["l_list"],
+                    data["kkbeta_list"],
+                    grid.volume(),
                 )
 
-                # --- QE TABLE INJECTION ---
+                # --- QE TABLE INJECTION & COMPARISON ---
                 if injection_path:
                     import os
 
                     target_file = os.path.join(injection_path, "qe_tab_beta.dat")
                     if os.path.exists(target_file):
                         # Extract table for this type/projector
-                        # Simplified loader: assuming 1 type for now, or match type in loop
                         all_tabs = []
+                        curr = []
                         with open(target_file, "r") as f:
-                            curr = []
                             for line in f:
                                 if line.startswith("#"):
+                                    if curr:
+                                        all_tabs.append(np.array(curr))
+                                        curr = []
                                     continue
                                 p = line.split()
-                                if len(p) == 3:
+                                if len(p) >= 3:
                                     curr.append(float(p[2]))
-                                if len(curr) == 1004:  # Match QE nqx
-                                    all_tabs.append(np.array(curr))
-                                    curr = []
-                        # Inject matching projectors
+                            if curr:
+                                all_tabs.append(np.array(curr))
+
+                        # Inject matching projectors and compare
                         if type_idx < len(all_tabs):
-                            # This is a bit simplified, but enough for current alignment
                             for nb_idx in range(len(data["betas"])):
                                 global_nb_idx = type_idx * len(data["betas"]) + nb_idx
                                 if global_nb_idx < len(all_tabs):
-                                    nl_pseudo.set_tab_beta(
-                                        type_idx, nb_idx, all_tabs[global_nb_idx].tolist()
+                                    qe_tab = all_tabs[global_nb_idx]
+                                    cu_tab = nl_pseudo.get_tab_beta(type_idx, nb_idx)
+
+                                    # Comparison
+                                    limit = min(len(qe_tab), len(cu_tab) - 1)
+                                    diff_all = np.abs(qe_tab[:limit] - cu_tab[1 : limit + 1])
+                                    diff = np.max(diff_all)
+                                    print(
+                                        f"--> Projector {nb_idx} (l={data['l_list'][nb_idx]}) "
+                                        f"Radial Diff (CU vs QE): {diff:.6e} "
+                                        f"(q=0 diff: {diff_all[0]:.6e})"
                                     )
+                                    if nb_idx == 2:
+                                        print(f"    iq=11 diff: {diff_all[10]:.6e}")
+
+                                    # Maintain 1e-15 eigenvalue alignment via injection
+                                    nl_pseudo.set_tab_beta(type_idx, nb_idx, qe_tab.tolist())
                 # --------------------------
 
                 nl_pseudo.init_dij(type_idx, data["dij"])
@@ -317,14 +338,88 @@ def expand_qe_wfc_to_full_grid(raw_data, miller_indices, nr):
     return coeffs
 
 
-def solve_generalized_eigenvalue_problem(h_matrix, s_matrix):
+def solve_generalized_eigenvalue_problem(grid, h_matrix, s_matrix):
     """
-    Solve Hc = epsilon Sc using Cholesky decomposition to match QE's diaghg.
+    Solve Hc = epsilon Sc using cuSOLVER via SubspaceSolver.
     """
-    L = np.linalg.cholesky(s_matrix)
-    L_inv = np.linalg.inv(L)
-    h_prime = L_inv @ h_matrix @ L_inv.T
-    return np.linalg.eigvalsh(h_prime)
+    solver = dftcu.SubspaceSolver(grid)
+    return solver.solve_generalized(h_matrix, s_matrix)
+
+
+def verify_native_subspace_alignment(qe_data_dir, grid, upf_files):
+    """
+    Apply DFTcu's native operator (no injection) to QE wavefunctions and check eigenvalues.
+    """
+    import os
+
+    # 1. Setup Native Hamiltonian
+    # celldm(1) = 18.897261 Bohr. Atom at center.
+    BOHR_TO_ANG = 0.529177210903
+    a_ang = 18.897261 * BOHR_TO_ANG
+    atoms = dftcu.Atoms([dftcu.Atom(a_ang / 2, a_ang / 2, a_ang / 2, 6.0, 0)])
+
+    rho_init = np.zeros(grid.nnr())
+    # Load QE rho to be fair
+    rho_file = os.path.join(qe_data_dir, "qe_rho_init.txt")
+    if os.path.exists(rho_file):
+        with open(rho_file, "r") as f:
+            f.readline()  # skip header
+            rho_init = np.fromfile(f, sep=" ").reshape(grid.nr()).transpose(1, 0, 2).flatten()
+
+    _, ham = initialize_hamiltonian(
+        grid, atoms, upf_files, ecutwfc=100.0, rho_init=rho_init, injection_path=None
+    )
+
+    # 2. Load Miller Mapping
+    miller_file = os.path.join(qe_data_dir, "qe_wfc_g_atomic.dat")
+    with open(miller_file, "r") as f:
+        header = f.readline().split()
+        npw_qe = int(header[0])
+    miller = load_qe_miller_indices(miller_file, npw_qe)
+
+    # 3. Load and expand QE psi
+    with open(os.path.join(qe_data_dir, "qe_psi_subspace.dat"), "r") as f:
+        header = f.readline().split()
+        n_bands = int(header[0])
+        data = np.fromfile(f, sep=" ").reshape(n_bands, npw_qe, 2)
+
+    psi = dftcu.Wavefunction(grid, n_bands, 50.0)  # encut (Ry) = 0.5 * 100
+    psi_all_expanded = []
+    for b in range(n_bands):
+        c_g = expand_qe_wfc_to_full_grid(data[b, :, 0] + 1j * data[b, :, 1], miller, grid.nr())
+        psi_all_expanded.append(c_g)
+
+    psi.copy_from_host(np.array(psi_all_expanded))
+
+    # 4. Apply H
+    h_psi = dftcu.Wavefunction(grid, n_bands, 50.0)
+    ham.apply(psi, h_psi)
+
+    # 5. Form Subspace Matrices
+    h_matrix = np.zeros((n_bands, n_bands), dtype=complex)
+    s_matrix = np.zeros((n_bands, n_bands), dtype=complex)
+
+    psi_np = np.zeros((n_bands, grid.nnr()), dtype=complex)
+    h_psi_np = np.zeros((n_bands, grid.nnr()), dtype=complex)
+    psi.copy_to_host(psi_np)
+    h_psi.copy_to_host(h_psi_np)
+
+    for i in range(n_bands):
+        for j in range(n_bands):
+            h_matrix[i, j] = np.sum(np.conj(psi_np[i]) * h_psi_np[j])
+            s_matrix[i, j] = np.sum(np.conj(psi_np[i]) * psi_np[j])
+
+    eigenvalues = solve_generalized_eigenvalue_problem(grid, h_matrix, s_matrix)
+
+    # 6. Load Truth
+    with open(os.path.join(qe_data_dir, "qe_eig_step0.dat"), "r") as f:
+        f.readline()
+        eig_qe = np.fromfile(f, sep="\n") * 0.5
+
+    max_diff = np.max(np.abs(eigenvalues - eig_qe))
+    print(f"--> NATIVE Subspace Alignment Complete. Max Diff: {max_diff:.6e} Ha")
+
+    return eigenvalues, eig_qe, max_diff
 
 
 def verify_qe_subspace_alignment(qe_data_dir, grid):
@@ -361,15 +456,15 @@ def verify_qe_subspace_alignment(qe_data_dir, grid):
     hpsi_all = _load_and_expand("qe_hpsi_subspace.dat") * 0.5  # Ry -> Ha
 
     num_bands = psi_all.shape[0]
-    h_matrix = np.zeros((num_bands, num_bands))
-    s_matrix = np.zeros((num_bands, num_bands))
+    h_matrix = np.zeros((num_bands, num_bands), dtype=complex)
+    s_matrix = np.zeros((num_bands, num_bands), dtype=complex)
 
     for i in range(num_bands):
         for j in range(num_bands):
-            h_matrix[i, j] = np.sum(np.conj(psi_all[i]) * hpsi_all[j]).real
-            s_matrix[i, j] = np.sum(np.conj(psi_all[i]) * psi_all[j]).real
+            h_matrix[i, j] = np.sum(np.conj(psi_all[i]) * hpsi_all[j])
+            s_matrix[i, j] = np.sum(np.conj(psi_all[i]) * psi_all[j])
 
-    eigenvalues = solve_generalized_eigenvalue_problem(h_matrix, s_matrix)
+    eigenvalues = solve_generalized_eigenvalue_problem(grid, h_matrix, s_matrix)
 
     # 3. Load Truth
     with open(os.path.join(qe_data_dir, "qe_eig_step0.dat"), "r") as f:
