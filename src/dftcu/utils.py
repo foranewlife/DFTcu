@@ -237,7 +237,8 @@ def initialize_hamiltonian(  # noqa: C901
     if nl_pseudo:
         ham.set_nonlocal(nl_pseudo)
 
-    return rho_val, ham
+    # Return vloc so SCF can use it for potential updates
+    return rho_val, ham, vloc
 
 
 def solve_generalized_eigenvalue_problem(grid, h_matrix, s_matrix):

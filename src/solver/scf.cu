@@ -71,6 +71,11 @@ double SCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<d
     double e_total = 0.0;
     double e_total_old = 0.0;
 
+    // Save V_ps from initial Hamiltonian (it doesn't change during SCF)
+    // We'll reconstruct V_eff = V_H + V_XC + V_ps manually to use abs(rho) for XC
+    RealField v_ps_saved(grid_, 1);
+    bool v_ps_initialized = false;
+
     // Allocate workspace for density mixing
     RealField rho_old(grid_, 1);
     RealField rho_new(grid_, 1);
@@ -82,9 +87,50 @@ double SCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<d
         num_iterations_ = iter + 1;
 
         // Step 1: Update Hamiltonian potentials with current density
-        // Skip on first iteration (Step 0) to use initial Hamiltonian from initialize_hamiltonian()
-        if (iter > 0) {
-            ham.update_potentials(rho);
+        if (iter == 0) {
+            // Save V_ps from initial Hamiltonian (extract it by computing V_H + V_XC and
+            // subtracting)
+            RealField vh_init(grid_, 1);
+            RealField vxc_init(grid_, 1);
+            RealField rho_abs_init(grid_, 1);
+
+            // Compute V_H and V_XC from initial density
+            hartree_.compute(rho, vh_init);
+
+            // Use abs(rho) for XC
+            size_t n = rho.size();
+            std::vector<double> rho_host(n);
+            rho.copy_to_host(rho_host.data());
+            for (size_t i = 0; i < n; ++i) {
+                rho_host[i] = std::abs(rho_host[i]);
+            }
+            rho_abs_init.copy_from_host(rho_host.data());
+            lda_.compute(rho_abs_init, vxc_init);
+
+            // V_ps = V_eff - V_H - V_XC
+            v_ps_saved = ham.v_loc() - vh_init - vxc_init;
+            v_ps_initialized = true;
+        } else {
+            // Update V_eff = V_H + V_XC + V_ps manually
+            RealField vh(grid_, 1);
+            RealField vxc(grid_, 1);
+            RealField rho_abs(grid_, 1);
+
+            // Compute V_H from current density
+            hartree_.compute(rho, vh);
+
+            // Compute V_XC from abs(current density)
+            size_t n = rho.size();
+            std::vector<double> rho_host(n);
+            rho.copy_to_host(rho_host.data());
+            for (size_t i = 0; i < n; ++i) {
+                rho_host[i] = std::abs(rho_host[i]);
+            }
+            rho_abs.copy_from_host(rho_host.data());
+            lda_.compute(rho_abs, vxc);
+
+            // Update ham.v_loc() = V_H + V_XC + V_ps
+            ham.v_loc() = vh + vxc + v_ps_saved;
             grid_.synchronize();
         }
 
