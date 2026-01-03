@@ -94,15 +94,21 @@ Ewald::Ewald(Grid& grid, std::shared_ptr<Atoms> atoms, double precision, double 
     for (double c : atoms_->h_charge())
         charge_sum += c;
 
-    double gcut = (gcut_hint > 0) ? gcut_hint : grid_.g2max();
+    // gcut_hint is in Ha, need to convert to Ry for QE-compatible formula
+    // In QE: upperbound uses ecutrho (Ry) directly in the erfc argument
+    // Here: gcut_hint is in Ha, so convert to Ry: ecutrho_ry = 2.0 * gcut_hint
+    double ecutrho_ry = (gcut_hint > 0) ? (2.0 * gcut_hint)
+                                        : (2.0 * grid_.g2max() * constants::BOHR_TO_ANGSTROM *
+                                           constants::BOHR_TO_ANGSTROM / 2.0);
 
     constexpr double INITIAL_ALPHA = 2.9;
     constexpr double ALPHA_DECREMENT = 0.1;
 
     double alpha = INITIAL_ALPHA;
     for (int i = 0; i < 100; ++i) {
+        // QE formula: upperbound = 2 * charge^2 * sqrt(2*alpha/pi) * erfc(sqrt(ecutrho/4/alpha))
         double upperbound = 2.0 * charge_sum * charge_sum * sqrt(2.0 * alpha / constants::D_PI) *
-                            erfc(sqrt(gcut / 4.0 / alpha));
+                            erfc(sqrt(ecutrho_ry / 4.0 / alpha));
         if (upperbound < precision_)
             break;
         alpha -= ALPHA_DECREMENT;
@@ -131,7 +137,9 @@ double Ewald::compute_legacy() {
 }
 
 double Ewald::compute_recip_exact() {
-    return compute_recip_exact(grid_.g2max());
+    // Use grid's G^2 max, already in Angstrom^-2, convert to Bohr^-2
+    double gcut_g2_bohr = grid_.g2max() * constants::BOHR_TO_ANGSTROM * constants::BOHR_TO_ANGSTROM;
+    return compute_recip_exact(gcut_g2_bohr);
 }
 
 double Ewald::compute_recip_exact(double gcut) {
@@ -220,10 +228,16 @@ double Ewald::compute_recip_pme() {
 }
 
 double Ewald::compute(bool use_pme, double gcut) {
-    if (gcut <= 0)
-        gcut = grid_.g2max();
+    // Convert gcut from Ha to G^2 in Bohr^-2
+    // In atomic units: E = 0.5 * G^2, so G^2 = 2 * E
+    double gcut_g2_bohr;
+    if (gcut <= 0) {
+        gcut_g2_bohr = grid_.g2max() * constants::BOHR_TO_ANGSTROM * constants::BOHR_TO_ANGSTROM;
+    } else {
+        gcut_g2_bohr = 2.0 * gcut;  // Convert Ha to Bohr^-2
+    }
     double real = compute_real();
-    double recip = use_pme ? compute_recip_pme() : compute_recip_exact(gcut);
+    double recip = use_pme ? compute_recip_pme() : compute_recip_exact(gcut_g2_bohr);
     double corr = compute_corr();
     return real + recip + corr;
 }
