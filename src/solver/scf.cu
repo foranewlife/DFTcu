@@ -27,8 +27,17 @@ __global__ void density_diff_kernel(size_t n, const double* d_rho1, const double
 SCFSolver::SCFSolver(Grid& grid, const Options& options)
     : grid_(grid),
       options_(options),
-      davidson_(grid, options.davidson_max_iter, options.davidson_tol) {
+      davidson_(grid, options.davidson_max_iter, options.davidson_tol),
+      hartree_(),
+      lda_(),
+      ecutrho_ha_(200.0) {  // Default ecutrho = 400 Ry = 200 Ha
     history_.reserve(options_.max_iter);
+
+    // Configure Hartree functional (no spherical cutoff, matching QE)
+    hartree_.set_gcut(-1.0);
+
+    // Configure LDA_PZ with QE's hardcoded threshold
+    lda_.set_rho_threshold(1e-10);
 
     if (options_.mixing_type == MixingType::Linear) {
         mixer_ = std::make_unique<LinearMixer>(grid, options_.mixing_beta);
@@ -39,11 +48,15 @@ SCFSolver::SCFSolver(Grid& grid, const Options& options)
 }
 
 double SCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<double>& occupations,
-                        RealField& rho) {
+                        RealField& rho, std::shared_ptr<Atoms> atoms, double ecutrho) {
     converged_ = false;
     num_iterations_ = 0;
     history_.clear();
     mixer_->reset();
+
+    // Initialize Ewald functional with atoms and ecutrho
+    ecutrho_ha_ = ecutrho * 0.5;  // Convert Ry to Ha
+    ewald_ = std::make_unique<Ewald>(grid_, atoms, 1e-10, ecutrho_ha_);
 
     if (options_.verbose) {
         std::cout << "\n" << std::string(70, '=') << "\n";
@@ -145,35 +158,53 @@ double SCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<d
 double SCFSolver::compute_total_energy(const std::vector<double>& eigenvalues,
                                        const std::vector<double>& occupations, Hamiltonian& ham,
                                        const RealField& rho) {
-    // Exact KS-DFT Total Energy Formula:
-    // E_total = E_band - ∫ ρ(r)V_eff(r) dr + E_functional(ρ)
+    // Kohn-Sham DFT Total Energy Formula (verified in align_step0.py):
+    // E_total = E_band + E_deband + E_H + E_XC + E_Ewald
     //
     // where:
-    //   E_band = Σ f_i · ε_i is the sum of eigenvalues (in Hartree).
-    //   V_eff  = V_loc + V_H + V_XC is the total local potential.
-    //   E_functional = E_vloc + E_H + E_XC + E_ewald is the sum of energies from functionals.
-    //
-    // Note: Since V_eff is unscaled (contains N_nr factor) if it comes from raw IFFT,
-    // and dv_bohr contains 1/N_nr factor, the product rho.dot(v_eff) * dv_bohr
-    // yields the correct physical energy in Hartree.
+    //   E_band   = Σ f_i · ε_i
+    //   E_deband = -∫ ρ(r)[V_H(r) + V_XC(r)] dr  (NOTE: NO V_ps!)
+    //   E_H      = Hartree energy
+    //   E_XC     = Exchange-correlation energy
+    //   E_Ewald  = Ewald energy (ion-ion)
 
-    // 1. Calculate E_band
+    // 1. E_band = Σ f_i * ε_i
     double eband = 0.0;
     for (size_t i = 0; i < eigenvalues.size(); ++i) {
         eband += occupations[i] * eigenvalues[i];
     }
 
-    // 2. Calculate <rho | V_eff> using the total potential from the Hamiltonian
-    const RealField& v_eff = ham.v_loc();
-    double rho_dot_veff = rho.dot(v_eff) * grid_.dv_bohr();
+    // 2. Compute E_H and V_H using Hartree functional
+    RealField vh(grid_, 1);
+    double ehart = hartree_.compute(rho, vh);
 
-    // 3. Calculate E_functional from Evaluator
-    Evaluator& evaluator = ham.get_evaluator();
-    RealField v_eval_tmp(grid_, 1);
-    double e_eval = evaluator.compute(rho, v_eval_tmp);
+    // 3. Compute E_XC and V_XC using LDA_PZ functional
+    RealField vxc(grid_, 1);
+    double etxc = lda_.compute(rho, vxc);
 
-    // Final Total Energy in Hartree
-    double e_total = eband - rho_dot_veff + e_eval;
+    // 4. Compute deband = -∫ ρ * (V_H + V_XC) dr
+    // NOTE: We use vh + vxc, NOT ham.v_loc() which includes V_ps
+    RealField v_hxc(grid_, 1);
+    v_hxc = vh + vxc;  // Expression template addition
+
+    double deband = -rho.dot(v_hxc) * grid_.dv_bohr();
+
+    // 5. Compute Ewald energy (ion-ion interaction)
+    double eewld = ewald_->compute(false, ecutrho_ha_);
+
+    // 6. Total energy
+    double e_total = eband + deband + ehart + etxc + eewld;
+
+    // Debug output (disable in production)
+    if (false) {
+        printf("  compute_total_energy breakdown:\n");
+        printf("    eband   = %22.15f Ha\n", eband);
+        printf("    deband  = %22.15f Ha\n", deband);
+        printf("    ehart   = %22.15f Ha\n", ehart);
+        printf("    etxc    = %22.15f Ha\n", etxc);
+        printf("    eewld   = %22.15f Ha\n", eewld);
+        printf("    TOTAL   = %22.15f Ha\n", e_total);
+    }
 
     return e_total;
 }
@@ -225,26 +256,29 @@ EnergyBreakdown SCFSolver::compute_energy_breakdown(const std::vector<double>& e
         breakdown.eband += occupations[i] * eigenvalues[i];
     }
 
-    // 2. Get total energy from evaluator (includes Hartree, XC, Ewald, etc.)
-    // Individual components need to be extracted by computing them separately
-    // For now, we'll compute the total and use placeholders for breakdown
-    Evaluator& evaluator = ham.get_evaluator();
-    RealField v_eval_tmp(grid_, 1);
-    double e_eval_total = evaluator.compute(rho, v_eval_tmp);
+    // 2. Compute Hartree energy and potential
+    RealField vh(grid_, 1);
+    breakdown.ehart = hartree_.compute(rho, vh);
 
-    // Placeholder: These should be computed separately by calling each functional
-    // For a proper implementation, Evaluator would need to provide component-wise energies
-    breakdown.ehart = 0.0;
-    breakdown.etxc = 0.0;
-    breakdown.eewld = 0.0;
+    // 3. Compute XC energy and potential
+    RealField vxc(grid_, 1);
+    breakdown.etxc = lda_.compute(rho, vxc);
+
+    // 4. Compute deband = -∫ ρ * (V_H + V_XC) dr
+    RealField v_hxc(grid_, 1);
+    v_hxc = vh + vxc;  // Expression template addition
+    breakdown.deband = -rho.dot(v_hxc) * grid_.dv_bohr();
+
+    // 5. Compute Ewald energy
+    breakdown.eewld = ewald_->compute(false, ecutrho_ha_);
+
+    // 6. Alpha term (G=0 limit correction) - extract from Ewald
+    // For now, set to 0.0 as we don't expose this separately
     breakdown.alpha = 0.0;
 
-    // 3. Compute deband = -∫ ρ * V_eff dr
-    const RealField& v_eff = ham.v_loc();
-    breakdown.deband = -rho.dot(v_eff) * grid_.dv_bohr();
-
-    // 4. Total energy (QE Harris-Foulkes formula for step 0)
-    breakdown.etot = breakdown.eband + breakdown.deband + e_eval_total;
+    // 7. Total energy
+    breakdown.etot =
+        breakdown.eband + breakdown.deband + breakdown.ehart + breakdown.etxc + breakdown.eewld;
 
     return breakdown;
 }

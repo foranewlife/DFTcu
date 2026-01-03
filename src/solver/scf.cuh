@@ -1,6 +1,10 @@
 #pragma once
 #include <vector>
 
+#include "functional/ewald.cuh"
+#include "functional/hartree.cuh"
+#include "functional/xc/lda_pz.cuh"
+#include "model/atoms.cuh"
 #include "model/field.cuh"
 #include "model/wavefunction.cuh"
 #include "solver/davidson.cuh"
@@ -74,10 +78,12 @@ class SCFSolver {
      * @param psi Initial wavefunctions (will be updated to converged eigenstates)
      * @param occupations Band occupations
      * @param rho_init Initial density (will be updated to converged density)
+     * @param atoms Atomic positions (needed for Ewald energy)
+     * @param ecutrho Energy cutoff in Ry (for Ewald, typically 400.0 Ry = 200.0 Ha)
      * @return Final total energy (Ha)
      */
     double solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<double>& occupations,
-                 RealField& rho_init);
+                 RealField& rho_init, std::shared_ptr<Atoms> atoms, double ecutrho);
 
     /**
      * @brief Get convergence history
@@ -114,6 +120,12 @@ class SCFSolver {
     Options options_;
     DavidsonSolver davidson_;
     std::unique_ptr<Mixer> mixer_;
+
+    // Direct functional access (bypassing Evaluator for correct energy calculation)
+    Hartree hartree_;
+    LDA_PZ lda_;
+    std::unique_ptr<Ewald> ewald_;
+    double ecutrho_ha_;  // Energy cutoff in Ha (ecutrho in Ry / 2)
 
     // Convergence tracking
     bool converged_ = false;

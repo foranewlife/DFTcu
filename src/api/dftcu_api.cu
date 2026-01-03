@@ -385,7 +385,7 @@ PYBIND11_MODULE(_dftcu, m) {
         .def(py::init<dftcu::Grid&, const dftcu::SCFSolver::Options&>(), py::arg("grid"),
              py::arg("options"))
         .def("solve", &dftcu::SCFSolver::solve, py::arg("ham"), py::arg("psi"),
-             py::arg("occupations"), py::arg("rho_init"))
+             py::arg("occupations"), py::arg("rho_init"), py::arg("atoms"), py::arg("ecutrho"))
         .def("is_converged", &dftcu::SCFSolver::is_converged)
         .def("num_iterations", &dftcu::SCFSolver::num_iterations)
         .def("get_history",
