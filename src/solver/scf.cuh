@@ -10,6 +10,19 @@
 namespace dftcu {
 
 /**
+ * @brief Detailed energy breakdown for SCF analysis
+ */
+struct EnergyBreakdown {
+    double etot;    ///< Total energy (Ha)
+    double eband;   ///< Band energy: Σ f_i * ε_i (Ha)
+    double deband;  ///< Double-counting correction: -∫ ρ * V_eff dr (Ha)
+    double ehart;   ///< Hartree energy (Ha)
+    double etxc;    ///< XC energy (Ha)
+    double eewld;   ///< Ewald energy (Ha)
+    double alpha;   ///< Alpha term (G=0 limit correction) (Ha)
+};
+
+/**
  * @brief Self-consistent field (SCF) solver for Kohn-Sham DFT
  *
  * Implements the iterative SCF procedure:
@@ -81,6 +94,20 @@ class SCFSolver {
      * @brief Get number of iterations performed
      */
     int num_iterations() const { return num_iterations_; }
+
+    /**
+     * @brief Compute detailed energy breakdown for analysis
+     * @param eigenvalues Eigenvalues from diagonalization
+     * @param occupations Band occupations
+     * @param ham Hamiltonian (must have potentials updated)
+     * @param psi Wavefunctions
+     * @param rho Current density
+     * @return Detailed energy breakdown structure
+     */
+    EnergyBreakdown compute_energy_breakdown(const std::vector<double>& eigenvalues,
+                                             const std::vector<double>& occupations,
+                                             Hamiltonian& ham, const Wavefunction& psi,
+                                             const RealField& rho);
 
   private:
     Grid& grid_;

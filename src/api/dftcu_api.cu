@@ -343,6 +343,23 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("solve", &dftcu::DavidsonSolver::solve);
 
     // SCF Solver
+    py::class_<dftcu::EnergyBreakdown>(m, "EnergyBreakdown")
+        .def(py::init<>())
+        .def_readwrite("etot", &dftcu::EnergyBreakdown::etot)
+        .def_readwrite("eband", &dftcu::EnergyBreakdown::eband)
+        .def_readwrite("deband", &dftcu::EnergyBreakdown::deband)
+        .def_readwrite("ehart", &dftcu::EnergyBreakdown::ehart)
+        .def_readwrite("etxc", &dftcu::EnergyBreakdown::etxc)
+        .def_readwrite("eewld", &dftcu::EnergyBreakdown::eewld)
+        .def_readwrite("alpha", &dftcu::EnergyBreakdown::alpha)
+        .def("__repr__", [](const dftcu::EnergyBreakdown& eb) {
+            return "<EnergyBreakdown: etot=" + std::to_string(eb.etot) +
+                   " eband=" + std::to_string(eb.eband) + " deband=" + std::to_string(eb.deband) +
+                   " ehart=" + std::to_string(eb.ehart) + " etxc=" + std::to_string(eb.etxc) +
+                   " eewld=" + std::to_string(eb.eewld) + " alpha=" + std::to_string(eb.alpha) +
+                   ">";
+        });
+
     py::enum_<dftcu::SCFSolver::MixingType>(m, "MixingType")
         .value("Linear", dftcu::SCFSolver::MixingType::Linear)
         .value("Broyden", dftcu::SCFSolver::MixingType::Broyden)
@@ -371,17 +388,21 @@ PYBIND11_MODULE(_dftcu, m) {
              py::arg("occupations"), py::arg("rho_init"))
         .def("is_converged", &dftcu::SCFSolver::is_converged)
         .def("num_iterations", &dftcu::SCFSolver::num_iterations)
-        .def("get_history", [](const dftcu::SCFSolver& self) {
-            auto hist = self.get_history();
-            py::array_t<double> result({(py::ssize_t)hist.size(), (py::ssize_t)4});
-            auto r = result.mutable_unchecked<2>();
-            for (size_t i = 0; i < hist.size(); ++i) {
-                for (size_t j = 0; j < 4; ++j) {
-                    r(i, j) = hist[i][j];
-                }
-            }
-            return result;
-        });
+        .def("get_history",
+             [](const dftcu::SCFSolver& self) {
+                 auto hist = self.get_history();
+                 py::array_t<double> result({(py::ssize_t)hist.size(), (py::ssize_t)4});
+                 auto r = result.mutable_unchecked<2>();
+                 for (size_t i = 0; i < hist.size(); ++i) {
+                     for (size_t j = 0; j < 4; ++j) {
+                         r(i, j) = hist[i][j];
+                     }
+                 }
+                 return result;
+             })
+        .def("compute_energy_breakdown", &dftcu::SCFSolver::compute_energy_breakdown,
+             py::arg("eigenvalues"), py::arg("occupations"), py::arg("ham"), py::arg("psi"),
+             py::arg("rho"));
 
     py::class_<dftcu::DensityBuilder>(m, "DensityBuilder")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())

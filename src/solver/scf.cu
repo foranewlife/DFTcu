@@ -213,4 +213,40 @@ double SCFSolver::density_difference(const RealField& rho1, const RealField& rho
     return sum * dv;
 }
 
+EnergyBreakdown SCFSolver::compute_energy_breakdown(const std::vector<double>& eigenvalues,
+                                                    const std::vector<double>& occupations,
+                                                    Hamiltonian& ham, const Wavefunction& psi,
+                                                    const RealField& rho) {
+    EnergyBreakdown breakdown;
+
+    // 1. Band energy: Σ f_i * ε_i (Hartree)
+    breakdown.eband = 0.0;
+    for (size_t i = 0; i < eigenvalues.size(); ++i) {
+        breakdown.eband += occupations[i] * eigenvalues[i];
+    }
+
+    // 2. Get total energy from evaluator (includes Hartree, XC, Ewald, etc.)
+    // Individual components need to be extracted by computing them separately
+    // For now, we'll compute the total and use placeholders for breakdown
+    Evaluator& evaluator = ham.get_evaluator();
+    RealField v_eval_tmp(grid_, 1);
+    double e_eval_total = evaluator.compute(rho, v_eval_tmp);
+
+    // Placeholder: These should be computed separately by calling each functional
+    // For a proper implementation, Evaluator would need to provide component-wise energies
+    breakdown.ehart = 0.0;
+    breakdown.etxc = 0.0;
+    breakdown.eewld = 0.0;
+    breakdown.alpha = 0.0;
+
+    // 3. Compute deband = -∫ ρ * V_eff dr
+    const RealField& v_eff = ham.v_loc();
+    breakdown.deband = -rho.dot(v_eff) * grid_.dv_bohr();
+
+    // 4. Total energy (QE Harris-Foulkes formula for step 0)
+    breakdown.etot = breakdown.eband + breakdown.deband + e_eval_total;
+
+    return breakdown;
+}
+
 }  // namespace dftcu
