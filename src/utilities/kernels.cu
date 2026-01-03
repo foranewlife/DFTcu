@@ -2,6 +2,10 @@
 #include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
 
+#include <thrust/device_ptr.h>
+#include <thrust/execution_policy.h>
+#include <thrust/reduce.h>
+
 namespace dftcu {
 
 namespace {
@@ -154,11 +158,10 @@ double dot_product(size_t size, const double* a, const double* b, cudaStream_t s
 }
 
 double v_sum(size_t n, const double* x, cudaStream_t stream) {
-    cublasHandle_t h = CublasManager::instance().handle();
-    CUBLAS_SAFE_CALL(cublasSetStream(h, stream));
-    CublasPointerModeGuard guard(h, CUBLAS_POINTER_MODE_HOST);
-    double res = 0;
-    CUBLAS_SAFE_CALL(cublasDasum(h, (int)n, x, 1, &res));
+    // Use thrust::reduce for proper summation (not abs sum like cublasDasum)
+    thrust::device_ptr<const double> x_ptr(x);
+    double res =
+        thrust::reduce(thrust::cuda::par.on(stream), x_ptr, x_ptr + n, 0.0, thrust::plus<double>());
     return res;
 }
 
