@@ -27,7 +27,7 @@ __global__ void density_diff_kernel(size_t n, const double* d_rho1, const double
 SCFSolver::SCFSolver(Grid& grid, const Options& options)
     : grid_(grid),
       options_(options),
-      davidson_(grid, options.davidson_max_iter, options.davidson_tol),
+      subspace_solver_(grid),
       hartree_(),
       lda_(),
       ecutrho_ha_(200.0) {  // Default ecutrho = 400 Ry = 200 Ha
@@ -82,12 +82,67 @@ double SCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<d
         num_iterations_ = iter + 1;
 
         // Step 1: Update Hamiltonian potentials with current density
-        ham.update_potentials(rho);
+        // Skip on first iteration (Step 0) to use initial Hamiltonian from initialize_hamiltonian()
+        if (iter > 0) {
+            ham.update_potentials(rho);
+            grid_.synchronize();
+        }
+
+        // Step 2: Solve eigenvalue problem H|ψ⟩ = ε|ψ⟩ using subspace diagonalization
+        int nbands = psi.num_bands();
+
+        // Apply Hamiltonian to get H|ψ⟩
+        Wavefunction h_psi(grid_, nbands, 100.0);  // Use same ecut as psi
+        ham.apply(psi, h_psi);
         grid_.synchronize();
 
-        // Step 2: Solve eigenvalue problem H|ψ⟩ = ε|ψ⟩
-        std::vector<double> eigenvalues = davidson_.solve(ham, psi);
+        // Build subspace matrices H and S
+        GPU_Vector<gpufftComplex> h_matrix(nbands * nbands);
+        GPU_Vector<gpufftComplex> s_matrix(nbands * nbands);
+        GPU_Vector<double> eigenvalues_gpu(nbands);
+        GPU_Vector<gpufftComplex> eigenvectors(nbands * nbands);
+
+        // Copy wavefunctions to host for matrix construction
+        size_t nnr = grid_.nnr();
+        std::vector<std::complex<double>> psi_h(nbands * nnr);
+        std::vector<std::complex<double>> hpsi_h(nbands * nnr);
+        psi.copy_to_host(psi_h.data());
+        h_psi.copy_to_host(hpsi_h.data());
+
+        // Build matrices: H_ij = <ψ_i|H|ψ_j>, S_ij = <ψ_i|ψ_j>
+        std::vector<gpufftComplex> h_mat(nbands * nbands);
+        std::vector<gpufftComplex> s_mat(nbands * nbands);
+        for (int i = 0; i < nbands; ++i) {
+            for (int j = 0; j < nbands; ++j) {
+                std::complex<double> h_sum = 0.0;
+                std::complex<double> s_sum = 0.0;
+                for (size_t k = 0; k < nnr; ++k) {
+                    std::complex<double> psi_i = psi_h[i * nnr + k];
+                    std::complex<double> psi_j = psi_h[j * nnr + k];
+                    std::complex<double> hpsi_j = hpsi_h[j * nnr + k];
+                    // h_sum += conj(psi_i) * hpsi_j
+                    h_sum += std::conj(psi_i) * hpsi_j;
+                    // s_sum += conj(psi_i) * psi_j
+                    s_sum += std::conj(psi_i) * psi_j;
+                }
+                // No volume normalization or unit conversion needed
+                // Hamiltonian::apply() already returns H|ψ⟩ in Hartree units
+                h_mat[i * nbands + j] = {h_sum.real(), h_sum.imag()};
+                s_mat[i * nbands + j] = {s_sum.real(), s_sum.imag()};
+            }
+        }
+
+        h_matrix.copy_from_host(h_mat.data());
+        s_matrix.copy_from_host(s_mat.data());
+
+        // Solve generalized eigenvalue problem
+        subspace_solver_.solve_generalized(nbands, h_matrix.data(), s_matrix.data(),
+                                           eigenvalues_gpu.data(), eigenvectors.data());
         grid_.synchronize();
+
+        // Copy eigenvalues back to host
+        std::vector<double> eigenvalues(nbands);
+        eigenvalues_gpu.copy_to_host(eigenvalues.data());
 
         // Step 3: Compute new density from wavefunctions
         rho_new.fill(0.0);
@@ -194,17 +249,6 @@ double SCFSolver::compute_total_energy(const std::vector<double>& eigenvalues,
 
     // 6. Total energy
     double e_total = eband + deband + ehart + etxc + eewld;
-
-    // Debug output (disable in production)
-    if (false) {
-        printf("  compute_total_energy breakdown:\n");
-        printf("    eband   = %22.15f Ha\n", eband);
-        printf("    deband  = %22.15f Ha\n", deband);
-        printf("    ehart   = %22.15f Ha\n", ehart);
-        printf("    etxc    = %22.15f Ha\n", etxc);
-        printf("    eewld   = %22.15f Ha\n", eewld);
-        printf("    TOTAL   = %22.15f Ha\n", e_total);
-    }
 
     return e_total;
 }

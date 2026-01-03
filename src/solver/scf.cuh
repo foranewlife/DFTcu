@@ -7,9 +7,9 @@
 #include "model/atoms.cuh"
 #include "model/field.cuh"
 #include "model/wavefunction.cuh"
-#include "solver/davidson.cuh"
 #include "solver/hamiltonian.cuh"
 #include "solver/mixer.cuh"
+#include "solver/subspace_solver.cuh"
 
 namespace dftcu {
 
@@ -48,8 +48,6 @@ class SCFSolver {
         MixingType mixing_type;  ///< Type of density mixing
         double mixing_beta;      ///< Density mixing parameter (0 < β ≤ 1)
         int mixing_history;      ///< History size for Broyden mixing
-        int davidson_max_iter;   ///< Davidson solver max iterations
-        double davidson_tol;     ///< Davidson solver tolerance
         bool verbose;            ///< Print iteration info
 
         Options()
@@ -59,8 +57,6 @@ class SCFSolver {
               mixing_type(MixingType::Broyden),
               mixing_beta(0.5),
               mixing_history(8),
-              davidson_max_iter(50),
-              davidson_tol(1e-8),
               verbose(true) {}
     };
 
@@ -118,7 +114,7 @@ class SCFSolver {
   private:
     Grid& grid_;
     Options options_;
-    DavidsonSolver davidson_;
+    SubspaceSolver subspace_solver_;
     std::unique_ptr<Mixer> mixer_;
 
     // Direct functional access (bypassing Evaluator for correct energy calculation)

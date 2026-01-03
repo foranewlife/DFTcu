@@ -373,8 +373,6 @@ PYBIND11_MODULE(_dftcu, m) {
         .def_readwrite("mixing_type", &dftcu::SCFSolver::Options::mixing_type)
         .def_readwrite("mixing_beta", &dftcu::SCFSolver::Options::mixing_beta)
         .def_readwrite("mixing_history", &dftcu::SCFSolver::Options::mixing_history)
-        .def_readwrite("davidson_max_iter", &dftcu::SCFSolver::Options::davidson_max_iter)
-        .def_readwrite("davidson_tol", &dftcu::SCFSolver::Options::davidson_tol)
         .def_readwrite("verbose", &dftcu::SCFSolver::Options::verbose);
 
     py::class_<dftcu::SCFSolver>(m, "SCFSolver")
