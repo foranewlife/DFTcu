@@ -14,13 +14,16 @@ __global__ void lda_pz_kernel(int n, const double* rho, double* v_xc, double* en
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < n) {
         double r = rho[i];
-        if (r < params.rho_threshold) {
+        // Use abs(rho) to handle negative density fluctuations (like QE)
+        double r_abs = fabs(r);
+
+        if (r_abs < params.rho_threshold) {
             v_xc[i] = 0.0;
             energy_density[i] = 0.0;
             return;
         }
 
-        double rho_cbrt = cbrt(r);
+        double rho_cbrt = cbrt(r_abs);
         const double pi = constants::D_PI;
         double rs = pow(3.0 / (4.0 * pi), 1.0 / 3.0) / rho_cbrt;
 
@@ -45,7 +48,7 @@ __global__ void lda_pz_kernel(int n, const double* rho, double* v_xc, double* en
         }
 
         v_xc[i] = vx + vc;
-        energy_density[i] = (ex + ec) * r;
+        energy_density[i] = (ex + ec) * r_abs;
     }
 }
 
