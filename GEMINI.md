@@ -1,4 +1,4 @@
-1. import dftcu 会触发增量编译 （不要触碰build目录）
+1. import dftcu 会触发增量编译 （不要触碰build目录!!!!!!）
 2. cmake --build external/qe/build 会增量编译qe
 3. qe测试在run_qe_lda
 4. **.gitignore 注意事项**: 不要将 Agent 需要访问的文件或目录加入 `.gitignore`。Agent 无法看到被 git 忽略的文件，这会干扰调试和开发。
@@ -27,5 +27,5 @@
     *   **G=0 Limit (Alpha Term)**: `tab_vloc[0]` 必须包含 Alpha 项 $\int (rV_{loc}(r) + 2Ze^2) dr$。注意 Rydberg 到 Hartree 的 0.5 转换。
     *   **插值索引**: 对于 $q > 0$ 的插值，必须从 `tab_vloc[1]` 开始（即使用索引 `i0` 而不是 `i0-1`），因为 `tab_vloc[0]` 是预留给 Alpha 项的。
     *   必须严格在 $G$ 空间应用 `ecutrho` 截断，否则在原子中心会产生巨大的吉布斯纹波。
-5.  **随机波函数生成**: 必须采用动能衰减的平滑噪声逻辑 $\psi_{random}(G) \propto \frac{\text{randy()}}{G^2 + 1.0}$ 以提升收敛性。
+5.  **随机波函数生成**: 必须采用动能衰减的平滑噪声逻辑 $\psi_{random}(G) \propto \frac{\text{randy()}}{G^2 + 1.0}$ 以提升收敛性。和QE对比时千万不要使用随机波函数。
 6.  **标准流程**: 使用 `dftcu.initialize_hamiltonian` 函数可自动处理上述对齐细节，实现 $10^{-15}$ Ha 级别的精度。

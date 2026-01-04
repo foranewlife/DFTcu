@@ -74,6 +74,41 @@ __global__ void interpolate_beta_kernel(int n, const double* gx, const double* g
         }
     }
 }
+__global__ void qe_gamma_project_kernel(int n, int num_projectors, int num_bands,
+                                        const gpufftComplex* beta, const gpufftComplex* psi,
+                                        gpufftComplex* projections) {
+    int i_proj = blockIdx.x * blockDim.x + threadIdx.x;
+    int i_band = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (i_proj >= num_projectors || i_band >= num_bands)
+        return;
+
+    const gpufftComplex* b = beta + i_proj * n;
+    const gpufftComplex* p = psi + i_band * n;
+
+    // Final hypothesis: For real gamma wfc, becp degenerates to -Re(vkb_0 * evc_0)
+    // Note the sign flip compared to the debug output.
+    double result = -(b[0].x * p[0].x + b[0].y * p[0].y);
+
+    projections[i_band * num_projectors + i_proj].x = result;
+    projections[i_band * num_projectors + i_proj].y = 0.0;
+}
+
+__global__ void scale_gamma_projectors_kernel(int n, int num_projectors,
+                                              gpufftComplex* projectors) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;  // maps to projector index
+    if (i >= num_projectors)
+        return;
+
+    // G=0 is at index 0, do not scale
+    // Scale all G>0 components by 1/sqrt(2)
+    const double inv_sqrt2 = 1.0 / sqrt(2.0);
+    for (int ig = 1; ig < n; ++ig) {
+        projectors[i * n + ig].x *= inv_sqrt2;
+        projectors[i * n + ig].y *= inv_sqrt2;
+    }
+}
+
 }  // namespace
 
 NonLocalPseudo::NonLocalPseudo(Grid& grid) : grid_(grid), omega_(grid.volume_bohr()) {}
@@ -196,6 +231,15 @@ void NonLocalPseudo::update_projectors(const Atoms& atoms) {
     grid_.synchronize();
 }
 
+void NonLocalPseudo::set_projectors(const std::vector<std::complex<double>>& projectors) {
+    if (projectors.size() != d_projectors_.size()) {
+        throw std::runtime_error("set_projectors size mismatch");
+    }
+    d_projectors_.copy_from_host(reinterpret_cast<const gpufftComplex*>(projectors.data()),
+                                 grid_.stream());
+    grid_.synchronize();
+}
+
 void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
     if (num_projectors_ == 0)
         return;
@@ -204,40 +248,51 @@ void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
     if (d_projections_.size() < (size_t)num_projectors_ * nb)
         d_projections_.resize(num_projectors_ * nb);
 
+    if (grid_.is_gamma()) {
+        dim3 threads(16, 16);
+        dim3 blocks((num_projectors_ + threads.x - 1) / threads.x,
+                    (nb + threads.y - 1) / threads.y);
+        qe_gamma_project_kernel<<<blocks, threads, 0, grid_.stream()>>>(
+            n, num_projectors_, nb, d_projectors_.data(), psi.data(), d_projections_.data());
+        GPU_CHECK_KERNEL;
+    } else {
+        cublasHandle_t h = CublasManager::instance().handle();
+        CUBLAS_SAFE_CALL(cublasSetStream(h, grid_.stream()));
+        CublasPointerModeGuard guard(h, CUBLAS_POINTER_MODE_HOST);
+        cuDoubleComplex alpha_nl_v = {1.0, 0.0}, beta_zero_v = {0.0, 0.0};
+        CUBLAS_SAFE_CALL(cublasZgemm(h, CUBLAS_OP_C, CUBLAS_OP_N, num_projectors_, nb, (int)n,
+                                     &alpha_nl_v, (const cuDoubleComplex*)d_projectors_.data(),
+                                     (int)n, (const cuDoubleComplex*)psi.data(), (int)n,
+                                     &beta_zero_v, (cuDoubleComplex*)d_projections_.data(),
+                                     num_projectors_));
+    }
+
+    if (d_dps_.size() < (size_t)num_projectors_ * nb)
+        d_dps_.resize(num_projectors_ * nb);
+
     cublasHandle_t h = CublasManager::instance().handle();
     CUBLAS_SAFE_CALL(cublasSetStream(h, grid_.stream()));
     CublasPointerModeGuard guard(h, CUBLAS_POINTER_MODE_HOST);
+    cuDoubleComplex alpha_one = {1.0, 0.0}, beta_zero = {0.0, 0.0};
 
-    // Physical scaling: <beta|psi> = sum(beta* psi)
-    cuDoubleComplex alpha_nl = {1.0, 0.0}, beta_zero = {0.0, 0.0}, alpha_one = {1.0, 0.0};
-    CUBLAS_SAFE_CALL(cublasZgemm(h, CUBLAS_OP_C, CUBLAS_OP_N, num_projectors_, nb, (int)n,
-                                 &alpha_nl, (const cuDoubleComplex*)d_projectors_.data(), (int)n,
-                                 (const cuDoubleComplex*)psi.data(), (int)n, &beta_zero,
-                                 (cuDoubleComplex*)d_projections_.data(), num_projectors_));
+    GPU_Vector<cuDoubleComplex> d_coup_c(num_projectors_ * num_projectors_);
+    std::vector<double> h_coup(num_projectors_ * num_projectors_);
+    d_coupling_.copy_to_host(h_coup.data(), grid_.stream());
+    std::vector<cuDoubleComplex> h_coup_complex(h_coup.size());
+    for (size_t i = 0; i < h_coup.size(); ++i)
+        h_coup_complex[i] = {h_coup[i], 0.0};
+    d_coup_c.copy_from_host(h_coup_complex.data(), grid_.stream());
 
-    GPU_Vector<gpufftComplex> dps(num_projectors_ * nb);
-    {
-        GPU_Vector<cuDoubleComplex> d_coup_c(num_projectors_ * num_projectors_);
-        std::vector<double> h_coup(num_projectors_ * num_projectors_);
-        d_coupling_.copy_to_host(h_coup.data(), grid_.stream());
-        std::vector<cuDoubleComplex> h_coup_complex(h_coup.size());
-        for (size_t i = 0; i < h_coup.size(); ++i)
-            h_coup_complex[i] = {h_coup[i], 0.0};
-        d_coup_c.copy_from_host(h_coup_complex.data(), grid_.stream());
+    CUBLAS_SAFE_CALL(cublasZgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, num_projectors_, nb, num_projectors_,
+                                 &alpha_one, (const cuDoubleComplex*)d_coup_c.data(),
+                                 num_projectors_, (const cuDoubleComplex*)d_projections_.data(),
+                                 num_projectors_, &beta_zero, (cuDoubleComplex*)d_dps_.data(),
+                                 num_projectors_));
 
-        CUBLAS_SAFE_CALL(cublasZgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, num_projectors_, nb,
-                                     num_projectors_, &alpha_one,
-                                     (const cuDoubleComplex*)d_coup_c.data(), num_projectors_,
-                                     (const cuDoubleComplex*)d_projections_.data(), num_projectors_,
-                                     &beta_zero, (cuDoubleComplex*)dps.data(), num_projectors_));
-    }
-    // Accumulate: h_psi += Beta * dps
-    {
-        CUBLAS_SAFE_CALL(cublasZgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, (int)n, nb, num_projectors_,
-                                     &alpha_one, (const cuDoubleComplex*)d_projectors_.data(),
-                                     (int)n, (const cuDoubleComplex*)dps.data(), num_projectors_,
-                                     &alpha_one, (cuDoubleComplex*)h_psi.data(), (int)n));
-    }
+    CUBLAS_SAFE_CALL(cublasZgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, (int)n, nb, num_projectors_,
+                                 &alpha_one, (const cuDoubleComplex*)d_projectors_.data(), (int)n,
+                                 (const cuDoubleComplex*)d_dps_.data(), num_projectors_, &alpha_one,
+                                 (cuDoubleComplex*)h_psi.data(), (int)n));
 }
 
 double NonLocalPseudo::calculate_energy(const Wavefunction& psi,
@@ -248,14 +303,24 @@ double NonLocalPseudo::calculate_energy(const Wavefunction& psi,
     int nb = psi.num_bands();
     if (d_projections_.size() < (size_t)num_projectors_ * nb)
         d_projections_.resize(num_projectors_ * nb);
-    cublasHandle_t h = CublasManager::instance().handle();
-    CUBLAS_SAFE_CALL(cublasSetStream(h, grid_.stream()));
-    CublasPointerModeGuard guard(h, CUBLAS_POINTER_MODE_HOST);
-    cuDoubleComplex alpha_nl = {omega_, 0.0}, beta_zero = {0.0, 0.0};
-    CUBLAS_SAFE_CALL(cublasZgemm(h, CUBLAS_OP_C, CUBLAS_OP_N, num_projectors_, nb, (int)n,
-                                 &alpha_nl, (const cuDoubleComplex*)d_projectors_.data(), (int)n,
-                                 (const cuDoubleComplex*)psi.data(), (int)n, &beta_zero,
-                                 (cuDoubleComplex*)d_projections_.data(), num_projectors_));
+
+    if (grid_.is_gamma()) {
+        dim3 threads(16, 16);
+        dim3 blocks((num_projectors_ + threads.x - 1) / threads.x,
+                    (nb + threads.y - 1) / threads.y);
+        qe_gamma_project_kernel<<<blocks, threads, 0, grid_.stream()>>>(
+            n, num_projectors_, nb, d_projectors_.data(), psi.data(), d_projections_.data());
+        GPU_CHECK_KERNEL;
+    } else {
+        cublasHandle_t h = CublasManager::instance().handle();
+        CUBLAS_SAFE_CALL(cublasSetStream(h, grid_.stream()));
+        CublasPointerModeGuard guard(h, CUBLAS_POINTER_MODE_HOST);
+        cuDoubleComplex alpha_nl = {1.0, 0.0}, beta_zero = {0.0, 0.0};
+        CUBLAS_SAFE_CALL(cublasZgemm(h, CUBLAS_OP_C, CUBLAS_OP_N, num_projectors_, nb, (int)n,
+                                     &alpha_nl, (const cuDoubleComplex*)d_projectors_.data(),
+                                     (int)n, (const cuDoubleComplex*)psi.data(), (int)n, &beta_zero,
+                                     (cuDoubleComplex*)d_projections_.data(), num_projectors_));
+    }
     std::vector<gpufftComplex> hp(num_projectors_ * nb);
     d_projections_.copy_to_host(hp.data(), grid_.stream());
     std::vector<double> h_coup(num_projectors_ * num_projectors_);
@@ -295,6 +360,93 @@ std::vector<std::complex<double>> NonLocalPseudo::get_projections() const {
     CHECK(cudaMemcpy(host.data(), d_projections_.data(),
                      d_projections_.size() * sizeof(gpufftComplex), cudaMemcpyDeviceToHost));
     return host;
+}
+
+std::vector<double> NonLocalPseudo::get_coupling() const {
+    std::vector<double> host(d_coupling_.size());
+    d_coupling_.copy_to_host(host.data());
+    return host;
+}
+
+__global__ void debug_projection_kernel(int npw, const int* h, const int* k, const int* l,
+                                        const gpufftComplex* qe_vkb, const gpufftComplex* qe_evc,
+                                        const double* qe_becp) {
+    int ig = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ig >= npw)
+        return;
+
+    // Focus on Band 0, Proj 0
+    gpufftComplex vkb_g = qe_vkb[ig];
+    gpufftComplex evc_g = qe_evc[ig];
+
+    double term_re = vkb_g.x * evc_g.x + vkb_g.y * evc_g.y;  // Re(vkb* * evc)
+
+    if (ig < 10) {  // Print first 10 G-vectors
+        printf("ig=%d, hkl=[%d,%d,%d], vkb=(%.6f,%.6f), evc=(%.6f,%.6f), term=%.6f\n", ig, h[ig],
+               k[ig], l[ig], vkb_g.x, vkb_g.y, evc_g.x, evc_g.y, term_re);
+    }
+}
+
+std::vector<std::complex<double>> NonLocalPseudo::get_d_projections() const {
+    std::vector<std::complex<double>> host(d_dps_.size());
+
+    d_dps_.copy_to_host(reinterpret_cast<gpufftComplex*>(host.data()));
+
+    return host;
+}
+
+void NonLocalPseudo::debug_projections(const Wavefunction& psi, const std::vector<double>& qe_becp,
+
+                                       const std::vector<std::complex<double>>& qe_vkb,
+
+                                       const std::vector<std::complex<double>>& qe_evc,
+
+                                       const std::vector<std::vector<int>>& miller) {
+    int npw = miller.size();
+
+    GPU_Vector<int> d_h(npw), d_k(npw), d_l(npw);
+
+    std::vector<int> h, k, l;
+
+    for (const auto& m : miller) {
+        h.push_back(m[0]);
+
+        k.push_back(m[1]);
+
+        l.push_back(m[2]);
+    }
+
+    d_h.copy_from_host(h.data());
+
+    d_k.copy_from_host(k.data());
+
+    d_l.copy_from_host(l.data());
+
+    GPU_Vector<gpufftComplex> d_qe_vkb(npw);
+
+    d_qe_vkb.copy_from_host(reinterpret_cast<const gpufftComplex*>(qe_vkb.data()));
+
+    GPU_Vector<gpufftComplex> d_qe_evc(npw);
+
+    d_qe_evc.copy_from_host(reinterpret_cast<const gpufftComplex*>(qe_evc.data()));
+
+    GPU_Vector<double> d_qe_becp(qe_becp.size());
+
+    d_qe_becp.copy_from_host(qe_becp.data());
+
+    const int block_size = 256;
+
+    const int grid_size = (npw + block_size - 1) / block_size;
+
+    debug_projection_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+
+        npw, d_h.data(), d_k.data(), d_l.data(),
+
+        d_qe_vkb.data(), d_qe_evc.data(), d_qe_becp.data()
+
+    );
+
+    grid_.synchronize();
 }
 
 void NonLocalPseudo::add_projector(const std::vector<std::complex<double>>& beta_g,

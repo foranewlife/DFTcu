@@ -100,9 +100,12 @@ def initialize_wavefunctions(grid, atoms, upf_files, num_bands, ecutwfc=30.0):
     # 3. Build
     if has_chi:
         builder.build_atomic_wavefunctions(psi)
+        # Normalize wavefunctions to match QE convention: <psi|psi> = 1
+        # (not <psi|psi> = nnr as in plane-wave codes)
+        psi.orthonormalize()
     else:
         # Match QE: fallback to random if no atomic wavefunctions are provided
-        psi.randomize()
+        psi.randomize()  # randomize() already calls orthonormalize()
 
     return psi
 
@@ -125,15 +128,26 @@ def initialize_hamiltonian(  # noqa: C901
 
     # 1. Build Densities
     if rho_init is None:
-        rho_val = build_initial_density(grid, atoms, upf_data_map, ecutrho)
-        BOHR_TO_ANG = constants.BOHR_TO_ANGSTROM
-        current_charge_electrons = rho_val.integral() / (BOHR_TO_ANG**3)
+        if injection_path and os.path.exists(os.path.join(injection_path, "qe_rho_init.txt")):
+            target_file = os.path.join(injection_path, "qe_rho_init.txt")
+            print(f"--> Injecting QE initial density from {target_file}")
+            with open(target_file, "r") as f:
+                f.readline()  # Skip header
+                data = np.fromfile(f, sep=" ")
+                # Handle layout if needed
+                # For now assume matches DFTcu layout or handled by exporter
+                rho_val = dftcu.RealField(grid)
+                rho_val.copy_from_host(data)
+        else:
+            rho_val = build_initial_density(grid, atoms, upf_data_map, ecutrho)
+            BOHR_TO_ANG = constants.BOHR_TO_ANGSTROM
+            current_charge_electrons = rho_val.integral() / (BOHR_TO_ANG**3)
 
-        if abs(current_charge_electrons - z_total) > 1e-7:
-            scale = z_total / current_charge_electrons
-            rho_np = np.zeros(grid.nnr())
-            rho_val.copy_to_host(rho_np)
-            rho_val.copy_from_host(rho_np * scale)
+            if abs(current_charge_electrons - z_total) > 1e-7:
+                scale = z_total / current_charge_electrons
+                rho_np = np.zeros(grid.nnr())
+                rho_val.copy_to_host(rho_np)
+                rho_val.copy_from_host(rho_np * scale)
     else:
         if isinstance(rho_init, np.ndarray):
             rho_val = dftcu.RealField(grid)
@@ -155,6 +169,10 @@ def initialize_hamiltonian(  # noqa: C901
             type_idx, data["r"], data["vloc"], data["rab"], data["zp"], grid.volume()
         )
     vloc.set_gcut(ecutrho)
+
+    evaluator.add_functional(hartree)
+    evaluator.add_functional(lda)
+    evaluator.add_functional(vloc)
 
     vh = dftcu.RealField(grid)
     hartree.compute(rho_val, vh)
@@ -225,17 +243,12 @@ def initialize_hamiltonian(  # noqa: C901
                 nl_pseudo.init_dij(type_idx, data["dij"])
         nl_pseudo.update_projectors(atoms)
 
-    vh_np = np.zeros(grid.nnr())
-    vxc_np = np.zeros(grid.nnr())
-    vps_np = np.zeros(grid.nnr())
-    vh.copy_to_host(vh_np)
-    vxc.copy_to_host(vxc_np)
-    vps.copy_to_host(vps_np)
-
     ham = dftcu.Hamiltonian(grid, evaluator)
-    ham.v_loc().copy_from_host(vh_np + vxc_np + vps_np)
     if nl_pseudo:
         ham.set_nonlocal(nl_pseudo)
+
+    # Initialize potentials in Hamiltonian from rho_val
+    ham.update_potentials(rho_val)
 
     # Return vloc so SCF can use it for potential updates
     return rho_val, ham, vloc
@@ -261,7 +274,7 @@ def verify_native_subspace_alignment(qe_data_dir, grid, upf_files):
             data = np.fromfile(f, sep=" ")
             rho_init.copy_from_host(data)
 
-    _, ham = initialize_hamiltonian(
+    _, ham, _ = initialize_hamiltonian(
         grid, atoms, upf_files, ecutwfc=100.0, rho_init=rho_init, injection_path=None
     )
 
@@ -295,6 +308,11 @@ def verify_native_subspace_alignment(qe_data_dir, grid, upf_files):
     h_psi = dftcu.Wavefunction(grid, n_bands, 50.0)
     ham.apply(psi, h_psi)
 
+    # Use internalized direct solver (GPU-accelerated, no Python logic)
+    solver = dftcu.SubspaceSolver(grid)
+    eigenvalues = np.array(solver.solve_direct(ham, psi))
+
+    # For debugging/breakdown printout ONLY (no part in eigenvalue computation)
     psi_np = np.zeros((n_bands, grid.nnr()), dtype=complex)
     psi.copy_to_host(psi_np)
     h_psi_np = np.zeros((n_bands, grid.nnr()), dtype=complex)
@@ -330,14 +348,6 @@ def verify_native_subspace_alignment(qe_data_dir, grid, upf_files):
         )
     print("--------------------------------------------\n")
 
-    h_m = np.zeros((n_bands, n_bands), dtype=complex)
-    s_m = np.zeros((n_bands, n_bands), dtype=complex)
-    for i in range(n_bands):
-        for j in range(n_bands):
-            h_m[i, j] = np.sum(np.conj(psi_np[i]) * h_psi_np[j])
-            s_m[i, j] = np.sum(np.conj(psi_np[i]) * psi_np[j])
-
-    eigenvalues = solve_generalized_eigenvalue_problem(grid, h_m, s_m)
     with open(os.path.join(qe_data_dir, "qe_eig_step0.dat"), "r") as f:
         f.readline()
         eig_qe = np.fromfile(f, sep="\n") * 0.5

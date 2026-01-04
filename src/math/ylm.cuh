@@ -45,9 +45,9 @@ __host__ __device__ inline double get_ylm(int l, int m_idx, double gx, double gy
         if (m_idx == 0)
             return c * cost;
         if (m_idx == 1)
-            return -c * sent * std::cos(phi);  // -x/|G|
+            return c * sent * std::cos(phi);  // x/|G|
         if (m_idx == 2)
-            return -c * sent * std::sin(phi);  // -y/|G|
+            return c * sent * std::sin(phi);  // y/|G|
     }
 
     if (l == 2) {

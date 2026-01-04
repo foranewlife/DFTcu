@@ -30,6 +30,7 @@ class NonLocalPseudo {
     void set_tab_beta(int type, int nb, const std::vector<double>& tab);
     void init_dij(int type, const std::vector<double>& dij);
     void update_projectors(const Atoms& atoms);
+    void set_projectors(const std::vector<std::complex<double>>& projectors);
 
     int num_projectors() const { return num_projectors_; }
 
@@ -42,6 +43,12 @@ class NonLocalPseudo {
 
     std::vector<std::complex<double>> get_projector(int idx) const;
     std::vector<std::complex<double>> get_projections() const;
+    std::vector<double> get_coupling() const;
+    std::vector<std::complex<double>> get_d_projections() const;
+    void debug_projections(const Wavefunction& psi, const std::vector<double>& qe_becp,
+                           const std::vector<std::complex<double>>& qe_vkb,
+                           const std::vector<std::complex<double>>& qe_evc,
+                           const std::vector<std::vector<int>>& miller);
 
   private:
     Grid& grid_;
@@ -56,6 +63,7 @@ class NonLocalPseudo {
     GPU_Vector<gpufftComplex> d_projectors_;
     GPU_Vector<double> d_coupling_;
     GPU_Vector<gpufftComplex> d_projections_;
+    GPU_Vector<gpufftComplex> d_dps_;
 };
 
 }  // namespace dftcu

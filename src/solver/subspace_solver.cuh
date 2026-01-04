@@ -8,9 +8,10 @@
 
 namespace dftcu {
 
+class Hamiltonian;
+
 /**
- * @brief Direct solver for the generalized eigenvalue problem Hc = epsilon Sc.
- * Usually used for subspace rotation or initial alignment.
+ * @brief Handles the generalized eigenvalue problem in the electronic subspace.
  */
 class SubspaceSolver {
   public:
@@ -25,7 +26,15 @@ class SubspaceSolver {
      * @param eigenvectors Output eigenvectors (subspace rotation matrix)
      */
     void solve_generalized(int nbands, gpufftComplex* h_matrix, gpufftComplex* s_matrix,
-                           double* eigenvalues, gpufftComplex* eigenvectors);
+                           double* eigenvalues, gpufftComplex* eigenvectors = nullptr);
+
+    /**
+     * @brief Compute eigenvalues directly from Hamiltonian and Wavefunction on GPU.
+     * @param ham Hamiltonian operator
+     * @param psi Current wavefunctions
+     * @return Vector of eigenvalues (Ha)
+     */
+    std::vector<double> solve_direct(Hamiltonian& ham, Wavefunction& psi);
 
   private:
     Grid& grid_;

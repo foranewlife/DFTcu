@@ -52,11 +52,11 @@ __global__ void build_atomic_band_kernel(int nnr, const double* atom_x, const do
         if (l == 0) {
             re_pre = 1.0;
         } else if (l == 1) {
-            im_pre = 1.0;
+            im_pre = -1.0;  // (-i)^1 = -i
         } else if (l == 2) {
-            re_pre = -1.0;
+            re_pre = -1.0;  // (-i)^2 = -1
         } else if (l == 3) {
-            im_pre = -1.0;
+            im_pre = 1.0;  // (-i)^3 = i
         }
 
         // Normalization: (1/sqrt(Omega)) * integral * Ylm * (-i)^l
@@ -144,12 +144,19 @@ void WavefunctionBuilder::build_atomic_wavefunctions(Wavefunction& psi, bool ran
     grid_.synchronize();
 
     int current_band = 0;
-    for (int iat = 0; iat < (int)atoms_->nat(); ++iat) {
-        int type = atoms_->h_type()[iat];
-        if (type >= (int)orbital_tables_.size())
-            continue;
+    // Iterate over orbital indices (e.g. first orbital of all atoms, then second...)
+    // This ensures that even with few bands, we get a symmetric starting point.
+    int max_orbs = 0;
+    for (int t = 0; t < (int)orbital_tables_.size(); ++t) {
+        max_orbs = std::max(max_orbs, (int)orbital_tables_[t].size());
+    }
 
-        for (int i_orb = 0; i_orb < (int)orbital_tables_[type].size(); ++i_orb) {
+    for (int i_orb = 0; i_orb < max_orbs; ++i_orb) {
+        for (int iat = 0; iat < (int)atoms_->nat(); ++iat) {
+            int type = atoms_->h_type()[iat];
+            if (i_orb >= (int)orbital_tables_[type].size())
+                continue;
+
             const auto& orb = orbital_tables_[type][i_orb];
             size_t offset = table_offsets[type][i_orb];
 
@@ -159,10 +166,6 @@ void WavefunctionBuilder::build_atomic_wavefunctions(Wavefunction& psi, bool ran
 
                 const int block_size = 256;
                 const int grid_size = (nnr + block_size - 1) / block_size;
-
-                // Add random phase if requested
-                // Note: In a real implementation, we would pass a seed or use curand
-                // For now, let's keep it simple as the user might want a specific way
 
                 build_atomic_band_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
                     nnr, atoms_->pos_x(), atoms_->pos_y(), atoms_->pos_z(), iat, orb.l, m,

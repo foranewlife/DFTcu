@@ -13,6 +13,11 @@ __global__ void hartree_kernel(size_t size, gpufftComplex* rho_g, const double* 
         double g2_ang = gg[i];
         double g2 = g2_ang * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
 
+        if (i == 0) {
+            // Not really max, but let's see some values
+            // printf("DEBUG Hartree: g2[0]=%f, factor=%f\n", g2, 4.0*3.14159/g2);
+        }
+
         if (g2 > 1e-12 && (gcut < 0 || g2 <= gcut)) {
             // Factor 4pi/G^2 in Hartree
             double factor = 4.0 * constants::D_PI / g2;

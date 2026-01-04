@@ -1,4 +1,6 @@
+#include "solver/hamiltonian.cuh"
 #include "solver/subspace_solver.cuh"
+#include "utilities/cublas_manager.cuh"
 #include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
 
@@ -60,6 +62,51 @@ void SubspaceSolver::solve_generalized(int nbands, gpufftComplex* h_matrix, gpuf
                               (size_t)nbands * nbands * sizeof(gpufftComplex),
                               cudaMemcpyDeviceToDevice, grid_.stream()));
     }
+}
+
+std::vector<double> SubspaceSolver::solve_direct(Hamiltonian& ham, Wavefunction& psi) {
+    int nbands = psi.num_bands();
+    size_t nnr = grid_.nnr();
+
+    // 1. Compute H|psi>
+    Wavefunction h_psi(grid_, nbands, psi.encut());
+    ham.apply(psi, h_psi);
+    grid_.synchronize();
+
+    // 2. Build subspace matrices H and S on GPU
+    GPU_Vector<gpufftComplex> h_matrix(nbands * nbands);
+    GPU_Vector<gpufftComplex> s_matrix(nbands * nbands);
+    GPU_Vector<double> eigenvalues_gpu(nbands);
+
+    cublasHandle_t cb_handle = CublasManager::instance().handle();
+    CUBLAS_SAFE_CALL(cublasSetStream(cb_handle, grid_.stream()));
+    CublasPointerModeGuard guard(cb_handle, CUBLAS_POINTER_MODE_HOST);
+
+    gpufftComplex alpha = {1.0, 0.0};
+    gpufftComplex beta = {0.0, 0.0};
+
+    // H_ij = <psi_i | H | psi_j> = psi^H * h_psi
+    CUBLAS_SAFE_CALL(cublasZgemm(cb_handle, CUBLAS_OP_C, CUBLAS_OP_N, nbands, nbands, (int)nnr,
+                                 (const cuDoubleComplex*)&alpha, (const cuDoubleComplex*)psi.data(),
+                                 (int)nnr, (const cuDoubleComplex*)h_psi.data(), (int)nnr,
+                                 (const cuDoubleComplex*)&beta, (cuDoubleComplex*)h_matrix.data(),
+                                 nbands));
+
+    // S_ij = <psi_i | psi_j> = psi^H * psi
+    CUBLAS_SAFE_CALL(cublasZgemm(cb_handle, CUBLAS_OP_C, CUBLAS_OP_N, nbands, nbands, (int)nnr,
+                                 (const cuDoubleComplex*)&alpha, (const cuDoubleComplex*)psi.data(),
+                                 (int)nnr, (const cuDoubleComplex*)psi.data(), (int)nnr,
+                                 (const cuDoubleComplex*)&beta, (cuDoubleComplex*)s_matrix.data(),
+                                 nbands));
+
+    // 3. Solve generalized eigenvalue problem
+    solve_generalized(nbands, h_matrix.data(), s_matrix.data(), eigenvalues_gpu.data(), nullptr);
+    grid_.synchronize();
+
+    // 4. Return results
+    std::vector<double> eigenvalues(nbands);
+    eigenvalues_gpu.copy_to_host(eigenvalues.data());
+    return eigenvalues;
 }
 
 }  // namespace dftcu

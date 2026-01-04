@@ -49,7 +49,7 @@ class DensityBuilder {
 
     int num_types_ = 0;
     double gcut_ = -1.0;
-    static constexpr double dq_ = 0.01;  // Matches QE's dq
+    static constexpr double dq_ = 0.0001;  // Extreme precision
     int nqx_ = 0;
     std::vector<std::vector<double>> tab_rho_g_;
     GPU_Vector<double> d_tab_;

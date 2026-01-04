@@ -29,6 +29,16 @@ __global__ void vloc_gspace_kernel(int n, const double* gx, const double* gy, co
     const double B = constants::BOHR_TO_ANGSTROM;
     double g2_ang = gg[i];
     double g2 = g2_ang * (B * B);  // Bohr^-2
+
+    // Apply G-vector cutoff (ecutrho) to prevent Gibbs oscillations
+    // gcut is ecutrho in Rydberg, g2 is in Bohr^-2
+    // In atomic units: |G|^2 (Bohr^-2) = energy (Ry) numerically
+    if (gcut > 0 && g2 > gcut) {
+        v_g[i].x = 0.0;
+        v_g[i].y = 0.0;
+        return;
+    }
+
     double gmod = sqrt(g2);
     const double fpi = 4.0 * constants::D_PI;
 
@@ -95,7 +105,7 @@ void LocalPseudo::init_tab_vloc(int type, const std::vector<double>& r_grid,
     if (type >= static_cast<int>(tab_vloc_.size()))
         tab_vloc_.resize(type + 1);
 
-    dq_ = 0.01;
+    dq_ = 0.0001;
     double g2max_bohr = grid_.g2max() * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
     nqx_ = (int)(sqrt(g2max_bohr) / dq_) + 10;
     tab_vloc_[type].resize(nqx_ + 1);

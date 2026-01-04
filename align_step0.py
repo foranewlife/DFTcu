@@ -23,7 +23,9 @@ def align_step0():
 
     # 3. Setup Hamiltonian
     # Note: Use initialize_hamiltonian but ensure we use our loaded rho_init
-    _, ham = dftcu.initialize_hamiltonian(grid, atoms, [upf_file], ecutwfc=100.0, rho_init=rho_init)
+    _, ham, __ = dftcu.initialize_hamiltonian(
+        grid, atoms, [upf_file], ecutwfc=100.0, rho_init=rho_init
+    )
 
     # 4. Load QE Initial Wavefunctions (psi_init)
     miller_file = "run_qe_v1.0/qe_wfc_g_atomic.dat"

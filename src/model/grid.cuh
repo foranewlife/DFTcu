@@ -115,6 +115,9 @@ class Grid {
         return g2max_val;
     }
 
+    bool is_gamma() const { return is_gamma_; }
+    void set_is_gamma(bool is_gamma) { is_gamma_ = is_gamma; }
+
   private:
     /**
      * @brief Computes the reciprocal lattice matrix from the real-space lattice.
@@ -132,6 +135,7 @@ class Grid {
     int nr_[3];                            /**< Grid dimensions */
     size_t nnr_;                           /**< Total number of points */
     double volume_;                        /**< Unit cell volume */
+    bool is_gamma_ = false;                /**< True if Gamma-point only calculation */
     GPU_Vector<double> gg_, gx_, gy_, gz_; /**< GPU data for G-vectors */
 
     // Prevent copying

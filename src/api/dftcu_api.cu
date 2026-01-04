@@ -77,12 +77,14 @@ PYBIND11_MODULE(_dftcu, m) {
                                   cudaMemcpyDeviceToHost));
                  return h_gy;
              })
-        .def("gz", [](dftcu::Grid& self) {
-            std::vector<double> h_gz(self.nnr());
-            CHECK(cudaMemcpy(h_gz.data(), self.gz(), self.nnr() * sizeof(double),
-                             cudaMemcpyDeviceToHost));
-            return h_gz;
-        });
+        .def("gz",
+             [](dftcu::Grid& self) {
+                 std::vector<double> h_gz(self.nnr());
+                 CHECK(cudaMemcpy(h_gz.data(), self.gz(), self.nnr() * sizeof(double),
+                                  cudaMemcpyDeviceToHost));
+                 return h_gz;
+             })
+        .def("set_is_gamma", &dftcu::Grid::set_is_gamma, py::arg("is_gamma"));
 
     py::class_<dftcu::RealField>(m, "RealField")
         .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
@@ -174,7 +176,7 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("build_atomic_wavefunctions", &dftcu::WavefunctionBuilder::build_atomic_wavefunctions,
              py::arg("psi"), py::arg("randomize_phase") = false);
 
-    py::class_<dftcu::Evaluator>(m, "Evaluator")
+    py::class_<dftcu::Evaluator, std::shared_ptr<dftcu::Evaluator>>(m, "Evaluator")
         .def(py::init<dftcu::Grid&>())
         .def("add_functional", &dftcu::Evaluator::add_functional)
         .def("add_functional",
@@ -290,16 +292,46 @@ PYBIND11_MODULE(_dftcu, m) {
              py::arg("tab"))
         .def("init_dij", &dftcu::NonLocalPseudo::init_dij, py::arg("type"), py::arg("dij"))
         .def("update_projectors", &dftcu::NonLocalPseudo::update_projectors, py::arg("atoms"))
+        .def("set_projectors",
+             [](dftcu::NonLocalPseudo& self, py::array_t<std::complex<double>> arr) {
+                 py::buffer_info buf = arr.request();
+                 std::vector<std::complex<double>> host_vec(
+                     static_cast<std::complex<double>*>(buf.ptr),
+                     static_cast<std::complex<double>*>(buf.ptr) + buf.size);
+                 self.set_projectors(host_vec);
+             })
         .def("calculate_energy", &dftcu::NonLocalPseudo::calculate_energy, py::arg("psi"),
              py::arg("occupations"))
         .def("clear", &dftcu::NonLocalPseudo::clear)
         .def("num_projectors", &dftcu::NonLocalPseudo::num_projectors)
         .def("get_tab_beta", &dftcu::NonLocalPseudo::get_tab_beta, py::arg("type"), py::arg("nb"))
         .def("get_projector", &dftcu::NonLocalPseudo::get_projector, py::arg("idx"))
-        .def("get_projections", &dftcu::NonLocalPseudo::get_projections);
+        .def("get_projections", &dftcu::NonLocalPseudo::get_projections)
+        .def("get_coupling", &dftcu::NonLocalPseudo::get_coupling)
+        .def("get_d_projections", &dftcu::NonLocalPseudo::get_d_projections)
+        .def("debug_projections",
+             [](dftcu::NonLocalPseudo& self, const dftcu::Wavefunction& psi,
+                py::array_t<double> qe_becp, py::array_t<std::complex<double>> qe_vkb,
+                py::array_t<std::complex<double>> qe_evc, std::vector<std::vector<int>> miller) {
+                 py::buffer_info becp_buf = qe_becp.request();
+                 std::vector<double> becp_vec(static_cast<double*>(becp_buf.ptr),
+                                              static_cast<double*>(becp_buf.ptr) + becp_buf.size);
+
+                 py::buffer_info vkb_buf = qe_vkb.request();
+                 std::vector<std::complex<double>> vkb_vec(
+                     static_cast<std::complex<double>*>(vkb_buf.ptr),
+                     static_cast<std::complex<double>*>(vkb_buf.ptr) + vkb_buf.size);
+
+                 py::buffer_info evc_buf = qe_evc.request();
+                 std::vector<std::complex<double>> evc_vec(
+                     static_cast<std::complex<double>*>(evc_buf.ptr),
+                     static_cast<std::complex<double>*>(evc_buf.ptr) + evc_buf.size);
+
+                 self.debug_projections(psi, becp_vec, vkb_vec, evc_vec, miller);
+             });
 
     py::class_<dftcu::Hamiltonian>(m, "Hamiltonian")
-        .def(py::init<dftcu::Grid&, dftcu::Evaluator&>())
+        .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Evaluator>>())
         .def("update_potentials", &dftcu::Hamiltonian::update_potentials)
         .def("apply", &dftcu::Hamiltonian::apply)
         .def("set_nonlocal", &dftcu::Hamiltonian::set_nonlocal)
@@ -314,6 +346,7 @@ PYBIND11_MODULE(_dftcu, m) {
 
     py::class_<dftcu::SubspaceSolver>(m, "SubspaceSolver")
         .def(py::init<dftcu::Grid&>())
+        .def("solve_direct", &dftcu::SubspaceSolver::solve_direct, py::arg("ham"), py::arg("psi"))
         .def("solve_generalized",
              [](dftcu::SubspaceSolver& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> h,
@@ -383,7 +416,8 @@ PYBIND11_MODULE(_dftcu, m) {
         .def(py::init<dftcu::Grid&, const dftcu::SCFSolver::Options&>(), py::arg("grid"),
              py::arg("options"))
         .def("solve", &dftcu::SCFSolver::solve, py::arg("ham"), py::arg("psi"),
-             py::arg("occupations"), py::arg("rho_init"), py::arg("atoms"), py::arg("ecutrho"))
+             py::arg("occupations"), py::arg("rho_init"), py::arg("atoms"), py::arg("ecutrho"),
+             py::arg("rho_core") = nullptr, py::arg("alpha_energy") = 0.0)
         .def("is_converged", &dftcu::SCFSolver::is_converged)
         .def("num_iterations", &dftcu::SCFSolver::num_iterations)
         .def("get_history",
@@ -400,7 +434,7 @@ PYBIND11_MODULE(_dftcu, m) {
              })
         .def("compute_energy_breakdown", &dftcu::SCFSolver::compute_energy_breakdown,
              py::arg("eigenvalues"), py::arg("occupations"), py::arg("ham"), py::arg("psi"),
-             py::arg("rho"));
+             py::arg("rho_val"), py::arg("rho_core") = nullptr);
 
     py::class_<dftcu::DensityBuilder>(m, "DensityBuilder")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())

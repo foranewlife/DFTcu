@@ -38,14 +38,14 @@ __global__ void accumulate_hpsi_kernel(size_t n, const gpufftComplex* tmp, gpuff
 
 }  // namespace
 
-Hamiltonian::Hamiltonian(Grid& grid, Evaluator& evaluator,
+Hamiltonian::Hamiltonian(Grid& grid, std::shared_ptr<Evaluator> evaluator,
                          std::shared_ptr<NonLocalPseudo> nl_pseudo)
     : grid_(grid), evaluator_(evaluator), nonlocal_(nl_pseudo), v_loc_tot_(grid) {
     v_loc_tot_.fill(0.0);
 }
 
 void Hamiltonian::update_potentials(const RealField& rho) {
-    evaluator_.compute(rho, v_loc_tot_);
+    evaluator_->compute(rho, v_loc_tot_);
     grid_.synchronize();
 }
 

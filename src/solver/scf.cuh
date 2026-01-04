@@ -79,7 +79,8 @@ class SCFSolver {
      * @return Final total energy (Ha)
      */
     double solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<double>& occupations,
-                 RealField& rho_init, std::shared_ptr<Atoms> atoms, double ecutrho);
+                 RealField& rho_init, std::shared_ptr<Atoms> atoms, double ecutrho,
+                 const RealField* rho_core = nullptr, double alpha_energy = 0.0);
 
     /**
      * @brief Get convergence history
@@ -109,7 +110,8 @@ class SCFSolver {
     EnergyBreakdown compute_energy_breakdown(const std::vector<double>& eigenvalues,
                                              const std::vector<double>& occupations,
                                              Hamiltonian& ham, const Wavefunction& psi,
-                                             const RealField& rho);
+                                             const RealField& rho_val,
+                                             const RealField* rho_core = nullptr);
 
   private:
     Grid& grid_;
@@ -121,7 +123,10 @@ class SCFSolver {
     Hartree hartree_;
     LDA_PZ lda_;
     std::unique_ptr<Ewald> ewald_;
+    std::unique_ptr<RealField> rho_core_;
     double ecutrho_ha_;  // Energy cutoff in Ha (ecutrho in Ry / 2)
+    double alpha_energy_ = 0.0;
+    std::shared_ptr<Atoms> atoms_;
 
     // Convergence tracking
     bool converged_ = false;
@@ -129,16 +134,22 @@ class SCFSolver {
     std::vector<std::array<double, 4>> history_;  // {iter, E_tot, dE, dRho}
 
     /**
-     * @brief Compute total energy using KS-DFT formula with double-counting correction
+     * @brief Compute total energy following QE's convention
+     *
+     * Uses TWO densities (following QE's electrons.f90):
+     *   - rho_in: input/mixed density, used for computing V_H, V_XC, ehart, etxc
+     *   - rho_out: output density from wavefunctions, used for computing deband
      *
      * Formula: E = eband + deband + E_H + E_XC + E_Ewald
      * where:
      *   eband  = Σ f_i · ε_i
-     *   deband = -∫ ρ(V_H + V_XC) dr
+     *   deband = -∫ ρ_out · (V_H[ρ_in] + V_XC[ρ_in]) dr
+     *   ehart  = E_H[ρ_in]
+     *   etxc   = E_XC[ρ_in + rho_core]
      */
     double compute_total_energy(const std::vector<double>& eigenvalues,
                                 const std::vector<double>& occupations, Hamiltonian& ham,
-                                const RealField& rho);
+                                const RealField& rho_in, const RealField& rho_out);
 
     /**
      * @brief Simple linear density mixing: ρ_new = (1-β)ρ_old + βρ_new

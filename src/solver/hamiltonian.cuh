@@ -23,7 +23,7 @@ class Hamiltonian {
      * @param evaluator Evaluator providing the local potential fields
      * @param nl_pseudo Optional non-local pseudopotential handler
      */
-    Hamiltonian(Grid& grid, Evaluator& evaluator,
+    Hamiltonian(Grid& grid, std::shared_ptr<Evaluator> evaluator,
                 std::shared_ptr<NonLocalPseudo> nl_pseudo = nullptr);
     ~Hamiltonian() = default;
 
@@ -57,8 +57,8 @@ class Hamiltonian {
     bool has_nonlocal() const { return nonlocal_ != nullptr; }
 
     /** @brief Get reference to evaluator */
-    Evaluator& get_evaluator() { return evaluator_; }
-    const Evaluator& get_evaluator() const { return evaluator_; }
+    Evaluator& get_evaluator() { return *evaluator_; }
+    const Evaluator& get_evaluator() const { return *evaluator_; }
 
     /** @brief Get reference to non-local pseudopotential */
     NonLocalPseudo& get_nonlocal() { return *nonlocal_; }
@@ -66,7 +66,7 @@ class Hamiltonian {
 
   private:
     Grid& grid_;
-    Evaluator& evaluator_;
+    std::shared_ptr<Evaluator> evaluator_;
     std::shared_ptr<NonLocalPseudo> nonlocal_;
 
     // Persistent buffer for the total local potential in real space

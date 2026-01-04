@@ -86,8 +86,9 @@ void DensityBuilder::set_atomic_rho_r(int type, const std::vector<double>& r,
                                       const std::vector<double>& rho_r,
                                       const std::vector<double>& rab) {
     const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
-    double qmax = sqrt(grid_.g2max() * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM) * 1.5;
-    nqx_ = static_cast<int>(qmax / dq_) + 5;
+    // Massive range and precision
+    double qmax = 100.0;
+    nqx_ = static_cast<int>(qmax / dq_) + 10;
 
     if (type >= num_types_) {
         num_types_ = type + 1;
@@ -96,6 +97,7 @@ void DensityBuilder::set_atomic_rho_r(int type, const std::vector<double>& r,
     tab_rho_g_[type].resize(nqx_);
 
     double omega_bohr = grid_.volume_bohr();
+    printf("DEBUG DensityBuilder: omega_bohr = %f\n", omega_bohr);
     int msh = r.size();
     std::vector<double> aux(msh);
 
@@ -114,6 +116,10 @@ void DensityBuilder::set_atomic_rho_r(int type, const std::vector<double>& r,
             }
         }
         tab_rho_g_[type][iq] = simpson_integrate(aux, rab) / omega_bohr;
+        if (iq == 1) {
+            printf("DEBUG DensityBuilder: Type %d, rho(G=0) = %f, expected Zv/Omega = %f\n", type,
+                   tab_rho_g_[type][iq], (double)8.0 / omega_bohr);  // 8.0 is dummy, just to see
+        }
     }
 }
 
@@ -158,7 +164,18 @@ void DensityBuilder::build_density(RealField& rho) {
         static_cast<int>(nnr), grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), d_tab_.data(),
         static_cast<int>(atoms_->nat()), nqx_, dq_, gcut_, rho_g.data());
 
-    GPU_CHECK_KERNEL;
+    std::vector<gpufftComplex> rho_g_host(nnr);
+    CHECK(cudaMemcpy(rho_g_host.data(), rho_g.data(), nnr * sizeof(gpufftComplex),
+                     cudaMemcpyDeviceToHost));
+    double max_mag = 0;
+    for (size_t j = 0; j < nnr; ++j) {
+        double mag = sqrt(rho_g_host[j].x * rho_g_host[j].x + rho_g_host[j].y * rho_g_host[j].y);
+        if (mag > max_mag)
+            max_mag = mag;
+    }
+    printf("DEBUG DensityBuilder: rho_g[0]=(%f, %f), max_mag=%f\n", rho_g_host[0].x,
+           rho_g_host[0].y, max_mag);
+
     solver.backward(rho_g);
 
     complex_to_real(nnr, rho_g.data(), rho.data(), grid_.stream());
