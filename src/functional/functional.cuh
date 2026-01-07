@@ -1,66 +1,70 @@
 #pragma once
 #include <memory>
+#include <type_traits>
 
 #include "model/field.cuh"
 
 namespace dftcu {
 
+// C++14 compatible void_t
+template <typename... T>
+using void_t = void;
+
+// Type trait to detect if a functional class has get_v_of_0() method
+template <typename T, typename = void>
+struct has_get_v_of_0 : std::false_type {};
+
+template <typename T>
+struct has_get_v_of_0<T, void_t<decltype(std::declval<T>().get_v_of_0())>> : std::true_type {};
+
+// Helper to call get_v_of_0 if it exists (SFINAE)
+template <typename T>
+typename std::enable_if<has_get_v_of_0<T>::value, double>::type call_get_v_of_0(const T& obj) {
+    return obj.get_v_of_0();
+}
+
+template <typename T>
+typename std::enable_if<!has_get_v_of_0<T>::value, double>::type call_get_v_of_0(const T& obj) {
+    return 0.0;
+}
+
 /**
  * @brief A type-erased wrapper for any density functional component.
- *
- * Uses a Concept/Model pattern (Type Erasure) to provide a uniform interface for
- * disparate functional types (TF, vW, Hartree, XC, etc.) without requiring a
- * common base class. This allows the Evaluator to store a heterogeneous list of
- * functionals.
  */
 class Functional {
   public:
-    /**
-     * @brief Constructs a Functional wrapper from any object providing a 'compute' method.
-     *
-     * The wrapped object must have a method with signature:
-     * `double compute(const RealField& rho, RealField& v_out)`
-     *
-     * @tparam T The concrete functional type.
-     * @param obj A shared pointer to the concrete functional object.
-     */
     template <typename T>
     Functional(std::shared_ptr<T> obj) : self_(std::make_shared<Model<T>>(std::move(obj))) {}
 
-    /**
-     * @brief Executes the wrapped functional's computation.
-     *
-     * @param rho Input real-space density field.
-     * @param v_out Output field to which the functional's potential contribution is added.
-     * @return Energy contribution of this functional.
-     */
     double compute(const RealField& rho, RealField& v_out) const {
         return self_->compute_impl(rho, v_out);
     }
 
-    /** @brief Access the underlying functional object (returns as void* or shared_ptr<void>) */
+    /** @brief Returns G=0 component of the potential (Alpha term etc.) */
+    double get_v0() const { return self_->get_v0_impl(); }
+
     std::shared_ptr<void> underlying() const { return self_->get_data(); }
 
   private:
-    /** @brief Internal interface for type erasure. */
     struct Concept {
         virtual ~Concept() = default;
         virtual double compute_impl(const RealField& rho, RealField& v_out) const = 0;
+        virtual double get_v0_impl() const = 0;
         virtual std::shared_ptr<void> get_data() const = 0;
     };
 
-    /** @brief Internal template implementation for type erasure. */
     template <typename T>
     struct Model : Concept {
         Model(std::shared_ptr<T> obj) : data(std::move(obj)) {}
         double compute_impl(const RealField& rho, RealField& v_out) const override {
             return data->compute(rho, v_out);
         }
+        double get_v0_impl() const override { return call_get_v_of_0(*data); }
         std::shared_ptr<void> get_data() const override { return data; }
         std::shared_ptr<T> data;
     };
 
-    std::shared_ptr<const Concept> self_; /**< Shared reference to the type-erased object */
+    std::shared_ptr<const Concept> self_;
 };
 
 }  // namespace dftcu

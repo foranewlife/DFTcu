@@ -64,6 +64,64 @@ void SubspaceSolver::solve_generalized(int nbands, gpufftComplex* h_matrix, gpuf
     }
 }
 
+void SubspaceSolver::solve_generalized_gamma(int nbands, double* h_matrix, double* s_matrix,
+                                             double* eigenvalues, double* eigenvectors) {
+    /*
+     * Solve the generalized eigenvalue problem for Gamma-only (real symmetric matrices):
+     *   H * c = epsilon * S * c
+     *
+     * This uses cusolverDnDsygvd which matches QE's DSYGVD call in regterg.f90:234.
+     *
+     * QE reference:
+     *   CALL DSYGVD(1, 'V', 'U', nbase, hr, nvecx, sr, nvecx, e, work, lwork, iwork, liwork, info)
+     *
+     * Key differences from complex version:
+     * - Uses DSYGVD (real symmetric) instead of ZHEGVD (complex Hermitian)
+     * - Matrix storage is half the size (real vs complex)
+     * - Numerical precision should be identical to QE at 1e-15 level
+     */
+
+    if (nbands <= 0)
+        return;
+
+    int lwork = 0;
+    cusolverEigMode_t jobz = CUSOLVER_EIG_MODE_VECTOR;
+    cublasFillMode_t uplo = CUBLAS_FILL_MODE_LOWER;
+    cusolverEigType_t itype = CUSOLVER_EIG_TYPE_1;  // A*x = lambda*B*x
+
+    // Query workspace size
+    CHECK_CUSOLVER(cusolverDnDsygvd_bufferSize(handle_, itype, jobz, uplo, nbands, h_matrix, nbands,
+                                               s_matrix, nbands, eigenvalues, &lwork));
+
+    GPU_Vector<double> work(lwork);
+    GPU_Vector<int> dev_info(1);
+
+    // Solve: H * c = epsilon * S * c
+    // Note: h_matrix will be overwritten by eigenvectors
+    CHECK_CUSOLVER(cusolverDnDsygvd(handle_, itype, jobz, uplo, nbands, h_matrix, nbands, s_matrix,
+                                    nbands, eigenvalues, work.data(), lwork, dev_info.data()));
+
+    // Check for errors
+    int h_info = 0;
+    dev_info.copy_to_host(&h_info);
+    if (h_info != 0) {
+        if (h_info < 0) {
+            std::cerr << "Error: " << -h_info << "-th parameter is wrong in Dsygvd" << std::endl;
+        } else if (h_info <= nbands) {
+            std::cerr << "Error: Leading minor of order " << h_info
+                      << " of B is not positive definite (Dsygvd)" << std::endl;
+        } else {
+            std::cerr << "Error: Dsygvd failed to converge (info=" << h_info << ")" << std::endl;
+        }
+    }
+
+    // Copy eigenvectors to output if provided and different from h_matrix
+    if (eigenvectors && eigenvectors != h_matrix) {
+        CHECK(cudaMemcpyAsync(eigenvectors, h_matrix, (size_t)nbands * nbands * sizeof(double),
+                              cudaMemcpyDeviceToDevice, grid_.stream()));
+    }
+}
+
 std::vector<double> SubspaceSolver::solve_direct(Hamiltonian& ham, Wavefunction& psi) {
     int nbands = psi.num_bands();
     size_t nnr = grid_.nnr();
@@ -106,6 +164,13 @@ std::vector<double> SubspaceSolver::solve_direct(Hamiltonian& ham, Wavefunction&
     // 4. Return results
     std::vector<double> eigenvalues(nbands);
     eigenvalues_gpu.copy_to_host(eigenvalues.data());
+
+    // 5. Apply scalar G=0 shift (QE style)
+    double v0 = ham.get_v_of_0();
+    for (auto& e : eigenvalues) {
+        e += v0;
+    }
+
     return eigenvalues;
 }
 

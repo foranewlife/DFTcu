@@ -123,6 +123,10 @@ std::vector<double> DavidsonSolver::solve(Hamiltonian& ham, Wavefunction& psi) {
         rotate_subspace(psi, h_sub);
 
         d_evals.copy_to_host(eigenvalues.data());
+        double v0 = ham.get_v_of_0();
+        for (auto& e : eigenvalues) {
+            e += v0;
+        }
 
         // For now, this is just a subspace diagonalization (e.g. for initial wfcs).
         // Real Davidson would expand the subspace here.

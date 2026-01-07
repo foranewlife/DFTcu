@@ -118,7 +118,7 @@ void DensityBuilder::set_atomic_rho_r(int type, const std::vector<double>& r,
         tab_rho_g_[type][iq] = simpson_integrate(aux, rab) / omega_bohr;
         if (iq == 1) {
             printf("DEBUG DensityBuilder: Type %d, rho(G=0) = %f, expected Zv/Omega = %f\n", type,
-                   tab_rho_g_[type][iq], (double)8.0 / omega_bohr);  // 8.0 is dummy, just to see
+                   tab_rho_g_[type][iq], (double)8.0 / omega_bohr);
         }
     }
 }

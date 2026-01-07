@@ -109,6 +109,7 @@ if(BUILD_WITH_CUDA)
         src/functional/ewald.cu
         src/functional/pseudo.cu
         src/functional/nonlocal_pseudo.cu
+        src/functional/density_functional_potential.cu
         src/functional/kedf/tf.cu
         src/functional/kedf/vw.cu
         src/functional/kedf/wt.cu
@@ -117,13 +118,17 @@ if(BUILD_WITH_CUDA)
         src/functional/xc/pbe.cu
         src/math/linesearch.cu
         src/math/dcsrch.cu
+        src/fft/gamma_fft_solver.cu
         src/solver/evaluator.cu
         src/solver/hamiltonian.cu
         src/solver/davidson.cu
         src/solver/subspace_solver.cu
-        src/solver/scf.cu
-        src/solver/mixer.cu
-        src/solver/optimizer.cu
+        src/solver/gamma_utils.cu
+        src/solver/phase0_verifier.cu
+    src/solver/mixer.cu
+    src/solver/nscf.cu
+    src/solver/optimizer.cu
+    src/solver/scf.cu
         src/solver/tn_optimizer_legacy.cu
         src/utilities/kernels.cu
     )

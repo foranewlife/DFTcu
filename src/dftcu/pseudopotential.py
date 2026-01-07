@@ -108,6 +108,7 @@ def parse_upf(filename):
         "l_list": l_list,
         "kkbeta_list": kkbeta_list,
         "kkbeta": max(kkbeta_list) if kkbeta_list else len(r_grid),
+        "mesh": len(vloc_r),
         "dij": dij_flat,
         "zp": z_valence,
         "rho_at": rho_at_r,

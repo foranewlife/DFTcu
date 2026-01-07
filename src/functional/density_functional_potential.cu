@@ -1,11 +1,11 @@
-#include "evaluator.cuh"
+#include "density_functional_potential.cuh"
 #include "utilities/kernels.cuh"
 
 namespace dftcu {
 
-Evaluator::Evaluator(Grid& grid) : grid_(grid), v_tmp_(grid) {}
+DensityFunctionalPotential::DensityFunctionalPotential(Grid& grid) : grid_(grid), v_tmp_(grid) {}
 
-double Evaluator::compute(const RealField& rho, RealField& v_tot) {
+double DensityFunctionalPotential::compute(const RealField& rho, RealField& v_tot) {
     v_tot.fill(0.0);
     double energy = 0.0;
     size_t n = rho.size();
@@ -19,7 +19,7 @@ double Evaluator::compute(const RealField& rho, RealField& v_tot) {
     return energy;
 }
 
-double Evaluator::get_v0() const {
+double DensityFunctionalPotential::get_v0() const {
     double v0 = 0.0;
     for (const auto& comp : components_) {
         v0 += comp.get_v0();

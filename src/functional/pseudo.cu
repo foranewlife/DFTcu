@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <iostream>
 
 #include "fft/fft_solver.cuh"
 #include "math/bessel.cuh"
@@ -94,7 +96,7 @@ void LocalPseudo::initialize_buffers(Grid& grid) {
 
 void LocalPseudo::init_tab_vloc(int type, const std::vector<double>& r_grid,
                                 const std::vector<double>& vloc_r, const std::vector<double>& rab,
-                                double zp, double omega_ang) {
+                                double zp, double omega_ang, int mesh_cutoff) {
     const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
     omega_ = omega_ang / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
 
@@ -105,32 +107,45 @@ void LocalPseudo::init_tab_vloc(int type, const std::vector<double>& r_grid,
     if (type >= static_cast<int>(tab_vloc_.size()))
         tab_vloc_.resize(type + 1);
 
-    dq_ = 0.0001;
+    dq_ = 0.01;  // Match QE dq = 0.01
     double g2max_bohr = grid_.g2max() * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
     nqx_ = (int)(sqrt(g2max_bohr) / dq_) + 10;
     tab_vloc_[type].resize(nqx_ + 1);
 
-    int msh = r_grid.size();
+    int msh = mesh_cutoff > 0 ? mesh_cutoff : (int)r_grid.size();
     std::vector<double> aux(msh);
+    std::vector<double> rab_sub(msh);
+    for (int i = 0; i < msh; ++i)
+        rab_sub[i] = rab[i];
+
     const double fpi = 4.0 * constants::D_PI;
+    const double e2 = 2.0;  // Ry units
 
     for (int iq = 1; iq <= nqx_; ++iq) {
         double q = (iq - 1) * dq_;
         if (iq == 1) {
             for (int ir = 0; ir < msh; ++ir)
-                aux[ir] = r_grid[ir] * (r_grid[ir] * vloc_r[ir] + 2.0 * zp * erf(r_grid[ir]));
+                aux[ir] = r_grid[ir] * (r_grid[ir] * vloc_r[ir] + e2 * zp * erf(r_grid[ir]));
         } else {
             for (int ir = 0; ir < msh; ++ir)
-                aux[ir] = (r_grid[ir] * vloc_r[ir] + 2.0 * zp * erf(r_grid[ir])) *
-                          sin(q * r_grid[ir]) / q;
+                aux[ir] =
+                    (r_grid[ir] * vloc_r[ir] + e2 * zp * erf(r_grid[ir])) * sin(q * r_grid[ir]) / q;
         }
-        // Multiply by 0.5 to convert Rydberg -> Hartree. Restore 1/Omega for intensive V(G).
-        tab_vloc_[type][iq] = (simpson_integrate(aux, rab) * fpi / omega_) * 0.5;
+        tab_vloc_[type][iq] = (simpson_integrate(aux, rab_sub) * fpi / omega_) * 0.5;
     }
 
     for (int ir = 0; ir < msh; ++ir)
-        aux[ir] = r_grid[ir] * (r_grid[ir] * vloc_r[ir] + 2.0 * zp);
-    tab_vloc_[type][0] = (simpson_integrate(aux, rab) * fpi / omega_) * 0.5;
+        aux[ir] = r_grid[ir] * (r_grid[ir] * vloc_r[ir] + e2 * zp);
+
+    if (type == 0) {
+        printf("DFTcu DEBUG: msh=%d, e2=%.1f, zp=%.1f\n", msh, e2, zp);
+        std::ofstream debug_f("cu_alpha_debug.txt");
+        for (int ir = 0; ir < msh; ++ir) {
+            debug_f << r_grid[ir] << " " << rab_sub[ir] << " " << aux[ir] << std::endl;
+        }
+    }
+
+    tab_vloc_[type][0] = (simpson_integrate(aux, rab_sub) * fpi / omega_) * 0.5;
 }
 
 void LocalPseudo::compute(RealField& v) {
@@ -169,6 +184,21 @@ void LocalPseudo::compute(RealField& v) {
     vloc_gspace_kernel<<<(grid_.nnr() + 255) / 256, 256, 0, grid_.stream()>>>(
         (int)grid_.nnr(), grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), (int)atoms_->nat(),
         d_tab_.data(), d_zp_.data(), stride, dq_, omega_, gcut_, v_g_->data());
+
+    // 1. Extract Alpha term (G=0 contribution) as a scalar in Hartree.
+    // tab_vloc_[type][0] matches QE v_of_0 * 0.5 per atom.
+    v_of_0_ = 0.0;
+    for (size_t iat = 0; iat < atoms_->nat(); ++iat) {
+        int type = atoms_->h_type()[iat];
+        v_of_0_ += tab_vloc_[type][0];
+    }
+    // Note: tab_vloc[0] is already integrated and scaled by 4pi/Omega in init_tab_vloc.
+    // So sum(tab_vloc[0]) is the total local potential shift.
+
+    // 2. Zero out G=0 component in reciprocal space to make real-space field zero-mean.
+    gpufftComplex zero_val = {0.0, 0.0};
+    CHECK(cudaMemcpyAsync(v_g_->data(), &zero_val, sizeof(gpufftComplex), cudaMemcpyHostToDevice,
+                          grid_.stream()));
 
     fft_solver_->backward(*v_g_);
     complex_to_real(grid_.nnr(), v_g_->data(), v.data(), grid_.stream());

@@ -113,6 +113,10 @@ class SCFSolver {
                                              const RealField& rho_val,
                                              const RealField* rho_core = nullptr);
 
+    void set_alpha_energy(double alpha) { alpha_energy_ = alpha; }
+    void set_atoms(std::shared_ptr<Atoms> atoms) { atoms_ = atoms; }
+    void set_ecutrho(double ecutrho_ry);
+
   private:
     Grid& grid_;
     Options options_;

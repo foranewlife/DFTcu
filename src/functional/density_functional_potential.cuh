@@ -6,36 +6,41 @@
 namespace dftcu {
 
 /**
- * @brief Aggregates different energy and potential terms using a composition-based design.
+ * @brief Computes potentials V[ρ] = δE[ρ]/δρ from density functionals.
  *
- * The Evaluator acts as a container for multiple Functional objects. It computes
- * the total energy as the sum of all components and the total potential as the
- * functional derivative of the total energy with respect to the density.
+ * DensityFunctionalPotential aggregates multiple Functional objects and computes
+ * the total potential as the functional derivative of the total energy with
+ * respect to the density. It is used for both KS-DFT (Hartree + XC) and OFDFT
+ * (Hartree + XC + kinetic functionals).
+ *
+ * Usage:
+ *   - KS-DFT SCF: V[ρ] = V_Hartree[ρ] + V_XC[ρ]
+ *   - OFDFT: V[ρ] = V_Hartree[ρ] + V_XC[ρ] + δT_TF[ρ]/δρ + δT_vW[ρ]/δρ
  */
-class Evaluator {
+class DensityFunctionalPotential {
   public:
     /**
-     * @brief Constructs an Evaluator.
+     * @brief Constructs a DensityFunctionalPotential.
      * @param grid Reference to the simulation grid.
      */
-    Evaluator(Grid& grid);
+    DensityFunctionalPotential(Grid& grid);
 
     /** @brief Default destructor. */
-    ~Evaluator() = default;
+    ~DensityFunctionalPotential() = default;
 
     /**
-     * @brief Adds a functional component to the evaluator.
+     * @brief Adds a functional component.
      * @param f A functional object (e.g., TF, vW, Hartree, LDA).
      */
     void add_functional(Functional f) { components_.push_back(std::move(f)); }
 
     /**
-     * @brief Removes all functional components from the evaluator.
+     * @brief Removes all functional components.
      */
     void clear() { components_.clear(); }
 
     /**
-     * @brief Computes total energy and total potential.
+     * @brief Computes total energy and total potential from density.
      *
      * Iterates through all added functionals, summing their energy contributions
      * and adding their individual potentials to v_tot.

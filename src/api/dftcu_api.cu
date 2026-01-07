@@ -1,4 +1,6 @@
 #include "fft/fft_solver.cuh"
+#include "fft/gamma_fft_solver.cuh"
+#include "functional/density_functional_potential.cuh"
 #include "functional/ewald.cuh"
 #include "functional/hartree.cuh"
 #include "functional/kedf/hc.cuh"
@@ -18,8 +20,10 @@
 #include "model/wavefunction.cuh"
 #include "model/wavefunction_builder.cuh"
 #include "solver/davidson.cuh"
-#include "solver/evaluator.cuh"
+#include "solver/evaluator.cuh"  // Keep for backward compatibility
 #include "solver/hamiltonian.cuh"
+#include "solver/nscf.cuh"
+#include "solver/phase0_verifier.cuh"
 #include "solver/scf.cuh"
 #include "solver/subspace_solver.cuh"
 #include "utilities/gpu_vector.cuh"
@@ -42,6 +46,24 @@ PYBIND11_MODULE(_dftcu, m) {
     m.def("spherical_bessel_jl", &dftcu::spherical_bessel_jl, py::arg("l"), py::arg("x"));
     m.def("ylm", &dftcu::get_ylm, py::arg("l"), py::arg("m_idx"), py::arg("gx"), py::arg("gy"),
           py::arg("gz"), py::arg("gmod"));
+
+    py::class_<dftcu::FFTSolver>(m, "FFTSolver")
+        .def(py::init<dftcu::Grid&>())
+        .def("forward", &dftcu::FFTSolver::forward)
+        .def("backward", &dftcu::FFTSolver::backward);
+
+    py::class_<dftcu::GammaFFTSolver>(m, "GammaFFTSolver")
+        .def(py::init<dftcu::Grid&>())
+        .def("wave_g2r_single", &dftcu::GammaFFTSolver::wave_g2r_single, py::arg("psi_g_half"),
+             py::arg("miller_h"), py::arg("miller_k"), py::arg("miller_l"), py::arg("psi_r"))
+        .def("wave_r2g_single", &dftcu::GammaFFTSolver::wave_r2g_single, py::arg("psi_r"),
+             py::arg("miller_h"), py::arg("miller_k"), py::arg("miller_l"), py::arg("psi_g_half"))
+        .def("wave_g2r_pair", &dftcu::GammaFFTSolver::wave_g2r_pair, py::arg("psi1_g"),
+             py::arg("psi2_g"), py::arg("miller_h"), py::arg("miller_k"), py::arg("miller_l"),
+             py::arg("psi_r_packed"))
+        .def("wave_r2g_pair", &dftcu::GammaFFTSolver::wave_r2g_pair, py::arg("psi_r_packed"),
+             py::arg("miller_h"), py::arg("miller_k"), py::arg("miller_l"), py::arg("psi1_g"),
+             py::arg("psi2_g"));
 
     py::class_<dftcu::Grid>(m, "Grid")
         .def(py::init<const std::vector<double>&, const std::vector<int>&>())
@@ -84,7 +106,65 @@ PYBIND11_MODULE(_dftcu, m) {
                                   cudaMemcpyDeviceToHost));
                  return h_gz;
              })
-        .def("set_is_gamma", &dftcu::Grid::set_is_gamma, py::arg("is_gamma"));
+        .def("set_is_gamma", &dftcu::Grid::set_is_gamma, py::arg("is_gamma"))
+        // G-vector management (Phase 0c.4)
+        .def("load_gvectors_from_qe", &dftcu::Grid::load_gvectors_from_qe, py::arg("data_dir"),
+             "Load G-vector data from QE output files")
+        .def("ngm", &dftcu::Grid::ngm, "Number of G-vectors within ecutwfc cutoff")
+        .def(
+            "get_g2kin",
+            [](dftcu::Grid& self) {
+                std::vector<double> g2kin_host(self.ngm());
+                CHECK(cudaMemcpy(g2kin_host.data(), self.g2kin(), self.ngm() * sizeof(double),
+                                 cudaMemcpyDeviceToHost));
+                return g2kin_host;
+            },
+            "Get kinetic energy coefficients for all G-vectors")
+        .def(
+            "get_nl_d",
+            [](dftcu::Grid& self) {
+                std::vector<int> nl_d_host(self.ngm());
+                CHECK(cudaMemcpy(nl_d_host.data(), self.nl_d(), self.ngm() * sizeof(int),
+                                 cudaMemcpyDeviceToHost));
+                return nl_d_host;
+            },
+            "Get FFT grid indices for G-vectors")
+        .def(
+            "get_nlm_d",
+            [](dftcu::Grid& self) {
+                std::vector<int> nlm_d_host(self.ngm());
+                CHECK(cudaMemcpy(nlm_d_host.data(), self.nlm_d(), self.ngm() * sizeof(int),
+                                 cudaMemcpyDeviceToHost));
+                return nlm_d_host;
+            },
+            "Get FFT grid indices for -G vectors")
+        .def(
+            "get_miller_h",
+            [](dftcu::Grid& self) {
+                std::vector<int> h_host(self.ngm());
+                CHECK(cudaMemcpy(h_host.data(), self.miller_h(), self.ngm() * sizeof(int),
+                                 cudaMemcpyDeviceToHost));
+                return h_host;
+            },
+            "Get Miller index h for all G-vectors")
+        .def(
+            "get_miller_k",
+            [](dftcu::Grid& self) {
+                std::vector<int> k_host(self.ngm());
+                CHECK(cudaMemcpy(k_host.data(), self.miller_k(), self.ngm() * sizeof(int),
+                                 cudaMemcpyDeviceToHost));
+                return k_host;
+            },
+            "Get Miller index k for all G-vectors")
+        .def(
+            "get_miller_l",
+            [](dftcu::Grid& self) {
+                std::vector<int> l_host(self.ngm());
+                CHECK(cudaMemcpy(l_host.data(), self.miller_l(), self.ngm() * sizeof(int),
+                                 cudaMemcpyDeviceToHost));
+                return l_host;
+            },
+            "Get Miller index l for all G-vectors");
 
     py::class_<dftcu::RealField>(m, "RealField")
         .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
@@ -140,6 +220,7 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("compute_density", &dftcu::Wavefunction::compute_density)
         .def("randomize", &dftcu::Wavefunction::randomize, py::arg("seed") = 42U)
         .def("get_pw_indices", &dftcu::Wavefunction::get_pw_indices)
+        .def("get_g2kin", &dftcu::Wavefunction::get_g2kin)
         .def("orthonormalize", &dftcu::Wavefunction::orthonormalize)
         .def("dot", &dftcu::Wavefunction::dot, py::arg("band_a"), py::arg("band_b"))
         .def("copy_from_host",
@@ -165,8 +246,18 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("get_coefficients", &dftcu::Wavefunction::get_coefficients, py::arg("band"))
         .def("set_coefficients", &dftcu::Wavefunction::set_coefficients, py::arg("coeffs"),
              py::arg("band"))
-        .def("set_coefficients_miller", &dftcu::Wavefunction::set_coefficients_miller, py::arg("h"),
-             py::arg("k"), py::arg("l"), py::arg("values"), py::arg("expand_hermitian") = true)
+        .def(
+            "set_coefficients_miller",
+            [](dftcu::Wavefunction& self, const std::vector<int>& h, const std::vector<int>& k,
+               const std::vector<int>& l, py::array_t<std::complex<double>> values,
+               bool expand_hermitian = true) {
+                py::buffer_info buf = values.request();
+                const std::complex<double>* ptr = static_cast<const std::complex<double>*>(buf.ptr);
+                std::vector<std::complex<double>> vec(ptr, ptr + buf.size);
+                self.set_coefficients_miller(h, k, l, vec, expand_hermitian);
+            },
+            py::arg("h"), py::arg("k"), py::arg("l"), py::arg("values"),
+            py::arg("expand_hermitian") = true)
         .def("compute_kinetic_energy", &dftcu::Wavefunction::compute_kinetic_energy,
              py::arg("occupations"));
 
@@ -176,34 +267,41 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("build_atomic_wavefunctions", &dftcu::WavefunctionBuilder::build_atomic_wavefunctions,
              py::arg("psi"), py::arg("randomize_phase") = false);
 
-    py::class_<dftcu::Evaluator, std::shared_ptr<dftcu::Evaluator>>(m, "Evaluator")
+    // DensityFunctionalPotential (new name for Evaluator)
+    // Also register as "Evaluator" for backward compatibility
+    py::class_<dftcu::DensityFunctionalPotential,
+               std::shared_ptr<dftcu::DensityFunctionalPotential>>(m, "DensityFunctionalPotential")
         .def(py::init<dftcu::Grid&>())
-        .def("add_functional", &dftcu::Evaluator::add_functional)
+        .def("add_functional", &dftcu::DensityFunctionalPotential::add_functional)
         .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::ThomasFermi> f) {
+             [](dftcu::DensityFunctionalPotential& self, std::shared_ptr<dftcu::ThomasFermi> f) {
                  self.add_functional(f);
              })
         .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::vonWeizsacker> f) {
+             [](dftcu::DensityFunctionalPotential& self, std::shared_ptr<dftcu::vonWeizsacker> f) {
                  self.add_functional(f);
              })
-        .def("add_functional", [](dftcu::Evaluator& self,
+        .def("add_functional", [](dftcu::DensityFunctionalPotential& self,
                                   std::shared_ptr<dftcu::WangTeter> f) { self.add_functional(f); })
-        .def("add_functional", [](dftcu::Evaluator& self,
+        .def("add_functional", [](dftcu::DensityFunctionalPotential& self,
                                   std::shared_ptr<dftcu::revHC> f) { self.add_functional(f); })
-        .def("add_functional", [](dftcu::Evaluator& self,
+        .def("add_functional", [](dftcu::DensityFunctionalPotential& self,
                                   std::shared_ptr<dftcu::Hartree> f) { self.add_functional(f); })
-        .def("add_functional", [](dftcu::Evaluator& self,
+        .def("add_functional", [](dftcu::DensityFunctionalPotential& self,
                                   std::shared_ptr<dftcu::LDA_PZ> f) { self.add_functional(f); })
-        .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::PBE> f) { self.add_functional(f); })
-        .def("add_functional", [](dftcu::Evaluator& self,
+        .def("add_functional", [](dftcu::DensityFunctionalPotential& self,
+                                  std::shared_ptr<dftcu::PBE> f) { self.add_functional(f); })
+        .def("add_functional", [](dftcu::DensityFunctionalPotential& self,
                                   std::shared_ptr<dftcu::Ewald> f) { self.add_functional(f); })
         .def("add_functional",
-             [](dftcu::Evaluator& self, std::shared_ptr<dftcu::LocalPseudo> f) {
+             [](dftcu::DensityFunctionalPotential& self, std::shared_ptr<dftcu::LocalPseudo> f) {
                  self.add_functional(f);
              })
-        .def("compute", &dftcu::Evaluator::compute);
+        .def("compute", &dftcu::DensityFunctionalPotential::compute)
+        .def("clear", &dftcu::DensityFunctionalPotential::clear);
+
+    // Backward compatibility alias (same type, different name)
+    m.attr("Evaluator") = m.attr("DensityFunctionalPotential");
 
     py::class_<dftcu::Hartree, std::shared_ptr<dftcu::Hartree>>(m, "Hartree")
         .def(py::init<>())
@@ -264,7 +362,8 @@ PYBIND11_MODULE(_dftcu, m) {
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>(), py::arg("grid"),
              py::arg("atoms"))
         .def("init_tab_vloc", &dftcu::LocalPseudo::init_tab_vloc, py::arg("type"),
-             py::arg("r_grid"), py::arg("vloc_r"), py::arg("rab"), py::arg("zp"), py::arg("omega"))
+             py::arg("r_grid"), py::arg("vloc_r"), py::arg("rab"), py::arg("zp"), py::arg("omega"),
+             py::arg("mesh_cutoff") = -1)
         .def("set_valence_charge", &dftcu::LocalPseudo::set_valence_charge, py::arg("type"),
              py::arg("zp"))
         .def("set_gcut", &dftcu::LocalPseudo::set_gcut, py::arg("gcut"))
@@ -273,10 +372,12 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("compute", [](dftcu::LocalPseudo& self, const dftcu::RealField& rho,
                            dftcu::RealField& v_out) { return self.compute(rho, v_out); })
         .def("get_tab_vloc", &dftcu::LocalPseudo::get_tab_vloc, py::arg("type"))
+        .def("set_tab_vloc", &dftcu::LocalPseudo::set_tab_vloc, py::arg("type"), py::arg("tab"))
         .def("get_alpha", &dftcu::LocalPseudo::get_alpha, py::arg("type"))
         .def("get_vloc_g_shells", &dftcu::LocalPseudo::get_vloc_g_shells, py::arg("type"),
              py::arg("g_shells"))
         .def("get_dq", &dftcu::LocalPseudo::get_dq)
+        .def("set_dq", &dftcu::LocalPseudo::set_dq, py::arg("dq"))
         .def("get_nqx", &dftcu::LocalPseudo::get_nqx)
         .def("get_omega", &dftcu::LocalPseudo::get_omega);
 
@@ -331,7 +432,14 @@ PYBIND11_MODULE(_dftcu, m) {
              });
 
     py::class_<dftcu::Hamiltonian>(m, "Hamiltonian")
-        .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Evaluator>>())
+        // New base constructor
+        .def(py::init<dftcu::Grid&>())
+        // Backward compatibility constructor
+        .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::DensityFunctionalPotential>,
+                      std::shared_ptr<dftcu::NonLocalPseudo>>(),
+             py::arg("grid"), py::arg("dfp"), py::arg("nl_pseudo") = nullptr)
+        .def("set_density_functional_potential",
+             &dftcu::Hamiltonian::set_density_functional_potential)
         .def("update_potentials", &dftcu::Hamiltonian::update_potentials)
         .def("apply", &dftcu::Hamiltonian::apply)
         .def("set_nonlocal", &dftcu::Hamiltonian::set_nonlocal)
@@ -340,8 +448,10 @@ PYBIND11_MODULE(_dftcu, m) {
             "get_nonlocal",
             [](dftcu::Hamiltonian& self) -> dftcu::NonLocalPseudo& { return self.get_nonlocal(); },
             py::return_value_policy::reference)
+        .def("get_v_of_0", &dftcu::Hamiltonian::get_v_of_0)
         .def("v_loc", (dftcu::RealField & (dftcu::Hamiltonian::*)()) & dftcu::Hamiltonian::v_loc,
              py::return_value_policy::reference)
+
         .def("set_ecutrho", &dftcu::Hamiltonian::set_ecutrho, py::arg("ecutrho"));
 
     py::class_<dftcu::SubspaceSolver>(m, "SubspaceSolver")
@@ -369,6 +479,12 @@ PYBIND11_MODULE(_dftcu, m) {
                  d_e.copy_to_host(h_e.data());
                  return h_e;
              });
+
+    py::class_<dftcu::NonSCFSolver>(m, "NonSCFSolver")
+        .def(py::init<dftcu::Grid&>())
+        .def("solve", &dftcu::NonSCFSolver::solve, py::arg("ham"), py::arg("psi"), py::arg("nelec"),
+             py::arg("atoms"), py::arg("ecutrho"), py::arg("rho_core") = nullptr,
+             py::arg("alpha_energy") = 0.0);
 
     py::class_<dftcu::DavidsonSolver>(m, "DavidsonSolver")
         .def(py::init<dftcu::Grid&, int, double>(), py::arg("grid"), py::arg("max_iter") = 50,
@@ -432,6 +548,9 @@ PYBIND11_MODULE(_dftcu, m) {
                  }
                  return result;
              })
+        .def("set_alpha_energy", &dftcu::SCFSolver::set_alpha_energy)
+        .def("set_atoms", &dftcu::SCFSolver::set_atoms)
+        .def("set_ecutrho", &dftcu::SCFSolver::set_ecutrho)
         .def("compute_energy_breakdown", &dftcu::SCFSolver::compute_energy_breakdown,
              py::arg("eigenvalues"), py::arg("occupations"), py::arg("ham"), py::arg("psi"),
              py::arg("rho_val"), py::arg("rho_core") = nullptr);
@@ -442,4 +561,16 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("set_atomic_rho_r", &dftcu::DensityBuilder::set_atomic_rho_r)
         .def("build_density", &dftcu::DensityBuilder::build_density)
         .def("set_gcut", &dftcu::DensityBuilder::set_gcut, py::arg("gcut"));
+
+    // Phase 0 Verifier
+    py::class_<dftcu::VerificationResult>(m, "VerificationResult")
+        .def(py::init<>())
+        .def_readwrite("success", &dftcu::VerificationResult::success)
+        .def_readwrite("h_sub_error", &dftcu::VerificationResult::h_sub_error)
+        .def_readwrite("s_sub_error", &dftcu::VerificationResult::s_sub_error);
+
+    py::class_<dftcu::Phase0Verifier>(m, "Phase0Verifier")
+        .def(py::init<dftcu::Grid&>())
+        .def("verify", &dftcu::Phase0Verifier::verify, py::arg("wfc_file"), py::arg("s_ref_file"),
+             py::arg("nbands"), py::arg("ecutwfc"));
 }

@@ -55,11 +55,22 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
     // R -> G (rho_g scaled by 1/N by forward FFT)
     fft_->forward(*rho_g_);
 
+    std::vector<gpufftComplex> rho_g_h(1);
+    CHECK(
+        cudaMemcpy(rho_g_h.data(), rho_g_->data(), sizeof(gpufftComplex), cudaMemcpyDeviceToHost));
+    printf("DEBUG Hartree: rho_g[0] = (%f, %f)\n", rho_g_h[0].x, rho_g_h[0].y);
+
     const int block_size = 256;
     const int grid_size = (nnr + block_size - 1) / block_size;
     hartree_kernel<<<grid_size, block_size, 0, grid.stream()>>>(nnr, rho_g_->data(), grid.gg(),
                                                                 gcut_);
     GPU_CHECK_KERNEL;
+
+    std::vector<gpufftComplex> rho_g_debug(1);
+    CHECK(cudaMemcpy(rho_g_debug.data(), rho_g_->data(), sizeof(gpufftComplex),
+                     cudaMemcpyDeviceToHost));
+    // printf("DEBUG Hartree: rho_g[0] after kernel = (%f, %f)\n", rho_g_debug[0].x,
+    // rho_g_debug[0].y);
 
     // G -> R (scaled by N by cufftExecZ2Z)
     fft_->backward(*rho_g_);
@@ -67,7 +78,11 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
     complex_to_real(nnr, rho_g_->data(), vh.data(), grid.stream());
 
     v_mul(nnr, rho.data(), vh.data(), v_tmp_->data(), grid.stream());
-    energy = 0.5 * v_sum(nnr, v_tmp_->data(), grid.stream()) * grid.dv_bohr();
+    double sum_rho_vh = v_sum(nnr, v_tmp_->data(), grid.stream());
+    energy = 0.5 * sum_rho_vh * grid.dv_bohr();
+
+    printf("DEBUG Hartree: sum(rho*vh)=%f, dv_bohr=%f, energy_ha=%f\n", sum_rho_vh, grid.dv_bohr(),
+           energy);
 }
 
 }  // namespace dftcu

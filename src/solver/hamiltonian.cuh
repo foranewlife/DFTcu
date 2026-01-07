@@ -2,9 +2,9 @@
 #include <memory>
 #include <vector>
 
+#include "functional/density_functional_potential.cuh"
 #include "functional/nonlocal_pseudo.cuh"
 #include "model/wavefunction.cuh"
-#include "solver/evaluator.cuh"
 
 namespace dftcu {
 
@@ -18,12 +18,18 @@ namespace dftcu {
 class Hamiltonian {
   public:
     /**
-     * @brief Construct Hamiltonian
+     * @brief Construct Hamiltonian (base constructor)
      * @param grid Reference to the simulation grid
-     * @param evaluator Evaluator providing the local potential fields
+     */
+    explicit Hamiltonian(Grid& grid);
+
+    /**
+     * @brief Construct Hamiltonian (deprecated, for backward compatibility)
+     * @param grid Reference to the simulation grid
+     * @param dfp DensityFunctionalPotential providing the local potential fields
      * @param nl_pseudo Optional non-local pseudopotential handler
      */
-    Hamiltonian(Grid& grid, std::shared_ptr<Evaluator> evaluator,
+    Hamiltonian(Grid& grid, std::shared_ptr<DensityFunctionalPotential> dfp,
                 std::shared_ptr<NonLocalPseudo> nl_pseudo = nullptr);
     ~Hamiltonian() = default;
 
@@ -40,11 +46,19 @@ class Hamiltonian {
     /** @brief Set or update the non-local potential handler */
     void set_nonlocal(std::shared_ptr<NonLocalPseudo> nl_pseudo) { nonlocal_ = nl_pseudo; }
 
+    /** @brief Set or update the density functional potential handler */
+    void set_density_functional_potential(std::shared_ptr<DensityFunctionalPotential> dfp) {
+        dfp_ = dfp;
+    }
+
     /** @brief Get the total local potential used by the Hamiltonian */
     RealField& v_loc() { return v_loc_tot_; }
     const RealField& v_loc() const { return v_loc_tot_; }
 
-    /** @brief Update the local potential from the evaluator */
+    /** @brief Get the aggregate G=0 potential in Hartree. Matches QE v_of_0 * 0.5. */
+    double get_v_of_0() const { return v_of_0_; }
+
+    /** @brief Update the local potential from the density functional potential */
     void update_potentials(const RealField& rho);
 
     /**
@@ -56,9 +70,9 @@ class Hamiltonian {
     /** @brief Check if non-local pseudopotential is present */
     bool has_nonlocal() const { return nonlocal_ != nullptr; }
 
-    /** @brief Get reference to evaluator */
-    Evaluator& get_evaluator() { return *evaluator_; }
-    const Evaluator& get_evaluator() const { return *evaluator_; }
+    /** @brief Get reference to density functional potential */
+    DensityFunctionalPotential& get_density_functional_potential() { return *dfp_; }
+    const DensityFunctionalPotential& get_density_functional_potential() const { return *dfp_; }
 
     /** @brief Get reference to non-local pseudopotential */
     NonLocalPseudo& get_nonlocal() { return *nonlocal_; }
@@ -66,11 +80,12 @@ class Hamiltonian {
 
   private:
     Grid& grid_;
-    std::shared_ptr<Evaluator> evaluator_;
+    std::shared_ptr<DensityFunctionalPotential> dfp_;
     std::shared_ptr<NonLocalPseudo> nonlocal_;
 
     // Persistent buffer for the total local potential in real space
     RealField v_loc_tot_;
+    double v_of_0_ = 0.0;
 };
 
 }  // namespace dftcu

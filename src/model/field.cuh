@@ -62,6 +62,8 @@ class RealField : public Expr<RealField> {
                               cudaMemcpyDeviceToDevice, grid_.stream()));
     }
 
+    void add_scalar(double val) { v_shift(size(), val, data(), data(), grid_.stream()); }
+
     double* data() { return data_.data(); }
     const double* data() const { return data_.data(); }
     size_t size() const { return data_.size(); }

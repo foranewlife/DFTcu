@@ -118,6 +118,46 @@ class Grid {
     bool is_gamma() const { return is_gamma_; }
     void set_is_gamma(bool is_gamma) { is_gamma_ = is_gamma; }
 
+    // ========================================================================
+    // G-vector management (Phase 0c.4)
+    // ========================================================================
+
+    /**
+     * @brief Load G-vector data from QE output files (QE-compatible mode).
+     * @param data_dir Directory containing QE exported data files.
+     *
+     * This function loads nl_d/nlm_d mappings from QE, reverse-engineers
+     * Miller indices, and computes g2kin values.
+     */
+    void load_gvectors_from_qe(const std::string& data_dir);
+
+    /**
+     * @brief Number of G-vectors within ecutwfc cutoff.
+     */
+    int ngm() const { return ngm_; }
+
+    /**
+     * @brief Kinetic energy coefficients (g2kin) for all G-vectors (GPU).
+     */
+    const double* g2kin() const { return g2kin_.data(); }
+
+    /**
+     * @brief FFT grid indices for G-vectors (nl_d) (GPU).
+     */
+    const int* nl_d() const { return nl_d_.data(); }
+
+    /**
+     * @brief FFT grid indices for -G vectors (nlm_d) (GPU).
+     */
+    const int* nlm_d() const { return nlm_d_.data(); }
+
+    /**
+     * @brief Miller indices (h, k, l) for all G-vectors (GPU).
+     */
+    const int* miller_h() const { return miller_h_.data(); }
+    const int* miller_k() const { return miller_k_.data(); }
+    const int* miller_l() const { return miller_l_.data(); }
+
   private:
     /**
      * @brief Computes the reciprocal lattice matrix from the real-space lattice.
@@ -129,6 +169,25 @@ class Grid {
      */
     void compute_g_vectors();
 
+    // ========================================================================
+    // G-vector management private methods (Phase 0c.4)
+    // ========================================================================
+
+    /**
+     * @brief Load nl_d and nlm_d from QE output file.
+     */
+    void load_nl_mapping_from_file(const std::string& filename);
+
+    /**
+     * @brief Reverse-engineer Miller indices from nl_d.
+     */
+    void reverse_engineer_miller_indices();
+
+    /**
+     * @brief Compute g2kin values on GPU.
+     */
+    void compute_g2kin_gpu();
+
     cudaStream_t stream_ = nullptr;        /**< CUDA stream for grid operations */
     double lattice_[3][3];                 /**< Real-space lattice matrix */
     double rec_lattice_[3][3];             /**< Reciprocal-space lattice matrix */
@@ -137,6 +196,17 @@ class Grid {
     double volume_;                        /**< Unit cell volume */
     bool is_gamma_ = false;                /**< True if Gamma-point only calculation */
     GPU_Vector<double> gg_, gx_, gy_, gz_; /**< GPU data for G-vectors */
+
+    // ========================================================================
+    // G-vector management data (Phase 0c.4)
+    // ========================================================================
+    int ngm_ = 0;              /**< Number of G-vectors */
+    GPU_Vector<int> miller_h_; /**< Miller index h (GPU) */
+    GPU_Vector<int> miller_k_; /**< Miller index k (GPU) */
+    GPU_Vector<int> miller_l_; /**< Miller index l (GPU) */
+    GPU_Vector<double> g2kin_; /**< Kinetic energy coefficients (GPU) */
+    GPU_Vector<int> nl_d_;     /**< G-vector → FFT grid mapping (GPU) */
+    GPU_Vector<int> nlm_d_;    /**< -G vector → FFT grid mapping (GPU) */
 
     // Prevent copying
     Grid(const Grid&) = delete;

@@ -94,6 +94,26 @@ class Wavefunction {
     /** @brief Compute the total kinetic energy: Ts = sum_n f_n <psi_n | -0.5 nabla^2 | psi_n> */
     double compute_kinetic_energy(const std::vector<double>& occupations);
 
+    /** @brief Get |G|^2 values in Rydberg for all active plane waves */
+    std::vector<double> get_g2kin();
+
+    /**
+     * @brief Force Gamma-point constraint: Im[ψ(G=0)] = 0
+     *
+     * For Gamma-only calculations, wavefunctions must satisfy ψ(-G) = ψ*(G).
+     * This implies that ψ(G=0) must be purely real.
+     * QE enforces this after every wavefunction update (regterg.f90:172, 375).
+     *
+     * This function sets Im[ψ(0,n)] = 0 for all bands n.
+     */
+    void force_gamma_constraint();
+
+    /**
+     * @brief Check if G=0 is included in this process's G-vectors
+     * @return true if G=0 is present (gstart==2 in QE terminology)
+     */
+    bool has_g0() const;
+
     /**
      * @brief Compute band occupations using Fermi-Dirac distribution
      * @param eigenvalues Computed band energies

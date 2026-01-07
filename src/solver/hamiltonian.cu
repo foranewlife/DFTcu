@@ -12,9 +12,9 @@ __global__ void apply_kinetic_kernel(size_t n, int num_bands, const double* gg,
     size_t total_size = n * num_bands;
     if (i < total_size) {
         int grid_idx = i % n;
-        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
-        double g2_bohr = gg[grid_idx] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
-        double t = 0.5 * g2_bohr;
+        // gg is |G|^2 in Bohr^-2 (lattice input is in Bohr)
+        // QE uses Rydberg: T = |G|^2 (no 0.5 factor, no unit conversion needed)
+        double t = gg[grid_idx];
         h_psi[i].x = t * psi[i].x;
         h_psi[i].y = t * psi[i].y;
     }
@@ -38,14 +38,41 @@ __global__ void accumulate_hpsi_kernel(size_t n, const gpufftComplex* tmp, gpuff
 
 }  // namespace
 
-Hamiltonian::Hamiltonian(Grid& grid, std::shared_ptr<Evaluator> evaluator,
+// Base constructor - dfp is optional
+Hamiltonian::Hamiltonian(Grid& grid)
+    : grid_(grid), dfp_(nullptr), nonlocal_(nullptr), v_loc_tot_(grid) {
+    v_loc_tot_.fill(0.0);
+}
+
+// Backward compatibility constructor
+Hamiltonian::Hamiltonian(Grid& grid, std::shared_ptr<DensityFunctionalPotential> dfp,
                          std::shared_ptr<NonLocalPseudo> nl_pseudo)
-    : grid_(grid), evaluator_(evaluator), nonlocal_(nl_pseudo), v_loc_tot_(grid) {
+    : grid_(grid), dfp_(dfp), nonlocal_(nl_pseudo), v_loc_tot_(grid) {
     v_loc_tot_.fill(0.0);
 }
 
 void Hamiltonian::update_potentials(const RealField& rho) {
-    evaluator_->compute(rho, v_loc_tot_);
+    if (!dfp_) {
+        throw std::runtime_error(
+            "Hamiltonian::update_potentials: DensityFunctionalPotential not set");
+    }
+
+    dfp_->compute(rho, v_loc_tot_);
+
+    // 1. Calculate the mean of the fluctuations in real space
+    // Mean = sum(V)/N = (sum(V)*dV) / (N*dV) = Integral / Volume
+    // RealField::integral() and grid_.volume() are both in Angstrom-based units.
+    double vol_ang = grid_.volume();
+    double total_v_ang = v_loc_tot_.integral();
+    double fluctuation_mean = total_v_ang / vol_ang;
+
+    // 2. Aggregate G=0 potential (QE v_of_0 equivalent in Hartree)
+    // v_of_0 = Mean(Hartree + XC) + sum(Alpha_at) / Omega
+    v_of_0_ = fluctuation_mean + dfp_->get_v0();
+
+    // 3. Subtract real-space mean to keep the field zero-centered (fluctuation only)
+    v_loc_tot_.add_scalar(-fluctuation_mean);
+
     grid_.synchronize();
 }
 
@@ -96,6 +123,7 @@ void Hamiltonian::apply(Wavefunction& psi, Wavefunction& h_psi) {
     }
 
     h_psi.apply_mask();
+    h_psi.force_gamma_constraint();  // Force Im[ψ(G=0)] = 0 (QE: h_psi.f90:235)
     grid_.synchronize();
 }
 

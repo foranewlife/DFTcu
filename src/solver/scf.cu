@@ -280,9 +280,9 @@ double SCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, const std::vector<d
                       << std::setprecision(2) << delta_e << std::setw(15) << delta_rho << "\n";
 
             // Component breakdown
-            Evaluator& eval = ham.get_evaluator();
+            DensityFunctionalPotential& dfp = ham.get_density_functional_potential();
             RealField vt(grid_);
-            double e_f = eval.compute(rho, vt);
+            double e_f = dfp.compute(rho, vt);
             double e_k = psi.compute_kinetic_energy(occupations) * 2.0;  // To Ry
             double e_nl = 0.0;
             if (ham.has_nonlocal())
@@ -359,6 +359,13 @@ double SCFSolver::compute_total_energy(const std::vector<double>& eigenvalues,
     double e_total = eband + deband + ehart + etxc + eewld - alpha_energy_;
 
     return e_total;
+}
+
+void SCFSolver::set_ecutrho(double ecutrho_ry) {
+    ecutrho_ha_ = ecutrho_ry * 0.5;
+    if (atoms_) {
+        ewald_ = std::make_unique<Ewald>(grid_, atoms_, 1e-10, ecutrho_ha_);
+    }
 }
 
 void SCFSolver::mix_density(RealField& rho_old, const RealField& rho_new, double beta) {

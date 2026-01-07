@@ -247,11 +247,22 @@ def initialize_hamiltonian(  # noqa: C901
     if nl_pseudo:
         ham.set_nonlocal(nl_pseudo)
 
+    # 4. Compute top-level Alpha-Term correction (QE style)
+    # correction = Nelec * sum(Alpha_at) / Omega
+    # (Values are in Hartree/Bohr units)
+    sum_alpha = 0.0
+    for i in range(atoms.nat()):
+        type_idx = atoms.h_type()[i]
+        sum_alpha += vloc.get_alpha(type_idx)
+
+    omega_bohr = grid.volume_bohr()
+    alpha_energy = (z_total * sum_alpha) / omega_bohr
+
     # Initialize potentials in Hamiltonian from rho_val
     ham.update_potentials(rho_val)
 
-    # Return vloc so SCF can use it for potential updates
-    return rho_val, ham, vloc
+    # Return values needed for Solver
+    return rho_val, ham, vloc, alpha_energy
 
 
 def solve_generalized_eigenvalue_problem(grid, h_matrix, s_matrix):
@@ -412,3 +423,81 @@ def verify_qe_subspace_alignment(qe_data_dir, grid):
         eig_qe = np.fromfile(f, sep="\n") * 0.5
     print(f"--> Alignment Verification Complete. Max Diff: {np.max(np.abs(eig - eig_qe)):.6e} Ha")
     return eig, eig_qe, np.max(np.abs(eig - eig_qe))
+
+
+# ========================================================================
+# Test Utilities (for NSCF Alignment Tests)
+# ========================================================================
+
+
+def create_si_fcc_grid(nr=(27, 27, 27), qe_data_dir=None):
+    """
+    Create Si FCC lattice Grid for testing.
+
+    This is a reusable component for test setup. Can be used independently
+    or as part of the NSCF alignment test suite.
+
+    Args:
+        nr: FFT grid dimensions (default: 27x27x27 for Si with ecutwfc=18 Ry)
+        qe_data_dir: Optional path to QE data directory. If provided,
+                     G-vectors will be loaded from QE data.
+
+    Returns:
+        Grid object configured for Si FCC lattice
+
+    Example:
+        >>> # Standalone use
+        >>> grid = create_si_fcc_grid()
+        >>>
+        >>> # For QE alignment tests
+        >>> grid = create_si_fcc_grid(qe_data_dir="/path/to/qe/data")
+    """
+    # Si FCC lattice parameters (units: Angstrom)
+    alat = 10.20  # Lattice constant in Angstrom
+    lattice_constant = alat / 2.0
+
+    # FCC primitive vectors
+    a1 = lattice_constant * np.array([-1.0, 0.0, 1.0])
+    a2 = lattice_constant * np.array([0.0, 1.0, 1.0])
+    a3 = lattice_constant * np.array([-1.0, 1.0, 0.0])
+
+    lattice_vectors = np.column_stack([a1, a2, a3])
+    lattice_flat = lattice_vectors.T.flatten().tolist()
+
+    # Create Grid
+    grid = dftcu.Grid(lattice_flat, list(nr))
+    grid.set_is_gamma(True)
+
+    # Load G-vectors from QE if path provided
+    if qe_data_dir:
+        grid.load_gvectors_from_qe(qe_data_dir)
+
+    return grid
+
+
+class MillerIndicesWrapper:
+    """
+    Wrapper for Miller indices from Grid (for backward compatibility).
+
+    Provides a simple interface to access Miller indices extracted from
+    a Grid object, compatible with existing test utilities.
+
+    Args:
+        grid: dftcu.Grid object with loaded G-vectors
+
+    Attributes:
+        h, k, l: Miller indices arrays (numpy)
+        npw: Number of plane waves
+
+    Example:
+        >>> grid = create_si_fcc_grid(qe_data_dir="/path/to/qe")
+        >>> miller = MillerIndicesWrapper(grid)
+        >>> print(f"Number of G-vectors: {miller.npw}")
+        >>> print(f"First G-vector: ({miller.h[0]}, {miller.k[0]}, {miller.l[0]})")
+    """
+
+    def __init__(self, grid):
+        self.h = np.array(grid.get_miller_h())
+        self.k = np.array(grid.get_miller_k())
+        self.l = np.array(grid.get_miller_l())
+        self.npw = len(self.h)
