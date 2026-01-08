@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 #include "utilities/common.cuh"
@@ -20,18 +21,38 @@ class Grid {
   public:
     /**
      * @brief Constructs a simulation grid.
-     * @param lattice 9-element vector representing the 3x3 lattice matrix (row-major).
-     * @param nr 3-element vector representing the number of grid points in each dimension.
+     *
+     * UNIT CONVENTION (Hartree Atomic Units - Internal Only):
+     *   - All inputs must be in atomic units (Bohr, Hartree)
+     *   - For user-facing creation, use factory functions in grid_factory.cuh
+     *
+     * @param lattice_bohr 9-element lattice matrix in BOHR (row-major)
+     * @param nr 3-element vector: FFT grid dimensions [nr1, nr2, nr3]
+     * @param ecutwfc_ha Wavefunction cutoff energy in HARTREE
+     * @param ecutrho_ha Density cutoff energy in HARTREE (default: 4*ecutwfc_ha)
+     * @param is_gamma True for Gamma-only calculation
+     *
+     * @note This constructor is for internal use. Use factory functions:
+     *       - create_grid_from_qe() for QE units (Angstrom + Rydberg)
+     *       - create_grid_from_atomic_units() for atomic units
      */
-    Grid(const std::vector<double>& lattice, const std::vector<int>& nr) {
+    Grid(const std::vector<double>& lattice_bohr, const std::vector<int>& nr, double ecutwfc_ha,
+         double ecutrho_ha = -1.0, bool is_gamma = false)
+        : is_gamma_(is_gamma) {
         CHECK(cudaStreamCreate(&stream_));
+
+        // Store lattice directly (already in Bohr)
         for (int i = 0; i < 3; ++i) {
             for (int j = 0; j < 3; ++j) {
-                lattice_[i][j] = lattice[i * 3 + j];
+                lattice_[i][j] = lattice_bohr[i * 3 + j];
             }
             nr_[i] = nr[i];
         }
         nnr_ = nr_[0] * nr_[1] * nr_[2];
+
+        // Set cutoff energies (already in Hartree)
+        ecutwfc_ = ecutwfc_ha;
+        ecutrho_ = (ecutrho_ha > 0) ? ecutrho_ha : 4.0 * ecutwfc_ha;
 
         compute_reciprocal_lattice();
 
@@ -116,30 +137,219 @@ class Grid {
     }
 
     bool is_gamma() const { return is_gamma_; }
-    void set_is_gamma(bool is_gamma) { is_gamma_ = is_gamma; }
+
+    // ========================================================================
+    // Cutoff energies (双网格设计) - Read-only accessors
+    // ========================================================================
+
+    /**
+     * @brief Get wavefunction cutoff energy in Hartree.
+     * @note Set at construction time via factory functions.
+     */
+    double ecutwfc() const { return ecutwfc_; }
+
+    /**
+     * @brief Get density cutoff energy in Hartree.
+     * @note Set at construction time via factory functions.
+     */
+    double ecutrho() const { return ecutrho_; }
 
     // ========================================================================
     // G-vector management (Phase 0c.4)
     // ========================================================================
 
     /**
-     * @brief Load G-vector data from QE output files (QE-compatible mode).
+     * @brief Generate G-vectors natively based on cutoff energy.
+     * @param ecutwfc Wavefunction cutoff energy in Hartree.
+     * @param is_gamma True for Gamma-only optimization (only half-sphere).
+     *
+     * This function generates Miller indices (h,k,l) by:
+     * 1. Computing reciprocal lattice vectors b1, b2, b3
+     * 2. Iterating over Miller indices in a cube: h,k,l ∈ [-hmax, hmax]
+     * 3. Filtering by |G|² < 2×ecutwfc (in Hartree units, T = ½|k|²)
+     * 4. For Gamma-only: keeping only half-sphere (h>0 or h=0,k>0 or h=k=0,l>=0)
+     * 5. Computing g2kin = ½|G|² for each G-vector
+     *
+     * This is a "side-effect-free" function that only depends on lattice and ecutwfc.
+     */
+    void generate_gvectors();
+
+    /**
+     * @brief Load G-vector data from QE output files (TEST ONLY).
      * @param data_dir Directory containing QE exported data files.
      *
-     * This function loads nl_d/nlm_d mappings from QE, reverse-engineers
-     * Miller indices, and computes g2kin values.
+     * This is a TEST FUNCTION for comparing DFTcu's native generation with QE.
+     * It loads Miller indices directly from QE's exported file.
+     * NOTE: This loads Smooth grid (ecutwfc) G-vectors.
      */
     void load_gvectors_from_qe(const std::string& data_dir);
 
-    /**
-     * @brief Number of G-vectors within ecutwfc cutoff.
-     */
-    int ngm() const { return ngm_; }
+    // ========================================================================
+    // Smooth Grid (ecutwfc) - for wavefunctions and beta projectors
+    // ========================================================================
 
     /**
-     * @brief Kinetic energy coefficients (g2kin) for all G-vectors (GPU).
+     * @brief Number of G-vectors in Smooth grid (ecutwfc cutoff).
+     * @note Alias for ngw() for consistency with QE terminology.
+     */
+    int ngm() const { return ngw_; }
+
+    /**
+     * @brief Number of G-vectors in Smooth grid (ecutwfc cutoff).
+     */
+    int ngw() const { return ngw_; }
+
+    /**
+     * @brief Kinetic energy coefficients (g2kin) for Smooth grid G-vectors (GPU).
      */
     const double* g2kin() const { return g2kin_.data(); }
+
+    /**
+     * @brief Squared G-vector magnitudes for Smooth grid (GPU).
+     * @note Same as gg_wfc(), returns |G|² in Angstrom^-2.
+     */
+    const double* gg_smooth() const { return gg_wfc_.data(); }
+
+    /**
+     * @brief Get Smooth grid G² values as host vector.
+     */
+    std::vector<double> get_gg_smooth() const {
+        std::vector<double> h_gg(ngw_);
+        if (ngw_ > 0)
+            gg_wfc_.copy_to_host(h_gg.data());
+        return h_gg;
+    }
+
+    // ========================================================================
+    // Dense Grid (ecutrho) - for density and local potential
+    // ========================================================================
+
+    /**
+     * @brief Number of G-vectors in Dense grid (ecutrho cutoff).
+     * @note Currently returns 0, will be implemented in Phase 0c.
+     */
+    int ngm_dense() const { return ngm_dense_; }
+
+    /**
+     * @brief Number of G-shells in Dense grid.
+     * @note Currently returns 0, will be implemented in Phase 0c.
+     */
+    int ngl() const { return ngl_; }
+
+    /**
+     * @brief Squared G-vector magnitudes for Dense grid (GPU).
+     */
+    const double* gg_dense() const { return gg_dense_.data(); }
+
+    /**
+     * @brief Get Dense grid G² values as host vector.
+     */
+    std::vector<double> get_gg_dense() const {
+        std::vector<double> h_gg(ngm_dense_);
+        if (ngm_dense_ > 0)
+            gg_dense_.copy_to_host(h_gg.data());
+        return h_gg;
+    }
+
+    /**
+     * @brief Squared G-shell magnitudes (GPU).
+     * @note gl[igl] = |G|² for shell igl.
+     */
+    const double* gl_shells() const { return gl_.data(); }
+
+    /**
+     * @brief Get G-shell values as host vector.
+     */
+    std::vector<double> get_gl_shells() const {
+        std::vector<double> h_gl(ngl_);
+        if (ngl_ > 0)
+            gl_.copy_to_host(h_gl.data());
+        return h_gl;
+    }
+
+    /**
+     * @brief G-vector to G-shell mapping (GPU).
+     * @note igtongl[ig] gives the shell index for G-vector ig.
+     * @note Currently empty, will be implemented in Phase 0c.
+     */
+    const int* igtongl() const { return igtongl_.data(); }
+
+    /**
+     * @brief Get igtongl mapping as host vector.
+     */
+    std::vector<int> get_igtongl() const {
+        std::vector<int> h_igtongl(ngm_dense_);
+        if (ngm_dense_ > 0)
+            igtongl_.copy_to_host(h_igtongl.data());
+        return h_igtongl;
+    }
+
+    // ========================================================================
+    // Smooth to Dense grid mapping
+    // ========================================================================
+
+    /**
+     * @brief Smooth grid G-vector to Dense grid index mapping (GPU).
+     * @note igk[ig_smooth] gives the Dense grid index for Smooth grid G-vector ig_smooth.
+     * @note Currently empty, will be implemented in Phase 0c.
+     */
+    const int* igk() const { return igk_.data(); }
+
+    /**
+     * @brief Get igk mapping as host vector.
+     * @note Returns empty vector until Phase 0c generates Dense grid.
+     */
+    std::vector<int> get_igk() const {
+        std::vector<int> h_igk(igk_.size());
+        if (igk_.size() > 0)
+            igk_.copy_to_host(h_igk.data());
+        return h_igk;
+    }
+
+    /**
+     * @brief Get Miller indices as host vectors (for testing).
+     */
+    std::vector<int> get_miller_h() const {
+        std::vector<int> h_miller(ngw_);
+        if (ngw_ > 0)
+            miller_h_.copy_to_host(h_miller.data());
+        return h_miller;
+    }
+
+    std::vector<int> get_miller_k() const {
+        std::vector<int> k_miller(ngw_);
+        if (ngw_ > 0)
+            miller_k_.copy_to_host(k_miller.data());
+        return k_miller;
+    }
+
+    std::vector<int> get_miller_l() const {
+        std::vector<int> l_miller(ngw_);
+        if (ngw_ > 0)
+            miller_l_.copy_to_host(l_miller.data());
+        return l_miller;
+    }
+
+    /**
+     * @brief Get nl_d mapping as host vector (for testing).
+     */
+    std::vector<int> get_nl_d() const {
+        std::vector<int> nl(ngw_);
+        if (ngw_ > 0)
+            nl_d_.copy_to_host(nl.data());
+        return nl;
+    }
+
+    std::vector<int> get_nlm_d() const {
+        std::vector<int> nlm(ngw_);
+        if (ngw_ > 0)
+            nlm_d_.copy_to_host(nlm.data());
+        return nlm;
+    }
+
+    // ========================================================================
+    // Legacy interfaces (backward compatibility)
+    // ========================================================================
 
     /**
      * @brief FFT grid indices for G-vectors (nl_d) (GPU).
@@ -188,6 +398,28 @@ class Grid {
      */
     void compute_g2kin_gpu();
 
+    /**
+     * @brief Generate G-shell grouping for Dense grid.
+     * @param g2_dense Squared G-vector magnitudes for Dense grid.
+     *
+     * Groups Dense grid G-vectors into shells by |G|² value:
+     * - ngl_: number of unique G-shells
+     * - gl_: |G|² for each shell (sorted)
+     * - igtongl_: mapping from Dense G-vector index to shell index
+     */
+    void generate_gshell_grouping(const std::vector<double>& g2_dense);
+
+    /**
+     * @brief Generate igk mapping from Smooth to Dense grid.
+     * @param h_smooth, k_smooth, l_smooth Miller indices for Smooth grid
+     * @param h_dense, k_dense, l_dense Miller indices for Dense grid
+     *
+     * Builds igk_[ig_smooth] = ig_dense mapping by matching Miller indices.
+     */
+    void generate_igk_mapping(const std::vector<int>& h_smooth, const std::vector<int>& k_smooth,
+                              const std::vector<int>& l_smooth, const std::vector<int>& h_dense,
+                              const std::vector<int>& k_dense, const std::vector<int>& l_dense);
+
     cudaStream_t stream_ = nullptr;        /**< CUDA stream for grid operations */
     double lattice_[3][3];                 /**< Real-space lattice matrix */
     double rec_lattice_[3][3];             /**< Reciprocal-space lattice matrix */
@@ -195,18 +427,39 @@ class Grid {
     size_t nnr_;                           /**< Total number of points */
     double volume_;                        /**< Unit cell volume */
     bool is_gamma_ = false;                /**< True if Gamma-point only calculation */
-    GPU_Vector<double> gg_, gx_, gy_, gz_; /**< GPU data for G-vectors */
+    GPU_Vector<double> gg_, gx_, gy_, gz_; /**< GPU data for全部 G-vectors (FFT grid) */
 
     // ========================================================================
-    // G-vector management data (Phase 0c.4)
+    // Cutoff energies
     // ========================================================================
-    int ngm_ = 0;              /**< Number of G-vectors */
-    GPU_Vector<int> miller_h_; /**< Miller index h (GPU) */
-    GPU_Vector<int> miller_k_; /**< Miller index k (GPU) */
-    GPU_Vector<int> miller_l_; /**< Miller index l (GPU) */
-    GPU_Vector<double> g2kin_; /**< Kinetic energy coefficients (GPU) */
-    GPU_Vector<int> nl_d_;     /**< G-vector → FFT grid mapping (GPU) */
-    GPU_Vector<int> nlm_d_;    /**< -G vector → FFT grid mapping (GPU) */
+    double ecutwfc_ = 0.0; /**< Wavefunction cutoff energy (Ry) */
+    double ecutrho_ = 0.0; /**< Density cutoff energy (Ry) */
+
+    // ========================================================================
+    // Smooth Grid (ecutwfc) - for wavefunctions and beta projectors
+    // ========================================================================
+    int ngw_ = 0;               /**< Number of Smooth grid G-vectors */
+    GPU_Vector<double> gg_wfc_; /**< |G|² for Smooth grid (GPU, Angstrom^-2) */
+    GPU_Vector<int> miller_h_;  /**< Miller index h (GPU) */
+    GPU_Vector<int> miller_k_;  /**< Miller index k (GPU) */
+    GPU_Vector<int> miller_l_;  /**< Miller index l (GPU) */
+    GPU_Vector<double> g2kin_;  /**< Kinetic energy coefficients (GPU) */
+    GPU_Vector<int> nl_d_;      /**< Smooth G → FFT grid mapping (GPU) */
+    GPU_Vector<int> nlm_d_;     /**< Smooth -G → FFT grid mapping (GPU) */
+
+    // ========================================================================
+    // Dense Grid (ecutrho) - for density and local potential
+    // ========================================================================
+    int ngm_dense_ = 0;           /**< Number of Dense grid G-vectors */
+    int ngl_ = 0;                 /**< Number of G-shells */
+    GPU_Vector<double> gg_dense_; /**< |G|² for Dense grid (GPU, Angstrom^-2) */
+    GPU_Vector<double> gl_;       /**< |G|² for each G-shell (GPU, Angstrom^-2) */
+    GPU_Vector<int> igtongl_;     /**< Dense G → G-shell mapping (GPU) */
+
+    // ========================================================================
+    // Smooth to Dense grid mapping
+    // ========================================================================
+    GPU_Vector<int> igk_; /**< Smooth G → Dense G mapping (GPU) */
 
     // Prevent copying
     Grid(const Grid&) = delete;

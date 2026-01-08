@@ -9,6 +9,8 @@
 #include "functional/kedf/wt.cuh"
 #include "functional/nonlocal_pseudo.cuh"
 #include "functional/pseudo.cuh"
+#include "functional/pseudopotential_data.cuh"
+#include "functional/upf_parser.cuh"
 #include "functional/xc/lda_pz.cuh"
 #include "functional/xc/pbe.cuh"
 #include "math/bessel.cuh"
@@ -17,6 +19,7 @@
 #include "model/density_builder.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
+#include "model/grid_factory.cuh"
 #include "model/wavefunction.cuh"
 #include "model/wavefunction_builder.cuh"
 #include "solver/davidson.cuh"
@@ -65,8 +68,55 @@ PYBIND11_MODULE(_dftcu, m) {
              py::arg("miller_h"), py::arg("miller_k"), py::arg("miller_l"), py::arg("psi1_g"),
              py::arg("psi2_g"));
 
+    // Factory functions for Grid creation (明确单位)
+    m.def(
+        "create_grid_from_qe",
+        [](py::array_t<double> lattice_ang, const std::vector<int>& nr, double ecutwfc_ry,
+           double ecutrho_ry, bool is_gamma) {
+            // Convert NumPy array to std::vector<std::vector<double>>
+            auto buf = lattice_ang.request();
+            if (buf.ndim != 2 || buf.shape[0] != 3 || buf.shape[1] != 3) {
+                throw std::runtime_error("lattice_ang must be 3×3 array");
+            }
+            double* ptr = static_cast<double*>(buf.ptr);
+            std::vector<std::vector<double>> lattice(3, std::vector<double>(3));
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    lattice[i][j] = ptr[i * 3 + j];
+                }
+            }
+            return dftcu::create_grid_from_qe(lattice, nr, ecutwfc_ry, ecutrho_ry, is_gamma);
+        },
+        "Create Grid from QE units (Angstrom + Rydberg)", py::arg("lattice_ang"), py::arg("nr"),
+        py::arg("ecutwfc_ry"), py::arg("ecutrho_ry") = -1.0, py::arg("is_gamma") = false);
+
+    m.def(
+        "create_grid_from_atomic_units",
+        [](py::array_t<double> lattice_bohr, const std::vector<int>& nr, double ecutwfc_ha,
+           double ecutrho_ha, bool is_gamma) {
+            // Convert NumPy array to std::vector<std::vector<double>>
+            auto buf = lattice_bohr.request();
+            if (buf.ndim != 2 || buf.shape[0] != 3 || buf.shape[1] != 3) {
+                throw std::runtime_error("lattice_bohr must be 3×3 array");
+            }
+            double* ptr = static_cast<double*>(buf.ptr);
+            std::vector<std::vector<double>> lattice(3, std::vector<double>(3));
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    lattice[i][j] = ptr[i * 3 + j];
+                }
+            }
+            return dftcu::create_grid_from_atomic_units(lattice, nr, ecutwfc_ha, ecutrho_ha,
+                                                        is_gamma);
+        },
+        "Create Grid from atomic units (Bohr + Hartree)", py::arg("lattice_bohr"), py::arg("nr"),
+        py::arg("ecutwfc_ha"), py::arg("ecutrho_ha") = -1.0, py::arg("is_gamma") = false);
+
     py::class_<dftcu::Grid>(m, "Grid")
-        .def(py::init<const std::vector<double>&, const std::vector<int>&>())
+        .def(py::init<const std::vector<double>&, const std::vector<int>&, double, double, bool>(),
+             "Internal constructor - use factory functions instead", py::arg("lattice_bohr"),
+             py::arg("nr"), py::arg("ecutwfc_ha"), py::arg("ecutrho_ha") = -1.0,
+             py::arg("is_gamma") = false)
         .def("volume", &dftcu::Grid::volume)
         .def("volume_bohr", &dftcu::Grid::volume_bohr)
         .def("dv", &dftcu::Grid::dv)
@@ -76,6 +126,20 @@ PYBIND11_MODULE(_dftcu, m) {
              [](dftcu::Grid& self) {
                  return std::vector<int>{self.nr()[0], self.nr()[1], self.nr()[2]};
              })
+        .def(
+            "rec_lattice",
+            [](dftcu::Grid& self) {
+                // Return reciprocal lattice as flat array (row-major)
+                std::vector<double> rec_flat(9);
+                const double(*rec)[3] = self.rec_lattice();
+                for (int i = 0; i < 3; ++i) {
+                    for (int j = 0; j < 3; ++j) {
+                        rec_flat[i * 3 + j] = rec[i][j];
+                    }
+                }
+                return rec_flat;
+            },
+            "Get reciprocal lattice vectors (row-major, 9 elements)")
         .def("g2max", &dftcu::Grid::g2max)
         .def("synchronize", &dftcu::Grid::synchronize)
         .def("gg",
@@ -106,20 +170,46 @@ PYBIND11_MODULE(_dftcu, m) {
                                   cudaMemcpyDeviceToHost));
                  return h_gz;
              })
-        .def("set_is_gamma", &dftcu::Grid::set_is_gamma, py::arg("is_gamma"))
-        // G-vector management (Phase 0c.4)
+        .def("is_gamma", &dftcu::Grid::is_gamma, "Check if Gamma-only calculation")
+        // G-vector management (Phase 0c)
+        .def("generate_gvectors", &dftcu::Grid::generate_gvectors,
+             "Generate Smooth and Dense G-vectors based on cutoff energies")
         .def("load_gvectors_from_qe", &dftcu::Grid::load_gvectors_from_qe, py::arg("data_dir"),
-             "Load G-vector data from QE output files")
-        .def("ngm", &dftcu::Grid::ngm, "Number of G-vectors within ecutwfc cutoff")
+             "Load G-vector data from QE output files (TEST ONLY)")
+        // Cutoff energies - read-only (set at construction)
+        .def("ecutwfc", &dftcu::Grid::ecutwfc, "Get wavefunction cutoff energy (Hartree)")
+        .def("ecutrho", &dftcu::Grid::ecutrho, "Get density cutoff energy (Hartree)")
+
+        // Smooth grid (ecutwfc) - for wavefunctions and beta projectors
+        .def("ngw", &dftcu::Grid::ngw, "Number of G-vectors in Smooth grid (ecutwfc)")
+        .def("ngm", &dftcu::Grid::ngm, "Alias for ngw() for backward compatibility")
+        .def(
+            "get_gg_smooth", [](dftcu::Grid& self) { return self.get_gg_smooth(); },
+            "Get |G|^2 for Smooth grid (Angstrom^-2)")
         .def(
             "get_g2kin",
             [](dftcu::Grid& self) {
-                std::vector<double> g2kin_host(self.ngm());
-                CHECK(cudaMemcpy(g2kin_host.data(), self.g2kin(), self.ngm() * sizeof(double),
+                std::vector<double> g2kin_host(self.ngw());
+                CHECK(cudaMemcpy(g2kin_host.data(), self.g2kin(), self.ngw() * sizeof(double),
                                  cudaMemcpyDeviceToHost));
                 return g2kin_host;
             },
-            "Get kinetic energy coefficients for all G-vectors")
+            "Get kinetic energy coefficients for Smooth grid")
+
+        // Dense grid (ecutrho) - for density and V_loc
+        .def("ngm_dense", &dftcu::Grid::ngm_dense, "Number of G-vectors in Dense grid (ecutrho)")
+        .def("ngl", &dftcu::Grid::ngl, "Number of G-shells in Dense grid")
+        .def(
+            "get_gl_shells", [](dftcu::Grid& self) { return self.get_gl_shells(); },
+            "Get |G|^2 for each G-shell in Dense grid (Angstrom^-2)")
+        .def(
+            "get_igtongl", [](dftcu::Grid& self) { return self.get_igtongl(); },
+            "Get G-vector to G-shell mapping for Dense grid")
+
+        // Smooth -> Dense mapping
+        .def(
+            "get_igk", [](dftcu::Grid& self) { return self.get_igk(); },
+            "Get Smooth grid G-vector to Dense grid G-vector mapping")
         .def(
             "get_nl_d",
             [](dftcu::Grid& self) {
@@ -164,7 +254,15 @@ PYBIND11_MODULE(_dftcu, m) {
                                  cudaMemcpyDeviceToHost));
                 return l_host;
             },
-            "Get Miller index l for all G-vectors");
+            "Get Miller index l for all G-vectors")
+        // Dense Grid accessors (Phase 0c)
+        .def("get_gg_dense", &dftcu::Grid::get_gg_dense,
+             "Get gg_dense (Dense grid |G|^2) as host vector")
+        .def("get_gl_shells", &dftcu::Grid::get_gl_shells, "Get gl (G-shell |G|^2) as host vector")
+        .def("get_igtongl", &dftcu::Grid::get_igtongl,
+             "Get igtongl (Dense G → shell mapping) as host vector")
+        .def("get_igk", &dftcu::Grid::get_igk,
+             "Get igk (Smooth G → Dense G mapping) as host vector");
 
     py::class_<dftcu::RealField>(m, "RealField")
         .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
@@ -358,9 +456,79 @@ PYBIND11_MODULE(_dftcu, m) {
                  dftcu::Ewald::compute,
              py::arg("rho"), py::arg("v_out"));
 
+    // --- Pseudopotential Data Structures ---
+    py::class_<dftcu::BetaProjector>(m, "BetaProjector")
+        .def(py::init<>())
+        .def_readwrite("index", &dftcu::BetaProjector::index)
+        .def_readwrite("label", &dftcu::BetaProjector::label)
+        .def_readwrite("angular_momentum", &dftcu::BetaProjector::angular_momentum)
+        .def_readwrite("cutoff_radius_index", &dftcu::BetaProjector::cutoff_radius_index)
+        .def_readwrite("beta_r", &dftcu::BetaProjector::beta_r);
+
+    py::class_<dftcu::NonlocalPotential>(m, "NonlocalPotential")
+        .def(py::init<>())
+        .def_readwrite("beta_functions", &dftcu::NonlocalPotential::beta_functions)
+        .def_readwrite("dij", &dftcu::NonlocalPotential::dij)
+        .def_readwrite("nbeta", &dftcu::NonlocalPotential::nbeta);
+
+    py::class_<dftcu::RadialMesh>(m, "RadialMesh")
+        .def(py::init<>())
+        .def_readwrite("r", &dftcu::RadialMesh::r)
+        .def_readwrite("rab", &dftcu::RadialMesh::rab)
+        .def_readwrite("dx", &dftcu::RadialMesh::dx)
+        .def_readwrite("xmin", &dftcu::RadialMesh::xmin)
+        .def_readwrite("rmax", &dftcu::RadialMesh::rmax)
+        .def_readwrite("mesh", &dftcu::RadialMesh::mesh)
+        .def_readwrite("zmesh", &dftcu::RadialMesh::zmesh);
+
+    py::class_<dftcu::LocalPotential>(m, "LocalPotential")
+        .def(py::init<>())
+        .def_readwrite("vloc_r", &dftcu::LocalPotential::vloc_r);
+
+    py::class_<dftcu::PseudopotentialHeader>(m, "PseudopotentialHeader")
+        .def(py::init<>())
+        .def_readwrite("element", &dftcu::PseudopotentialHeader::element)
+        .def_readwrite("pseudo_type", &dftcu::PseudopotentialHeader::pseudo_type)
+        .def_readwrite("functional", &dftcu::PseudopotentialHeader::functional)
+        .def_readwrite("z_valence", &dftcu::PseudopotentialHeader::z_valence)
+        .def_readwrite("wfc_cutoff", &dftcu::PseudopotentialHeader::wfc_cutoff)
+        .def_readwrite("rho_cutoff", &dftcu::PseudopotentialHeader::rho_cutoff)
+        .def_readwrite("l_max", &dftcu::PseudopotentialHeader::l_max)
+        .def_readwrite("l_local", &dftcu::PseudopotentialHeader::l_local)
+        .def_readwrite("mesh_size", &dftcu::PseudopotentialHeader::mesh_size)
+        .def_readwrite("number_of_proj", &dftcu::PseudopotentialHeader::number_of_proj)
+        .def_readwrite("is_ultrasoft", &dftcu::PseudopotentialHeader::is_ultrasoft)
+        .def_readwrite("is_paw", &dftcu::PseudopotentialHeader::is_paw)
+        .def_readwrite("core_correction", &dftcu::PseudopotentialHeader::core_correction);
+
+    py::class_<dftcu::PseudopotentialData>(m, "PseudopotentialData")
+        .def(py::init<>())
+        .def("header", &dftcu::PseudopotentialData::header,
+             py::return_value_policy::reference_internal)
+        .def("mesh", &dftcu::PseudopotentialData::mesh, py::return_value_policy::reference_internal)
+        .def("local", &dftcu::PseudopotentialData::local,
+             py::return_value_policy::reference_internal)
+        .def("get_nonlocal", &dftcu::PseudopotentialData::nonlocal,
+             py::return_value_policy::reference_internal)
+        .def("element", &dftcu::PseudopotentialData::element)
+        .def("z_valence", &dftcu::PseudopotentialData::z_valence)
+        .def("mesh_size", &dftcu::PseudopotentialData::mesh_size)
+        .def("number_of_proj", &dftcu::PseudopotentialData::number_of_proj)
+        .def("pseudo_type", &dftcu::PseudopotentialData::pseudo_type)
+        .def("functional", &dftcu::PseudopotentialData::functional)
+        .def("is_valid", &dftcu::PseudopotentialData::is_valid);
+
+    py::class_<dftcu::UPFParser>(m, "UPFParser")
+        .def(py::init<>())
+        .def("parse", &dftcu::UPFParser::parse, py::arg("filename"))
+        .def_static("detect_version", &dftcu::UPFParser::detect_version, py::arg("filename"));
+
     py::class_<dftcu::LocalPseudo, std::shared_ptr<dftcu::LocalPseudo>>(m, "LocalPseudo")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>(), py::arg("grid"),
              py::arg("atoms"))
+        .def_static("from_upf", &dftcu::LocalPseudo::from_upf, py::arg("grid"), py::arg("atoms"),
+                    py::arg("upf_data"), py::arg("atom_type") = 0,
+                    "Create LocalPseudo from UPF data")
         .def("init_tab_vloc", &dftcu::LocalPseudo::init_tab_vloc, py::arg("type"),
              py::arg("r_grid"), py::arg("vloc_r"), py::arg("rab"), py::arg("zp"), py::arg("omega"),
              py::arg("mesh_cutoff") = -1)
@@ -383,6 +551,9 @@ PYBIND11_MODULE(_dftcu, m) {
 
     py::class_<dftcu::NonLocalPseudo, std::shared_ptr<dftcu::NonLocalPseudo>>(m, "NonLocalPseudo")
         .def(py::init<dftcu::Grid&>())
+        .def_static("from_upf", &dftcu::NonLocalPseudo::from_upf, py::arg("grid"), py::arg("atoms"),
+                    py::arg("upf_data"), py::arg("atom_type") = 0,
+                    "Create NonLocalPseudo from UPF data")
         .def("apply", &dftcu::NonLocalPseudo::apply, py::arg("psi_in"), py::arg("h_psi_out"))
         .def("add_projector", &dftcu::NonLocalPseudo::add_projector, py::arg("beta_g"),
              py::arg("coupling_constant"))
