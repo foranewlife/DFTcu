@@ -110,6 +110,7 @@ extend-exclude = '''
   | build
   | dist
   | external
+  | tests/nscf_alignment
 )/
 '''
 
@@ -117,7 +118,7 @@ extend-exclude = '''
 profile = "black"
 line_length = 100
 skip_gitignore = true
-extend_skip = ["external"]
+extend_skip = ["external", "tests/nscf_alignment"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
@@ -156,4 +157,5 @@ exclude = [
     "external/",
     "build/",
     ".venv/",
+    "tests/nscf_alignment/",
 ]

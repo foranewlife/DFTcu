@@ -78,17 +78,15 @@ class Grid {
     size_t nnr() const { return nnr_; }
 
     double volume() const { return volume_; }
-    /** @brief Unit cell volume in Bohr³ */
+    /** @brief Unit cell volume in Bohr³ (Hartree atomic units) */
     double volume_bohr() const {
-        const double B = constants::BOHR_TO_ANGSTROM;
-        return volume_ / (B * B * B);
+        return volume_;  // volume_ is already in Bohr³
     }
     /** @brief Differential volume element dv = Volume / N (in Angstrom³) */
     double dv() const { return volume_ / (double)nnr_; }
-    /** @brief Differential volume element in Bohr³ */
+    /** @brief Differential volume element in Bohr³ (Hartree atomic units) */
     double dv_bohr() const {
-        const double B = constants::BOHR_TO_ANGSTROM;
-        return dv() / (B * B * B);
+        return volume_ / (double)nnr_;  // volume_ is already in Bohr³
     }
     const int* nr() const { return nr_; }
 
@@ -183,6 +181,14 @@ class Grid {
      * NOTE: This loads Smooth grid (ecutwfc) G-vectors.
      */
     void load_gvectors_from_qe(const std::string& data_dir);
+
+    /**
+     * @brief Load nl_d and nlm_d mapping from file (TEST ONLY).
+     *
+     * This loads FFT grid mapping indices for Smooth grid G-vectors.
+     * QE exports nl_d[ig] (G → FFT) and nlm_d[ig] (-G → FFT) arrays.
+     */
+    void load_nl_mapping_from_file(const std::string& filename);
 
     // ========================================================================
     // Smooth Grid (ecutwfc) - for wavefunctions and beta projectors
@@ -284,6 +290,12 @@ class Grid {
         return h_igtongl;
     }
 
+    /**
+     * @brief Dense grid FFT mapping (GPU).
+     */
+    const int* nl_dense() const { return nl_dense_.data(); }
+    const int* nlm_dense() const { return nlm_dense_.data(); }
+
     // ========================================================================
     // Smooth to Dense grid mapping
     // ========================================================================
@@ -384,11 +396,6 @@ class Grid {
     // ========================================================================
 
     /**
-     * @brief Load nl_d and nlm_d from QE output file.
-     */
-    void load_nl_mapping_from_file(const std::string& filename);
-
-    /**
      * @brief Reverse-engineer Miller indices from nl_d.
      */
     void reverse_engineer_miller_indices();
@@ -455,6 +462,8 @@ class Grid {
     GPU_Vector<double> gg_dense_; /**< |G|² for Dense grid (GPU, Angstrom^-2) */
     GPU_Vector<double> gl_;       /**< |G|² for each G-shell (GPU, Angstrom^-2) */
     GPU_Vector<int> igtongl_;     /**< Dense G → G-shell mapping (GPU) */
+    GPU_Vector<int> nl_dense_;    /**< Dense G → FFT grid mapping (GPU) */
+    GPU_Vector<int> nlm_dense_;   /**< Dense -G → FFT grid mapping (GPU) */
 
     // ========================================================================
     // Smooth to Dense grid mapping

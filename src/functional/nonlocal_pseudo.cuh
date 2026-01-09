@@ -9,6 +9,9 @@
 
 namespace dftcu {
 
+// Forward declaration
+class PseudopotentialData;
+
 /**
  * @brief Non-local pseudopotential using Kleinman-Bylander (KB) projectors.
  */
@@ -16,6 +19,18 @@ class NonLocalPseudo {
   public:
     NonLocalPseudo(Grid& grid);
     ~NonLocalPseudo() = default;
+
+    /**
+     * @brief Factory method to create NonLocalPseudo from UPF data
+     * @param grid Grid object
+     * @param atoms Atoms object containing atomic positions
+     * @param upf_data Parsed UPF pseudopotential data
+     * @param atom_type Atom type index (default 0)
+     * @return Shared pointer to initialized NonLocalPseudo object
+     */
+    static std::shared_ptr<NonLocalPseudo> from_upf(Grid& grid, const Atoms& atoms,
+                                                    const PseudopotentialData& upf_data,
+                                                    int atom_type = 0);
 
     void apply(Wavefunction& psi_in, Wavefunction& h_psi_out);
     void add_projector(const std::vector<std::complex<double>>& beta_g, double coupling_constant);

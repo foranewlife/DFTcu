@@ -6,12 +6,38 @@
 #include "fft/fft_solver.cuh"
 #include "math/bessel.cuh"
 #include "pseudo.cuh"
+#include "upf_parser.cuh"
 #include "utilities/constants.cuh"
 #include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
 #include "utilities/math_utils.cuh"
 
 namespace dftcu {
+
+// ============================================================================
+// Factory Methods
+// ============================================================================
+
+std::shared_ptr<LocalPseudo> LocalPseudo::from_upf(Grid& grid, std::shared_ptr<Atoms> atoms,
+                                                   const PseudopotentialData& upf_data,
+                                                   int atom_type) {
+    auto local_pseudo = std::make_shared<LocalPseudo>(grid, atoms);
+
+    // Extract data from UPF
+    const RadialMesh& mesh = upf_data.mesh();
+    const LocalPotential& local_pot = upf_data.local();
+    const PseudopotentialHeader& header = upf_data.header();
+
+    // Initialize tab_vloc
+    local_pseudo->init_tab_vloc(atom_type, mesh.r, local_pot.vloc_r, mesh.rab, header.z_valence,
+                                grid.volume());
+
+    return local_pseudo;
+}
+
+// ============================================================================
+// Existing LocalPseudo implementation
+// ============================================================================
 
 namespace {
 

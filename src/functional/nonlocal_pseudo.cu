@@ -1,6 +1,7 @@
 #include "math/bessel.cuh"
 #include "math/ylm.cuh"
 #include "nonlocal_pseudo.cuh"
+#include "pseudopotential_data.cuh"
 #include "utilities/constants.cuh"
 #include "utilities/cublas_manager.cuh"
 #include "utilities/error.cuh"
@@ -10,6 +11,38 @@
 #include <thrust/complex.h>
 
 namespace dftcu {
+
+std::shared_ptr<NonLocalPseudo> NonLocalPseudo::from_upf(Grid& grid, const Atoms& atoms,
+                                                         const PseudopotentialData& upf_data,
+                                                         int atom_type) {
+    auto nl_pseudo = std::make_shared<NonLocalPseudo>(grid);
+
+    const RadialMesh& mesh = upf_data.mesh();
+    const NonlocalPotential& nl_pot = upf_data.nonlocal();
+
+    // Extract beta functions
+    std::vector<std::vector<double>> beta_r;
+    std::vector<int> l_list;
+    std::vector<int> kkbeta_list;
+
+    for (const auto& beta : nl_pot.beta_functions) {
+        beta_r.push_back(beta.beta_r);
+        l_list.push_back(beta.angular_momentum);
+        kkbeta_list.push_back(beta.cutoff_radius_index);
+    }
+
+    // Initialize beta tabulation
+    nl_pseudo->init_tab_beta(atom_type, mesh.r, beta_r, mesh.rab, l_list, kkbeta_list,
+                             grid.volume());
+
+    // Initialize D_ij matrix
+    nl_pseudo->init_dij(atom_type, nl_pot.dij);
+
+    // Update projectors with atomic positions
+    nl_pseudo->update_projectors(atoms);
+
+    return nl_pseudo;
+}
 
 namespace {
 

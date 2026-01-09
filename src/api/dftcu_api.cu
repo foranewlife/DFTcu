@@ -16,6 +16,7 @@
 #include "math/bessel.cuh"
 #include "math/ylm.cuh"
 #include "model/atoms.cuh"
+#include "model/atoms_factory.cuh"
 #include "model/density_builder.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
@@ -44,6 +45,10 @@ PYBIND11_MODULE(_dftcu, m) {
     // --- Constants ---
     py::module m_const = m.def_submodule("constants", "Physical constants");
     m_const.attr("BOHR_TO_ANGSTROM") = dftcu::constants::BOHR_TO_ANGSTROM;
+    m_const.attr("ANGSTROM_TO_BOHR") = dftcu::constants::ANGSTROM_TO_BOHR;
+    m_const.attr("HA_TO_EV") = dftcu::constants::HA_TO_EV;
+    m_const.attr("HA_TO_RY") = dftcu::constants::HA_TO_RY;
+    m_const.attr("RY_TO_HA") = dftcu::constants::RY_TO_HA;
     m_const.attr("D_PI") = dftcu::constants::D_PI;
 
     m.def("spherical_bessel_jl", &dftcu::spherical_bessel_jl, py::arg("l"), py::arg("x"));
@@ -176,6 +181,8 @@ PYBIND11_MODULE(_dftcu, m) {
              "Generate Smooth and Dense G-vectors based on cutoff energies")
         .def("load_gvectors_from_qe", &dftcu::Grid::load_gvectors_from_qe, py::arg("data_dir"),
              "Load G-vector data from QE output files (TEST ONLY)")
+        .def("load_nl_mapping_from_file", &dftcu::Grid::load_nl_mapping_from_file,
+             py::arg("filename"), "Load nl_d/nlm_d mapping from file (TEST ONLY)")
         // Cutoff energies - read-only (set at construction)
         .def("ecutwfc", &dftcu::Grid::ecutwfc, "Get wavefunction cutoff energy (Hartree)")
         .def("ecutrho", &dftcu::Grid::ecutrho, "Get density cutoff energy (Hartree)")
@@ -213,48 +220,48 @@ PYBIND11_MODULE(_dftcu, m) {
         .def(
             "get_nl_d",
             [](dftcu::Grid& self) {
-                std::vector<int> nl_d_host(self.ngm());
-                CHECK(cudaMemcpy(nl_d_host.data(), self.nl_d(), self.ngm() * sizeof(int),
+                std::vector<int> nl_d_host(self.ngw());  // Smooth grid size
+                CHECK(cudaMemcpy(nl_d_host.data(), self.nl_d(), self.ngw() * sizeof(int),
                                  cudaMemcpyDeviceToHost));
                 return nl_d_host;
             },
-            "Get FFT grid indices for G-vectors")
+            "Get FFT grid indices for Smooth grid G-vectors")
         .def(
             "get_nlm_d",
             [](dftcu::Grid& self) {
-                std::vector<int> nlm_d_host(self.ngm());
-                CHECK(cudaMemcpy(nlm_d_host.data(), self.nlm_d(), self.ngm() * sizeof(int),
+                std::vector<int> nlm_d_host(self.ngw());  // Smooth grid size
+                CHECK(cudaMemcpy(nlm_d_host.data(), self.nlm_d(), self.ngw() * sizeof(int),
                                  cudaMemcpyDeviceToHost));
                 return nlm_d_host;
             },
-            "Get FFT grid indices for -G vectors")
+            "Get FFT grid indices for Smooth grid -G-vectors")
         .def(
             "get_miller_h",
             [](dftcu::Grid& self) {
-                std::vector<int> h_host(self.ngm());
-                CHECK(cudaMemcpy(h_host.data(), self.miller_h(), self.ngm() * sizeof(int),
+                std::vector<int> h_host(self.ngw());  // Smooth grid size
+                CHECK(cudaMemcpy(h_host.data(), self.miller_h(), self.ngw() * sizeof(int),
                                  cudaMemcpyDeviceToHost));
                 return h_host;
             },
-            "Get Miller index h for all G-vectors")
+            "Get Miller index h for Smooth grid G-vectors")
         .def(
             "get_miller_k",
             [](dftcu::Grid& self) {
-                std::vector<int> k_host(self.ngm());
-                CHECK(cudaMemcpy(k_host.data(), self.miller_k(), self.ngm() * sizeof(int),
+                std::vector<int> k_host(self.ngw());  // Smooth grid size
+                CHECK(cudaMemcpy(k_host.data(), self.miller_k(), self.ngw() * sizeof(int),
                                  cudaMemcpyDeviceToHost));
                 return k_host;
             },
-            "Get Miller index k for all G-vectors")
+            "Get Miller index k for Smooth grid G-vectors")
         .def(
             "get_miller_l",
             [](dftcu::Grid& self) {
-                std::vector<int> l_host(self.ngm());
-                CHECK(cudaMemcpy(l_host.data(), self.miller_l(), self.ngm() * sizeof(int),
+                std::vector<int> l_host(self.ngw());  // Smooth grid size
+                CHECK(cudaMemcpy(l_host.data(), self.miller_l(), self.ngw() * sizeof(int),
                                  cudaMemcpyDeviceToHost));
                 return l_host;
             },
-            "Get Miller index l for all G-vectors")
+            "Get Miller index l for Smooth grid G-vectors")
         // Dense Grid accessors (Phase 0c)
         .def("get_gg_dense", &dftcu::Grid::get_gg_dense,
              "Get gg_dense (Dense grid |G|^2) as host vector")
@@ -306,9 +313,17 @@ PYBIND11_MODULE(_dftcu, m) {
              py::arg("z"), py::arg("charge"), py::arg("type"));
 
     py::class_<dftcu::Atoms, std::shared_ptr<dftcu::Atoms>>(m, "Atoms")
-        .def(py::init<const std::vector<dftcu::Atom>&>())
+        .def(py::init<const std::vector<dftcu::Atom>&>(),
+             "Internal constructor - use factory functions instead. Positions must be in BOHR.",
+             py::arg("atoms_bohr"))
         .def("nat", &dftcu::Atoms::nat)
         .def("h_type", &dftcu::Atoms::h_type);
+
+    // Atoms factory functions
+    m.def("create_atoms_from_angstrom", &dftcu::create_atoms_from_angstrom, py::arg("atoms_ang"),
+          "Create Atoms from positions in Angstrom (recommended for user input)");
+    m.def("create_atoms_from_bohr", &dftcu::create_atoms_from_bohr, py::arg("atoms_bohr"),
+          "Create Atoms from positions in Bohr (atomic units)");
 
     py::class_<dftcu::Wavefunction, std::shared_ptr<dftcu::Wavefunction>>(m, "Wavefunction")
         .def(py::init<dftcu::Grid&, int, double>(), py::arg("grid"), py::arg("num_bands"),

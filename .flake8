@@ -9,7 +9,8 @@ exclude =
     external,
     .venv,
     .eggs,
-    *.egg-info
+    *.egg-info,
+    tests/nscf_alignment
 max-complexity = 15
 count = True
 show-source = True

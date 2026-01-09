@@ -10,6 +10,7 @@
 namespace dftcu {
 
 class FFTSolver;
+class PseudopotentialData;  // Forward declaration
 
 /**
  * @brief Local pseudopotential implementation following Quantum ESPRESSO's interpolation scheme.
@@ -18,6 +19,18 @@ class LocalPseudo {
   public:
     LocalPseudo(Grid& grid, std::shared_ptr<Atoms> atoms);
     ~LocalPseudo() = default;
+
+    /**
+     * @brief Create LocalPseudo from UPF data (factory method).
+     * @param grid Reference to the simulation grid
+     * @param atoms Atoms in the system
+     * @param upf_data Parsed UPF data
+     * @param atom_type Atom type index (default 0)
+     * @return Shared pointer to initialized LocalPseudo
+     */
+    static std::shared_ptr<LocalPseudo> from_upf(Grid& grid, std::shared_ptr<Atoms> atoms,
+                                                 const PseudopotentialData& upf_data,
+                                                 int atom_type = 0);
 
     void init_tab_vloc(int type, const std::vector<double>& r_grid,
                        const std::vector<double>& vloc_r, const std::vector<double>& rab, double zp,

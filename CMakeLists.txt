@@ -102,6 +102,8 @@ if(BUILD_WITH_CUDA)
     # Core library sources
     set(DFTCU_CORE_SOURCES
         src/model/grid.cu
+        src/model/grid_factory.cu
+        src/model/atoms_factory.cu
         src/model/density_builder.cu
         src/model/wavefunction.cu
         src/model/wavefunction_builder.cu
@@ -109,6 +111,8 @@ if(BUILD_WITH_CUDA)
         src/functional/ewald.cu
         src/functional/pseudo.cu
         src/functional/nonlocal_pseudo.cu
+        src/functional/pseudopotential_data.cu
+        src/functional/upf_parser.cu
         src/functional/density_functional_potential.cu
         src/functional/kedf/tf.cu
         src/functional/kedf/vw.cu
@@ -125,12 +129,13 @@ if(BUILD_WITH_CUDA)
         src/solver/subspace_solver.cu
         src/solver/gamma_utils.cu
         src/solver/phase0_verifier.cu
-    src/solver/mixer.cu
-    src/solver/nscf.cu
-    src/solver/optimizer.cu
-    src/solver/scf.cu
+        src/solver/mixer.cu
+        src/solver/nscf.cu
+        src/solver/optimizer.cu
+        src/solver/scf.cu
         src/solver/tn_optimizer_legacy.cu
         src/utilities/kernels.cu
+        external/pugixml/src/pugixml.cpp
     )
 
     # Create static library for core functionality
@@ -140,6 +145,7 @@ if(BUILD_WITH_CUDA)
         PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/src
             ${CUDAToolkit_INCLUDE_DIRS}
+            ${CMAKE_CURRENT_SOURCE_DIR}/external/pugixml/src
     )
 
     target_link_libraries(dftcu_core
@@ -158,6 +164,9 @@ if(BUILD_WITH_CUDA)
             $<$<COMPILE_LANGUAGE:CUDA>:
                 --expt-relaxed-constexpr
                 -Xcompiler=-fPIC
+            >
+            $<$<COMPILE_LANGUAGE:CXX>:
+                -fPIC
             >
     )
 

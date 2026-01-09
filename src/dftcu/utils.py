@@ -275,7 +275,7 @@ def verify_native_subspace_alignment(qe_data_dir, grid, upf_files):
 
     BOHR_TO_ANG = constants.BOHR_TO_ANGSTROM
     a_ang = 18.897261 * BOHR_TO_ANG
-    atoms = dftcu.Atoms([dftcu.Atom(a_ang / 2, a_ang / 2, a_ang / 2, 6.0, 0)])
+    atoms = dftcu.create_atoms_from_angstrom([dftcu.Atom(a_ang / 2, a_ang / 2, a_ang / 2, 6.0, 0)])
 
     rho_init = dftcu.RealField(grid)
     rho_file = os.path.join(qe_data_dir, "qe_rho_init.txt")
@@ -428,51 +428,9 @@ def verify_qe_subspace_alignment(qe_data_dir, grid):
 # ========================================================================
 # Test Utilities (for NSCF Alignment Tests)
 # ========================================================================
-
-
-def create_si_fcc_grid(nr=(27, 27, 27), qe_data_dir=None):
-    """
-    Create Si FCC lattice Grid for testing.
-
-    This is a reusable component for test setup. Can be used independently
-    or as part of the NSCF alignment test suite.
-
-    Args:
-        nr: FFT grid dimensions (default: 27x27x27 for Si with ecutwfc=18 Ry)
-        qe_data_dir: Optional path to QE data directory. If provided,
-                     G-vectors will be loaded from QE data.
-
-    Returns:
-        Grid object configured for Si FCC lattice
-
-    Example:
-        >>> # Standalone use
-        >>> grid = create_si_fcc_grid()
-        >>>
-        >>> # For QE alignment tests
-        >>> grid = create_si_fcc_grid(qe_data_dir="/path/to/qe/data")
-    """
-    # Si FCC lattice parameters (units: Angstrom)
-    alat = 10.20  # Lattice constant in Angstrom
-    lattice_constant = alat / 2.0
-
-    # FCC primitive vectors
-    a1 = lattice_constant * np.array([-1.0, 0.0, 1.0])
-    a2 = lattice_constant * np.array([0.0, 1.0, 1.0])
-    a3 = lattice_constant * np.array([-1.0, 1.0, 0.0])
-
-    lattice_vectors = np.column_stack([a1, a2, a3])
-    lattice_flat = lattice_vectors.T.flatten().tolist()
-
-    # Create Grid
-    grid = dftcu.Grid(lattice_flat, list(nr))
-    grid.set_is_gamma(True)
-
-    # Load G-vectors from QE if path provided
-    if qe_data_dir:
-        grid.load_gvectors_from_qe(qe_data_dir)
-
-    return grid
+# NOTE: create_si_fcc_grid() has been removed (旧代码，有晶格向量错误)
+# 请直接使用 dftcu.create_grid_from_qe() 并手动定义晶格向量
+# ========================================================================
 
 
 class MillerIndicesWrapper:

@@ -48,10 +48,18 @@ void Grid::compute_reciprocal_lattice() {
     double a21 = lattice_[1][0], a22 = lattice_[1][1], a23 = lattice_[1][2];
     double a31 = lattice_[2][0], a32 = lattice_[2][1], a33 = lattice_[2][2];
 
+    printf("DEBUG compute_reciprocal: a11=%.2f, a12=%.2f, a13=%.2f\n", a11, a12, a13);
+    printf("DEBUG compute_reciprocal: a21=%.2f, a22=%.2f, a23=%.2f\n", a21, a22, a23);
+    printf("DEBUG compute_reciprocal: a31=%.2f, a32=%.2f, a33=%.2f\n", a31, a32, a33);
+
     double det = a11 * (a22 * a33 - a23 * a32) - a12 * (a21 * a33 - a23 * a31) +
                  a13 * (a21 * a32 - a22 * a31);
 
+    printf("DEBUG compute_reciprocal: det = %.6f\n", det);
+
     volume_ = std::abs(det);  // Bohr³
+
+    printf("DEBUG compute_reciprocal: volume_ set to %.6f Bohr³\n", volume_);
 
     double inv[3][3];
     inv[0][0] = (a22 * a33 - a23 * a32) / det;
@@ -64,11 +72,13 @@ void Grid::compute_reciprocal_lattice() {
     inv[2][1] = (a12 * a31 - a11 * a32) / det;
     inv[2][2] = (a11 * a22 - a12 * a21) / det;
 
-    // Reciprocal lattice: rec_lattice_ = 2π * inv(lattice)^T
-    // Units: 2π/Bohr (atomic units)
+    // Reciprocal lattice: rec_lattice_ = inv(lattice)^T
+    // Crystallographic convention: NO 2π factor
+    // Units: 1/Bohr
+    // Physical G-vectors: G_phys = G_cryst × 2π
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
-            rec_lattice_[i][j] = 2.0 * constants::D_PI * inv[j][i];
+            rec_lattice_[i][j] = inv[j][i];
         }
     }
 }
@@ -95,21 +105,18 @@ void Grid::generate_gvectors() {
     // - Cutoff energies ecutwfc_ and ecutrho_ (must be set before calling this)
     // - Gamma-only flag is_gamma_
     //
-    // UNIT CONVENTION (Hartree Atomic Units):
+    // UNIT CONVENTION (DFTcu - No alat needed!):
     //   ecutwfc_, ecutrho_ are stored in Hartree
-    //   rec_lattice_ is in 2π/Bohr
-    //   G-vectors are in 2π/Bohr
-    //   |G|² is in (2π/Bohr)²
+    //   rec_lattice_ is in 1/Bohr (NO 2π factor)
+    //   |G|² is in (1/Bohr)² (crystallographic units)
     //
-    // Kinetic energy in Hartree atomic units:
-    //   T = ½|k|² [Ha] when k is in 2π/Bohr
+    // To convert to physical units:
+    //   |G|²_physical = |G|²_cryst × (2π)²
     //
-    // Therefore, the cutoff condition is:
-    //   ½|G|² ≤ ecutwfc_ha
-    //   |G|² ≤ 2 × ecutwfc_ha
-    //
-    // This is equivalent to QE's Rydberg convention:
-    //   |G|² ≤ ecutwfc_ry (since 1 Ry = 0.5 Ha)
+    // Kinetic energy cutoff condition:
+    //   T = ½|k|²_physical [Ha]
+    //   ½|G|²_cryst × (2π)² ≤ ecutwfc_ha
+    //   |G|²_cryst ≤ 2 × ecutwfc_ha / (2π)²
     //
     // This function generates BOTH Smooth and Dense grids:
     // - Smooth grid: based on ecutwfc (for wavefunctions)
@@ -122,21 +129,37 @@ void Grid::generate_gvectors() {
         throw std::runtime_error("generate_gvectors: ecutrho not set.");
     }
 
-    // Use the larger cutoff (Dense grid) for iteration
-    double gcut2_smooth = 2.0 * ecutwfc_;  // Smooth grid cutoff
-    double gcut2_dense = 2.0 * ecutrho_;   // Dense grid cutoff
+    // UNIT CONVERSION: rec_lattice NO LONGER contains 2π
+    // Old convention: rec_lattice = 2π × inv(lattice)^T, G [2π/Bohr], gcut2 = 2×ecutwfc
+    // New convention: rec_lattice = inv(lattice)^T, G [1/Bohr]
+    //
+    // Relationship: G_new = G_old / (2π)
+    //               G²_new = G²_old / (2π)²
+    //
+    // To maintain same G-vector set:
+    //   G²_old ≤ gcut2_old  ⟺  G²_new ≤ gcut2_new
+    //   gcut2_new = gcut2_old / (2π)²
+    //
+    // Therefore: gcut2_new = 2×ecutwfc / (2π)²
+
+    const double TWO_PI_SQ = 4.0 * constants::D_PI * constants::D_PI;  // (2π)²
+
+    double gcut2_smooth = 2.0 * ecutwfc_ / TWO_PI_SQ;  // Smooth grid [1/Bohr²]
+    double gcut2_dense = 2.0 * ecutrho_ / TWO_PI_SQ;   // Dense grid [1/Bohr²]
     double gcut2_max = std::max(gcut2_smooth, gcut2_dense);
 
-    // Estimate hmax for iteration (using Dense grid cutoff)
-    double b_min = 1e10;
-    for (int i = 0; i < 3; ++i) {
-        double b_len = std::sqrt(rec_lattice_[i][0] * rec_lattice_[i][0] +
-                                 rec_lattice_[i][1] * rec_lattice_[i][1] +
-                                 rec_lattice_[i][2] * rec_lattice_[i][2]);
-        if (b_len < b_min)
-            b_min = b_len;
-    }
-    int hmax = static_cast<int>(std::sqrt(gcut2_max) / b_min) + 2;  // +2 for safety
+    printf("DEBUG generate_gvectors: ecutwfc_ = %.6f Ha, ecutrho_ = %.6f Ha\n", ecutwfc_, ecutrho_);
+    printf("DEBUG generate_gvectors: (2π)² = %.6f\n", TWO_PI_SQ);
+    printf("DEBUG generate_gvectors: gcut2_smooth = %.6f [1/Bohr²]\n", gcut2_smooth);
+    printf("DEBUG generate_gvectors: gcut2_dense = %.6f [1/Bohr²]\n", gcut2_dense);
+
+    // QE ALIGNMENT: Use FFT grid dimensions to constrain Miller indices
+    // QE uses: ni = (nr[0]-1)/2, nj = (nr[1]-1)/2, nk = (nr[2]-1)/2
+    // This ensures G-vectors can be mapped to FFT grid without aliasing
+    // Reference: external/qe/Modules/recvec_subs.f90:114-116
+    int hmax = (nr_[0] - 1) / 2;
+    int kmax = (nr_[1] - 1) / 2;
+    int lmax = (nr_[2] - 1) / 2;
 
     // Generate G-vectors for BOTH grids in a single pass
     std::vector<int> h_smooth, k_smooth, l_smooth;
@@ -146,8 +169,8 @@ void Grid::generate_gvectors() {
     std::vector<double> g2_dense;
 
     for (int h = -hmax; h <= hmax; ++h) {
-        for (int k = -hmax; k <= hmax; ++k) {
-            for (int l = -hmax; l <= hmax; ++l) {
+        for (int k = -kmax; k <= kmax; ++k) {
+            for (int l = -lmax; l <= lmax; ++l) {
                 // Compute |G|² = |h·b1 + k·b2 + l·b3|²
                 double gx =
                     h * rec_lattice_[0][0] + k * rec_lattice_[1][0] + l * rec_lattice_[2][0];
@@ -190,6 +213,20 @@ void Grid::generate_gvectors() {
     ngw_ = h_smooth.size();
     ngm_dense_ = h_dense.size();
 
+    printf("DEBUG generate_gvectors: ngw_ = %d, ngm_dense_ = %d\n", ngw_, ngm_dense_);
+    if (!g2_smooth.empty()) {
+        double g2_max_smooth = *std::max_element(g2_smooth.begin(), g2_smooth.end());
+        double g2_min_smooth = *std::min_element(g2_smooth.begin(), g2_smooth.end());
+        printf("DEBUG generate_gvectors: Smooth g2 range: [%.6f, %.6f]\n", g2_min_smooth,
+               g2_max_smooth);
+    }
+    if (!g2_dense.empty()) {
+        double g2_max_dense = *std::max_element(g2_dense.begin(), g2_dense.end());
+        double g2_min_dense = *std::min_element(g2_dense.begin(), g2_dense.end());
+        printf("DEBUG generate_gvectors: Dense g2 range: [%.6f, %.6f]\n", g2_min_dense,
+               g2_max_dense);
+    }
+
     if (ngw_ == 0) {
         throw std::runtime_error("generate_gvectors: No Smooth grid G-vectors generated.");
     }
@@ -215,19 +252,59 @@ void Grid::generate_gvectors() {
 
     // g2kin in Hartree: T = ½|G|²
     std::vector<double> g2kin_ha(ngw_);
+    std::vector<double> gg_wfc_ha(ngw_);
     for (int i = 0; i < ngw_; ++i) {
-        g2kin_ha[i] = 0.5 * g2_smooth[i];
+        g2kin_ha[i] = 0.5 * g2_smooth[i] * TWO_PI_SQ;
+        gg_wfc_ha[i] = g2_smooth[i] * TWO_PI_SQ;
     }
     CHECK(
         cudaMemcpy(g2kin_.data(), g2kin_ha.data(), ngw_ * sizeof(double), cudaMemcpyHostToDevice));
-    CHECK(cudaMemcpy(gg_wfc_.data(), g2_smooth.data(), ngw_ * sizeof(double),
+    CHECK(cudaMemcpy(gg_wfc_.data(), gg_wfc_ha.data(), ngw_ * sizeof(double),
                      cudaMemcpyHostToDevice));
 
     // ========================================================================
     // Dense Grid Allocation and Copy
     // ========================================================================
+    // NOTE: Functional components (Hartree, LocalPseudo) expect crystallographic
+    // units for gg_dense/gl, as their formulas handle the (2π)² scaling.
     gg_dense_.resize(ngm_dense_);
     CHECK(cudaMemcpy(gg_dense_.data(), g2_dense.data(), ngm_dense_ * sizeof(double),
+                     cudaMemcpyHostToDevice));
+
+    // ========================================================================
+    // Generate nl_dense mapping (Dense G-vector -> FFT grid index)
+    // ========================================================================
+    nl_dense_.resize(ngm_dense_);
+    nlm_dense_.resize(ngm_dense_);
+
+    std::vector<int> nl_dense_h(ngm_dense_);
+    std::vector<int> nlm_dense_h(ngm_dense_);
+
+    for (int ig = 0; ig < ngm_dense_; ++ig) {
+        int h = h_dense[ig];
+        int k = k_dense[ig];
+        int l = l_dense[ig];
+
+        // Miller index -> FFT grid index (QE convention)
+        auto miller_to_fft = [this](int m, int nr) -> int { return (m >= 0) ? m : (nr + m); };
+
+        int i0 = miller_to_fft(h, nr_[0]);
+        int i1 = miller_to_fft(k, nr_[1]);
+        int i2 = miller_to_fft(l, nr_[2]);
+
+        // Linear index (row-major: [i0][i1][i2])
+        nl_dense_h[ig] = i0 * nr_[1] * nr_[2] + i1 * nr_[2] + i2;
+
+        // For -G: (-h, -k, -l)
+        int i0m = miller_to_fft(-h, nr_[0]);
+        int i1m = miller_to_fft(-k, nr_[1]);
+        int i2m = miller_to_fft(-l, nr_[2]);
+        nlm_dense_h[ig] = i0m * nr_[1] * nr_[2] + i1m * nr_[2] + i2m;
+    }
+
+    CHECK(cudaMemcpy(nl_dense_.data(), nl_dense_h.data(), ngm_dense_ * sizeof(int),
+                     cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(nlm_dense_.data(), nlm_dense_h.data(), ngm_dense_ * sizeof(int),
                      cudaMemcpyHostToDevice));
 
     // ========================================================================
@@ -393,7 +470,7 @@ void Grid::reverse_engineer_miller_indices() {
 __global__ void compute_g2kin_kernel(
     const int* miller_h, const int* miller_k, const int* miller_l,
     const double* bg,  // reciprocal lattice vectors (9 elements, row-major)
-    double tpiba2, double* g2kin, int ngm) {
+    double scale_factor, double* g2kin, int ngm) {
     int ig = blockIdx.x * blockDim.x + threadIdx.x;
     if (ig >= ngm)
         return;
@@ -409,7 +486,7 @@ __global__ void compute_g2kin_kernel(
     double gz = h * bg[2] + k * bg[5] + l * bg[8];
 
     double g2 = gx * gx + gy * gy + gz * gz;
-    g2kin[ig] = g2 * tpiba2;
+    g2kin[ig] = g2 * scale_factor;  // Apply scale factor (½(2π)² for g2kin, 1.0 for gg_wfc)
 }
 
 void Grid::generate_gshell_grouping(const std::vector<double>& g2_dense) {
@@ -530,14 +607,21 @@ void Grid::compute_g2kin_gpu() {
     g2kin_.resize(ngw_);
     gg_wfc_.resize(ngw_);
 
-    // UNIT CONVENTION (Hartree Atomic Units):
-    //   rec_lattice_ is in 2π/Bohr
-    //   G = h·b1 + k·b2 + l·b3, where b vectors are in 2π/Bohr
-    //   |G|² is in (2π/Bohr)²
-    //   g2kin = ½|G|² [Ha] (kinetic energy in Hartree)
+    // UNIT CONVENTION (DFTcu - No alat needed!):
+    //   rec_lattice_ is in 1/Bohr (NO 2π factor)
+    //   G = h·b1 + k·b2 + l·b3, where b vectors are in 1/Bohr
+    //   |G|²_cryst is in (1/Bohr)² (crystallographic units)
     //
-    // Note: tpiba2 = 0.5 to convert |G|² → g2kin in Hartree
-    double tpiba2 = 0.5;  // Hartree: T = ½|k|²
+    // To convert to physical kinetic energy:
+    //   |G|²_physical = |G|²_cryst × (2π)²
+    //   g2kin = ½|G|²_physical [Ha]
+    //   g2kin = ½ × |G|²_cryst × (2π)² [Ha]
+    //
+    // Therefore: g2kin = |G|²_cryst × (0.5 × (2π)²)
+    // NO alat NEEDED - (2π)² is a pure constant!
+
+    const double TWO_PI_SQ = 4.0 * constants::D_PI * constants::D_PI;  // (2π)²
+    const double tpiba2_half = 0.5 * TWO_PI_SQ;  // For g2kin = ½|G|²_physical
 
     // Prepare reciprocal lattice on GPU (9 elements, row-major)
     GPU_Vector<double> bg_gpu(9);
@@ -553,18 +637,19 @@ void Grid::compute_g2kin_gpu() {
     int block_size = 256;
     int grid_size = (ngw_ + block_size - 1) / block_size;
 
+    // Compute g2kin = ½|G|²_physical [Ha]
     compute_g2kin_kernel<<<grid_size, block_size, 0, stream_>>>(miller_h_.data(), miller_k_.data(),
                                                                 miller_l_.data(), bg_gpu.data(),
-                                                                tpiba2, g2kin_.data(), ngw_);
+                                                                tpiba2_half, g2kin_.data(), ngw_);
 
     GPU_CHECK_KERNEL;
 
-    // Copy |G|² (without ½ factor) to gg_wfc
-    // Re-compute |G|² on GPU using tpiba2 = 1.0
+    // Compute gg_wfc = |G|²_physical [(1/Bohr)²]
+    // This is used for kinetic energy cutoff checks: ½|G|²_physical ≤ ecutwfc
     GPU_Vector<double> g2_temp(ngw_);
     compute_g2kin_kernel<<<grid_size, block_size, 0, stream_>>>(miller_h_.data(), miller_k_.data(),
                                                                 miller_l_.data(), bg_gpu.data(),
-                                                                1.0, g2_temp.data(), ngw_);
+                                                                TWO_PI_SQ, g2_temp.data(), ngw_);
     GPU_CHECK_KERNEL;
     CHECK(cudaMemcpy(gg_wfc_.data(), g2_temp.data(), ngw_ * sizeof(double),
                      cudaMemcpyDeviceToDevice));
