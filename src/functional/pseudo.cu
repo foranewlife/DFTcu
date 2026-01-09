@@ -28,9 +28,24 @@ std::shared_ptr<LocalPseudo> LocalPseudo::from_upf(Grid& grid, std::shared_ptr<A
     const LocalPotential& local_pot = upf_data.local();
     const PseudopotentialHeader& header = upf_data.header();
 
+    // Calculate mesh cutoff following QE convention (read_pseudo.f90:179-186)
+    // QE uses rcut=10 Bohr to avoid numerical noise in large-r tail
+    const double rcut = 10.0;  // Bohr, matches QE
+    int msh = mesh.r.size();   // Default: use full mesh
+    for (size_t ir = 0; ir < mesh.r.size(); ++ir) {
+        if (mesh.r[ir] > rcut) {
+            msh = ir;  // First point where r > rcut
+            break;
+        }
+    }
+    // Force msh to be odd for Simpson integration (QE convention)
+    msh = 2 * ((msh + 1) / 2) - 1;
+
     // Initialize tab_vloc
+    // Note: init_tab_vloc uses internal unit conversion for historical reasons
+    // This will be refactored when Grid units are unified
     local_pseudo->init_tab_vloc(atom_type, mesh.r, local_pot.vloc_r, mesh.rab, header.z_valence,
-                                grid.volume());
+                                grid.volume(), msh);
 
     return local_pseudo;
 }
@@ -122,9 +137,11 @@ void LocalPseudo::initialize_buffers(Grid& grid) {
 
 void LocalPseudo::init_tab_vloc(int type, const std::vector<double>& r_grid,
                                 const std::vector<double>& vloc_r, const std::vector<double>& rab,
-                                double zp, double omega_ang, int mesh_cutoff) {
-    const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
-    omega_ = omega_ang / (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+                                double zp, double omega_bohr, int mesh_cutoff) {
+    // FIXME: This function still uses mixed units for historical reasons
+    // omega_ is stored in Bohr³ internally, but gg[] from grid is in Angstrom⁻²
+    // This will be fixed when Grid units are unified to pure atomic units
+    omega_ = omega_bohr;
 
     if (type >= static_cast<int>(zp_.size()))
         zp_.resize(type + 1, 0.0);
@@ -134,8 +151,16 @@ void LocalPseudo::init_tab_vloc(int type, const std::vector<double>& r_grid,
         tab_vloc_.resize(type + 1);
 
     dq_ = 0.01;  // Match QE dq = 0.01
-    double g2max_bohr = grid_.g2max() * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
-    nqx_ = (int)(sqrt(g2max_bohr) / dq_) + 10;
+
+    // CRITICAL: Use Dense grid's max G² for interpolation range
+    // grid_.g2max() returns FFT grid's max (too large), use Dense grid max instead
+    auto gl_shells = grid_.get_gl_shells();
+    double g2max_dense_cryst =
+        gl_shells.empty() ? 0.0 : *std::max_element(gl_shells.begin(), gl_shells.end());
+    double g2max_dense_phys =
+        g2max_dense_cryst * (2.0 * constants::D_PI) * (2.0 * constants::D_PI);  // Cryst → Phys
+
+    nqx_ = (int)(std::sqrt(g2max_dense_phys) / dq_) + 10;
     tab_vloc_[type].resize(nqx_ + 1);
 
     int msh = mesh_cutoff > 0 ? mesh_cutoff : (int)r_grid.size();
@@ -147,31 +172,20 @@ void LocalPseudo::init_tab_vloc(int type, const std::vector<double>& r_grid,
     const double fpi = 4.0 * constants::D_PI;
     const double e2 = 2.0;  // Ry units
 
-    for (int iq = 1; iq <= nqx_; ++iq) {
-        double q = (iq - 1) * dq_;
-        if (iq == 1) {
-            for (int ir = 0; ir < msh; ++ir)
-                aux[ir] = r_grid[ir] * (r_grid[ir] * vloc_r[ir] + e2 * zp * erf(r_grid[ir]));
-        } else {
-            for (int ir = 0; ir < msh; ++ir)
-                aux[ir] =
-                    (r_grid[ir] * vloc_r[ir] + e2 * zp * erf(r_grid[ir])) * sin(q * r_grid[ir]) / q;
-        }
-        tab_vloc_[type][iq] = (simpson_integrate(aux, rab_sub) * fpi / omega_) * 0.5;
-    }
-
+    // Calculate G=0 term (alpha) separately - matches QE vloc_mod.f90:159-163
+    // alpha = ∫ r*(r*vloc(r) + Z*e2) * 4π/Ω dr
     for (int ir = 0; ir < msh; ++ir)
         aux[ir] = r_grid[ir] * (r_grid[ir] * vloc_r[ir] + e2 * zp);
-
-    if (type == 0) {
-        printf("DFTcu DEBUG: msh=%d, e2=%.1f, zp=%.1f\n", msh, e2, zp);
-        std::ofstream debug_f("cu_alpha_debug.txt");
-        for (int ir = 0; ir < msh; ++ir) {
-            debug_f << r_grid[ir] << " " << rab_sub[ir] << " " << aux[ir] << std::endl;
-        }
-    }
-
     tab_vloc_[type][0] = (simpson_integrate(aux, rab_sub) * fpi / omega_) * 0.5;
+
+    // Calculate G≠0 terms with erf(r) correction
+    for (int iq = 1; iq <= nqx_; ++iq) {
+        double q = (iq - 1) * dq_;
+        for (int ir = 0; ir < msh; ++ir)
+            aux[ir] =
+                (r_grid[ir] * vloc_r[ir] + e2 * zp * erf(r_grid[ir])) * sin(q * r_grid[ir]) / q;
+        tab_vloc_[type][iq] = (simpson_integrate(aux, rab_sub) * fpi / omega_) * 0.5;
+    }
 }
 
 void LocalPseudo::compute(RealField& v) {

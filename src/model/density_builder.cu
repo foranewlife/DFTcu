@@ -22,8 +22,8 @@ __global__ void density_sum_kernel(int nnr, const double* gx, const double* gy, 
                                    double dq, double gcut, gpufftComplex* rho_g) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < nnr) {
-        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
-        double g2 = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+        // gg is already in Bohr^-2 (no conversion needed)
+        double g2 = gg[i];
         double gmod = sqrt(g2);
 
         if (gcut > 0 && g2 > gcut) {
@@ -85,7 +85,6 @@ void DensityBuilder::set_atomic_rho_g(int type, const std::vector<double>& q,
 void DensityBuilder::set_atomic_rho_r(int type, const std::vector<double>& r,
                                       const std::vector<double>& rho_r,
                                       const std::vector<double>& rab) {
-    const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
     // Massive range and precision
     double qmax = 100.0;
     nqx_ = static_cast<int>(qmax / dq_) + 10;

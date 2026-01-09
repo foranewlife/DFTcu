@@ -22,13 +22,13 @@ __global__ void build_atomic_band_kernel(int nnr, const double* atom_x, const do
                                          gpufftComplex* band_out) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < nnr) {
-        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
-        double g2_ry = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+        // gg is already in Bohr^-2, convert to Rydberg: multiply by 2
+        double g2_ry = gg[i] * 2.0;
 
         if (g2_ry > encut_hartree * 2.0 + 1e-5)
             return;
 
-        double gmod_bohr = sqrt(g2_ry);
+        double gmod_bohr = sqrt(gg[i]);  // |G| in Bohr^-1
         double chi_g = 0.0;
 
         int i0 = (int)(gmod_bohr / dq) + 1;
@@ -43,7 +43,7 @@ __global__ void build_atomic_band_kernel(int nnr, const double* atom_x, const do
                     tab_chi[i0 + 2] * px * ux * wx / 2.0 + tab_chi[i0 + 3] * px * ux * vx / 6.0;
         }
 
-        double ylm = get_ylm(l, m_idx, gx[i], gy[i], gz[i], sqrt(gg[i]));
+        double ylm = get_ylm(l, m_idx, gx[i], gy[i], gz[i], gmod_bohr);
         double phase = -(gx[i] * atom_x[iat] + gy[i] * atom_y[iat] + gz[i] * atom_z[iat]);
         double s, c;
         sincos(phase, &s, &c);

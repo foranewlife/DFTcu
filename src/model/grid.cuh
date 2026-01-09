@@ -212,7 +212,7 @@ class Grid {
 
     /**
      * @brief Squared G-vector magnitudes for Smooth grid (GPU).
-     * @note Same as gg_wfc(), returns |G|² in Angstrom^-2.
+     * @note Physical units: (2π/Bohr)² - used for kinetic energy T = ½|G|²
      */
     const double* gg_smooth() const { return gg_wfc_.data(); }
 
@@ -244,6 +244,7 @@ class Grid {
 
     /**
      * @brief Squared G-vector magnitudes for Dense grid (GPU).
+     * @note Crystallographic units: 1/Bohr² - used by Hartree, LocalPseudo
      */
     const double* gg_dense() const { return gg_dense_.data(); }
 
@@ -260,6 +261,7 @@ class Grid {
     /**
      * @brief Squared G-shell magnitudes (GPU).
      * @note gl[igl] = |G|² for shell igl.
+     * @note Crystallographic units: 1/Bohr² - same as gg_dense
      */
     const double* gl_shells() const { return gl_.data(); }
 
@@ -446,11 +448,11 @@ class Grid {
     // Smooth Grid (ecutwfc) - for wavefunctions and beta projectors
     // ========================================================================
     int ngw_ = 0;               /**< Number of Smooth grid G-vectors */
-    GPU_Vector<double> gg_wfc_; /**< |G|² for Smooth grid (GPU, Angstrom^-2) */
+    GPU_Vector<double> gg_wfc_; /**< |G|² for Smooth grid (GPU, Physical: (2π/Bohr)²) */
     GPU_Vector<int> miller_h_;  /**< Miller index h (GPU) */
     GPU_Vector<int> miller_k_;  /**< Miller index k (GPU) */
     GPU_Vector<int> miller_l_;  /**< Miller index l (GPU) */
-    GPU_Vector<double> g2kin_;  /**< Kinetic energy coefficients (GPU) */
+    GPU_Vector<double> g2kin_;  /**< Kinetic energy coefficients (GPU, Hartree) */
     GPU_Vector<int> nl_d_;      /**< Smooth G → FFT grid mapping (GPU) */
     GPU_Vector<int> nlm_d_;     /**< Smooth -G → FFT grid mapping (GPU) */
 
@@ -459,8 +461,8 @@ class Grid {
     // ========================================================================
     int ngm_dense_ = 0;           /**< Number of Dense grid G-vectors */
     int ngl_ = 0;                 /**< Number of G-shells */
-    GPU_Vector<double> gg_dense_; /**< |G|² for Dense grid (GPU, Angstrom^-2) */
-    GPU_Vector<double> gl_;       /**< |G|² for each G-shell (GPU, Angstrom^-2) */
+    GPU_Vector<double> gg_dense_; /**< |G|² for Dense grid (GPU, Crystallographic: 1/Bohr²) */
+    GPU_Vector<double> gl_;       /**< |G|² for each G-shell (GPU, Crystallographic: 1/Bohr²) */
     GPU_Vector<int> igtongl_;     /**< Dense G → G-shell mapping (GPU) */
     GPU_Vector<int> nl_dense_;    /**< Dense G → FFT grid mapping (GPU) */
     GPU_Vector<int> nlm_dense_;   /**< Dense -G → FFT grid mapping (GPU) */

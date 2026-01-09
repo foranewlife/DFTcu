@@ -25,8 +25,8 @@ __global__ void apply_preconditioned_residual_kernel(size_t n, int nbands,
         double r_re = h_psi[idx].x - eps * psi[idx].x;
         double r_im = h_psi[idx].y - eps * psi[idx].y;
 
-        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
-        double g2 = gg[ig] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+        // gg is already in Bohr^-2 (no conversion needed)
+        double g2 = gg[ig];
 
         // Simple Preconditioner
         double precond = 1.0 / (1.0 + g2);

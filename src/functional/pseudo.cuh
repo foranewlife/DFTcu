@@ -32,9 +32,22 @@ class LocalPseudo {
                                                  const PseudopotentialData& upf_data,
                                                  int atom_type = 0);
 
+    /**
+     * @brief Initialize V_loc interpolation table from UPF radial data.
+     * @param type Atom type index
+     * @param r_grid Radial mesh (Bohr)
+     * @param vloc_r Local potential on radial mesh (Hartree)
+     * @param rab Integration weights dr (Bohr)
+     * @param zp Valence charge
+     * @param omega_bohr Unit cell volume in Bohr³
+     * @param mesh_cutoff Mesh size cutoff (default: -1 = use full mesh)
+     *
+     * @note FIXME: Mixed units - omega_bohr is in Bohr³, but grid.gg() is in Angstrom⁻²
+     *       This will be fixed when Grid units are unified to pure atomic units
+     */
     void init_tab_vloc(int type, const std::vector<double>& r_grid,
                        const std::vector<double>& vloc_r, const std::vector<double>& rab, double zp,
-                       double omega_angstrom, int mesh_cutoff = -1);
+                       double omega_bohr, int mesh_cutoff = -1);
 
     void set_valence_charge(int type, double zp);
     void compute(RealField& vloc_r);
@@ -64,6 +77,15 @@ class LocalPseudo {
         return tab_vloc_[type][0];
     }
 
+    /**
+     * @brief Get V_loc(G) for specified G-shells.
+     * @param type Atom type index
+     * @param g_shells Vector of |G| moduli in Physical units: 2π/Bohr
+     * @return V_loc(G) values in Hartree
+     *
+     * @note CRITICAL: g_shells must be in Physical units (2π/Bohr), not Crystallographic
+     *       because Coulomb correction uses physical |G|: -4πZ/(Ω|G|²)exp(-|G|²/4)
+     */
     std::vector<double> get_vloc_g_shells(int type, const std::vector<double>& g_shells) const;
 
     void set_dq(double dq) { dq_ = dq; }

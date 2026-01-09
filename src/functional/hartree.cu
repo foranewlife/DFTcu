@@ -82,6 +82,41 @@ __global__ void scale_vh_kernel(int ngm, gpufftComplex* vh_g, double fac) {
     }
 }
 
+/**
+ * @brief Map Dense grid values back to full FFT grid using nl_dense and nlm_dense (Gamma-only).
+ *
+ * This implements QE's fftx_oned2threed for Gamma-only:
+ *   psi(nl_d(ig)) = c(ig)            # Positive G vector
+ *   psi(nlm_d(ig)) = CONJG(c(ig))    # Negative G vector (-G)
+ *
+ * @param ngm_dense Number of Dense grid G-vectors
+ * @param vh_g_dense Dense grid values (input)
+ * @param nl_dense Positive G → FFT index mapping
+ * @param nlm_dense Negative G → FFT index mapping
+ * @param vh_g_fft Output: Full FFT grid values
+ */
+__global__ void map_dense_to_fft_gamma_kernel(int ngm_dense, const gpufftComplex* vh_g_dense,
+                                              const int* nl_dense, const int* nlm_dense,
+                                              gpufftComplex* vh_g_fft) {
+    int ig = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ig < ngm_dense) {
+        int nl_idx = nl_dense[ig];    // Positive G
+        int nlm_idx = nlm_dense[ig];  // Negative G (-G)
+
+        // V_H(G)
+        double vh_re = vh_g_dense[ig].x;
+        double vh_im = vh_g_dense[ig].y;
+
+        // Positive G: V_H(G)
+        vh_g_fft[nl_idx].x = vh_re;
+        vh_g_fft[nl_idx].y = vh_im;
+
+        // Negative G: V_H(-G) = V_H*(G) (Hermitian symmetry)
+        vh_g_fft[nlm_idx].x = vh_re;   // Real part same
+        vh_g_fft[nlm_idx].y = -vh_im;  // Imaginary part conjugate
+    }
+}
+
 }  // namespace
 
 Hartree::Hartree() {}
@@ -214,12 +249,34 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
     // NO factor-of-2 correction needed!
 
     // ========================================================================
-    // Step 4-5: V_H(G) → V_H(r) [TODO: implement with proper mapping]
+    // Step 4: Scale V_H(G) by unit conversion factor
     // ========================================================================
-    // For now, skip V_H calculation and only compute energy
-    // TODO: Implement Dense→FFT grid mapping for V_H
-    // Set vh to zero temporarily
-    CHECK(cudaMemset(vh.data(), 0, nnr * sizeof(double)));
+    // Apply fac scaling to V_H(G) before inverse FFT
+    const int grid_size_scale = (ngm_dense + block_size - 1) / block_size;
+    scale_vh_kernel<<<grid_size_scale, block_size, 0, grid.stream()>>>(ngm_dense, vh_g_dense.data(),
+                                                                       fac);
+    GPU_CHECK_KERNEL;
+
+    // ========================================================================
+    // Step 5: V_H(G) → V_H(r) [Map Dense grid back to FFT grid, Gamma-only]
+    // ========================================================================
+    // Zero out FFT grid first
+    CHECK(cudaMemset(rho_g_->data(), 0, nnr * sizeof(gpufftComplex)));
+
+    // Get nlm_dense (negative G mapping)
+    const int* nlm_dense = grid.nlm_dense();
+
+    // Map Dense grid V_H(G) back to full FFT grid using Gamma-only symmetry:
+    //   psi(nl_dense[ig]) = V_H(G)
+    //   psi(nlm_dense[ig]) = V_H*(-G)  (Hermitian conjugate)
+    const int grid_size_map = (ngm_dense + block_size - 1) / block_size;
+    map_dense_to_fft_gamma_kernel<<<grid_size_map, block_size, 0, grid.stream()>>>(
+        ngm_dense, vh_g_dense.data(), nl_dense, nlm_dense, rho_g_->data());
+    GPU_CHECK_KERNEL;
+
+    // Inverse FFT: V_H(G) → V_H(r)
+    fft_->backward(*rho_g_);
+    complex_to_real(nnr, rho_g_->data(), vh.data());
 
     // ========================================================================
     // Step 6: Compute Hartree energy

@@ -31,8 +31,8 @@ __global__ void initialize_mask_kernel(size_t n, const double* gg, double encut,
                                        int* count) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
-        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
-        double g2_bohr = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+        // gg is already in Bohr^-2 (no conversion needed)
+        double g2_bohr = gg[i];
         if (0.5 * g2_bohr <= encut) {
             mask[i] = 1;
             atomicAdd(count, 1);
@@ -63,8 +63,9 @@ __global__ void randomize_wavefunction_kernel(size_t n, int num_bands, const dou
         curandState state;
         curand_init(seed, i, 0, &state);
 
-        const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
-        double g2_ry = gg[grid_idx] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+        // gg is already in Bohr^-2 (crystallographic units)
+        // Convert to Rydberg: multiply by 2 (since 1 Ha = 2 Ry)
+        double g2_ry = gg[grid_idx] * 2.0;
 
         double r1 = curand_uniform(&state);
         double r2 = curand_uniform(&state);
@@ -90,12 +91,12 @@ __global__ void accumulate_density_kernel(size_t n, const gpufftComplex* psi_r, 
 
 struct KineticEnergyOp {
     const double* gg;
-    const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
     KineticEnergyOp(const double* g) : gg(g) {}
     __host__ __device__ double operator()(const thrust::tuple<gpufftComplex, size_t>& tpl) const {
         const gpufftComplex& psi = thrust::get<0>(tpl);
         size_t i = thrust::get<1>(tpl);
-        double g2_bohr = gg[i] * (BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM);
+        // gg is already in Bohr^-2 (no conversion needed)
+        double g2_bohr = gg[i];
         return 0.5 * g2_bohr * (psi.x * psi.x + psi.y * psi.y);
     }
 };

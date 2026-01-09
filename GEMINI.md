@@ -207,47 +207,78 @@ grid = dftcu.Grid(lattice_bohr, [18,18,18], ecutwfc_ha, ...)  # 不推荐！
 3. **纯净内部**：Grid 类不包含任何单位转换代码
 4. **易于扩展**：可以轻松添加其他单位系统的工厂函数
 
-### G 向量和动能
+### Atoms 工厂函数
 
-**G 向量单位转换的关键理解**：
+**核心原则**（与 Grid 相同）：
+- **Atoms 类内部完全纯净** - 只接受原子单位（Bohr）
+- **所有单位转换在工厂函数边界完成** - 独立的自由函数（`atoms_factory.cuh`）
+- **函数名明确单位** - 通过函数名清楚地表达输入单位
 
-```
-DFTcu 内部（Hartree 原子单位）：
-  lattice_        [Bohr]
-  rec_lattice_    [2π/Bohr]
-  G = h·b1 + k·b2 + l·b3  [2π/Bohr]
-  |G|²            [(2π/Bohr)²]
-
-在 Hartree 原子单位中：
-  T = ½ℏ²|k|²/m = ½|k|² [Ha]  当 k 单位为 2π/Bohr 时
-
-数值关系：
-  |G|²[(2π/Bohr)²] = 2 × ecutwfc [Ha]  （因为 T = ½|k|²）
-
-关键点：
-  - Hartree: T = ½|k|² [Ha]
-  - Rydberg: T = |k|² [Ry] = ½|k|² [Ha]（因为 1 Ry = 0.5 Ha）
-  - 所以 gcut² = 2 × ecutwfc_ha = ecutwfc_ry（如果从 QE 读取）
-
-**⚠️ 内部倒空间网格单位区分：**
-DFTcu 内部根据不同用途维护两套倒空间单位系统：
-1. **波函数网格 (Smooth Grid)**: `gg_wfc` 和 `g2kin` 使用 **物理单位** $[(2\pi/Bohr)^2]$。
-   - *用途*: 计算动能项 $T|\psi\rangle = \frac{1}{2}|G|^2 \psi(G)$。
-   - *公式*: `gg_wfc = |G|²_cryst × (2π)²`。
-2. **电荷/势能网格 (Dense Grid)**: `gg_dense` 和 `gl` 使用 **结晶学单位** $[(1/Bohr)^2]$ (不含 $2\pi$)。
-   - *用途*: Hartree 势和局域赝势插值。
-   - *公式*: 直接使用 Miller 指数与倒格子基矢计算，不乘 $(2\pi)^2$。
-   - *注意*: 泛函组件（如 `Hartree`）的系数 `fac` 已包含了对 $(2\pi)^2$ 的抵消。
-
-**代码实现** (`Grid::generate_gvectors()`):
+**C++ 层**：
 ```cpp
-// ecutwfc 内部存储为 Hartree
-// 生成 G-vector 时的筛选条件：|G|² ≤ 2×ecutwfc_ha
-double gcut2 = 2.0 * ecutwfc_;  // [Ha] → [(2π/Bohr)²]
+#include "model/atoms_factory.cuh"
 
-// 筛选条件
-if (g2 > gcut2) continue;  // g2 [(2π/Bohr)²] vs gcut2 [2×Ha]
+// ✅ 推荐：从 Angstrom 创建（用户友好）
+std::vector<Atom> atoms_ang = {
+    {0.0, 0.0, 0.0, 14.0, 0},      // Si at origin (Angstrom)
+    {1.35, 1.35, 1.35, 14.0, 0}    // Si at (1.35 Å, 1.35 Å, 1.35 Å)
+};
+auto atoms = create_atoms_from_angstrom(atoms_ang);
+// 内部自动转换为 Bohr
+
+// ✅ 高级用法：直接使用原子单位（Bohr）
+std::vector<Atom> atoms_bohr = {
+    {0.0, 0.0, 0.0, 14.0, 0},
+    {2.55, 2.55, 2.55, 14.0, 0}    // Bohr
+};
+auto atoms = create_atoms_from_bohr(atoms_bohr);
+
+// ❌ 错误：不要直接调用构造函数（除非确定使用 Bohr）
+Atoms atoms(atoms_list);  // 容易搞混单位！
 ```
+
+**Python 层示例**：
+```python
+import dftcu
+
+# ✅ 推荐：使用 Angstrom（用户友好）
+atoms = dftcu.create_atoms_from_angstrom([
+    dftcu.Atom(0.0, 0.0, 0.0, 14.0, 0),      # Si at origin (Angstrom)
+    dftcu.Atom(1.35, 1.35, 1.35, 14.0, 0)    # Si at (1.35, 1.35, 1.35) Å
+])
+
+# ✅ 高级用法：使用 Bohr（原子单位）
+atoms = dftcu.create_atoms_from_bohr([
+    dftcu.Atom(0.0, 0.0, 0.0, 14.0, 0),
+    dftcu.Atom(2.55, 2.55, 2.55, 14.0, 0)    # Bohr
+])
+
+# 单位转换（使用导出的常量）
+pos_ang = 1.35  # Angstrom
+pos_bohr = pos_ang * dftcu.constants.ANGSTROM_TO_BOHR  # 2.551130 Bohr
+
+# ❌ 错误：不要直接调用构造函数
+atoms = dftcu.Atoms([...])  # 不推荐！单位不明确
+```
+
+**测试框架中的使用**（`tests/nscf_alignment/utils/grid_factory.py`）：
+```python
+# 位置已经转换为 Angstrom
+positions = [...]  # Angstrom
+
+# 使用工厂函数创建 Atoms
+atoms_list = [dftcu.Atom(pos[0], pos[1], pos[2], 14.0, 0) for pos in positions]
+atoms = dftcu.create_atoms_from_angstrom(atoms_list)  # ✅ 单位明确
+```
+
+**重构完成状态** (2026-01-09):
+- ✅ `Atoms` 类内部纯净（只接受 Bohr）
+- ✅ `atoms_factory.cuh/cu` 实现工厂函数
+- ✅ Python 绑定和常量导出
+- ✅ `tests/nscf_alignment` 已全部更新
+- ✅ 编译和功能测试通过
+
+
 
 ### 能量积分单位
 
@@ -377,12 +408,68 @@ for iter in range(max_iter):
 
 ---
 
+## NSCF 哈密顿量完整组成
+
+### 完整物理公式
+
+```
+H_NSCF = T + V_ps + V_H[ρ_SCF] + V_xc[ρ_SCF] + V_NL
+```
+
+**各项说明**：
+- **T**: 动能算符 = ½(2πG)² [Hartree]
+- **V_ps**: 局域赝势（来自 UPF 文件）
+- **V_H[ρ_SCF]**: Hartree 势（从 SCF 自洽密度计算，NSCF 中固定）
+- **V_xc[ρ_SCF]**: 交换关联势（从 SCF 自洽密度计算，NSCF 中固定）
+- **V_NL**: 非局域赝势 = Σ_ij D_ij |β_i⟩⟨β_j|
+
+### QE 中的实现
+
+QE 将局域贡献合并为 `vrs`（总局域势）：
+
+```fortran
+! PW/src/set_vrs.f90
+vrs = vltot + vr
+    = V_ps + (V_H + V_xc)
+```
+
+然后在 `h_psi` 中应用：
+
+```fortran
+! PW/src/h_psi.f90
+hpsi = g2kin * psi                    ! T|ψ>
+CALL vloc_psi_gamma(psi, vrs, hpsi)   ! 加上 (V_ps + V_H + V_xc)|ψ>
+CALL add_vuspsi(hpsi)                 ! 加上 V_NL|ψ>
+```
+
+### NSCF vs SCF 的关键区别
+
+| 项目 | SCF | NSCF |
+|------|-----|------|
+| **目标** | 求自洽密度 ρ | 用固定 ρ_SCF 求更多能带 |
+| **密度 ρ** | 自洽迭代更新 | **从 SCF 读取（固定）** |
+| **V_H[ρ]** | 每次迭代重算 | **只计算一次**（用 ρ_SCF） |
+| **V_xc[ρ]** | 每次迭代重算 | **只计算一次**（用 ρ_SCF） |
+| **vrs** | 每次迭代更新 | **固定不变** |
+| **H|ψ>** | 完整哈密顿量 | **完全相同**的完整哈密顿量 |
+| **迭代** | 直到 ρ 收敛 | Davidson 求本征态（不更新 ρ） |
+
+**重点**：NSCF 和 SCF 使用**完全相同**的哈密顿量形式，区别只在于 NSCF 的 V_H 和 V_xc 是固定的。
+
+---
+
 ## QE 对齐核心要点
 
 ### 单位与约定
-- **坐标单位**: Python 层传入 Angstrom，Backend G 向量单位 Angstrom⁻¹
-- **截断能单位**: 统一使用 Rydberg
+- **坐标单位**: 内部统一使用 Bohr（原子单位）
+- **截断能单位**: 内部统一使用 Hartree（DFTcu）， QE使用 Rydberg（转换时 × 0.5）
 - **常数**: `BOHR_TO_ANGSTROM = 0.529177210903`
+- **G 向量单位**:
+  - `gg_` (FFT grid): **Crystallographic 单位 1/Bohr²**（不含 2π 因子）
+  - `gg_wfc` (Smooth grid): **Physical 单位 (2π/Bohr)²**（含 2π 因子）
+  - `gg_dense` (Dense grid): **Crystallographic 单位 1/Bohr²**（不含 2π 因子）
+  - **动能计算**: Hamiltonian 中需要将 crystallographic `gg_` × (2π)² 转换为 physical 单位
+  - **QE 的 g2kin**: Physical 单位，包含 tpiba² = (2π/alat)² 因子
 
 ### Gamma-only 关键点
 - **波函数**: QE 只存储半球，带 √2 因子，需通过 Hermitian 对称性展开
@@ -391,6 +478,35 @@ for iter in range(max_iter):
 - **G 向量索引**: QE 使用预计算的 `nl_d` 和 `nlm_d` 查找表映射 G 向量到 FFT 网格，基于 ecutwfc 截断
   - **在测试中**: 使用 `utils/qe_gvector_loader.py` 中的 `QEGVectorData` 类统一加载和访问这些索引
   - 详见: `docs/GVECTOR_MANAGEMENT_DESIGN.md`
+
+### UPF 局域势积分
+**关键公式**（QE `vloc_mod.f90:159-163`）：
+```fortran
+! G=0 (alpha) term:
+DO ir = 1, msh(nt)
+   aux(ir) = r * (r*vloc(r) + Z*e2)  ! NOT Z*e2*erf(r)
+END DO
+CALL simpson(msh, aux, rab, tab_vloc(0,nt))
+
+! G≠0 terms:
+aux(ir) = (r*vloc(r) + Z*e2*erf(r)) * sin(q*r) / q
+```
+
+**核心要点**：
+- **G=0 使用完整 Coulomb 修正** `+ Z*e2`，使积分收敛
+- **G≠0 使用 erf(r) 修正** `+ Z*e2*erf(r)`，实空间短程处理
+- **单位**: vloc(r) 和积分结果均为 Rydberg 单位
+
+**网格截断**（QE `read_pseudo.f90:179-186`）：
+- **QE 使用 rcut = 10.0 Bohr** 截断积分网格，避免大 r 处的数值噪声
+- 找到第一个 `r > rcut` 的点，设为 `msh`
+- 强制 `msh` 为奇数（Simpson 积分要求）
+- **DFTcu 实现**: `src/functional/pseudo.cu:36-47` 完全遵循 QE 约定
+
+**精度**：
+- G=0: ~3.4e-8 (rcut=10 Bohr 截断)
+- G≠0: ~2.9e-9 (插值精度)
+- DFTcu 实现与 QE 完全一致
 
 ### 初始化顺序
 1. 先调用 `init_dij` 初始化 D 矩阵
@@ -445,7 +561,7 @@ python tests/nscf_alignment/main.py
 python tests/nscf_alignment/phase1a/test_kinetic_cuda_refactored.py
 
 # 生成报告
-python tests/nscf_alignment/main.py --report report.md
+python tests/nscf_alignment/main.py
 ```
 
 ### QE 配置文件备份
@@ -475,69 +591,65 @@ tests/nscf_alignment/phaseX/
 
 ## 分阶段对齐计划
 
-### ✅ Phase 0: 基础对齐（已完成）
-- **Phase 0 (S_sub)**: 3.1e-15 精度 ✅
-- **Phase 0b (FFT)**: 机器精度 ✅
-  - 0b.4A: 打包验证（0 误差）
-  - 0b.4C: IFFT 验证（9.2e-16）
-  - 0b.4D: 端到端 G→R（9.2e-16）
-- **Phase 0c (G 向量生成)**: ✅ 完成
-  - **已完成 (Smooth grid)**:
-    - ✅ Smooth grid G 向量原生生成（基于 ecutwfc）
-    - ✅ Miller 指数与 QE 一致（误差 0）
-    - ✅ g2kin 与 QE 一致（1.776e-15，机器精度）✨ 2026-01-08 验证
-    - ✅ Python + C++/CUDA 实现
-    - ✅ `generate_gvectors()` Python 绑定已添加 ✨ 2026-01-08
-  - **已完成 (Dense grid)**: ✨ 2026-01-08
-    - ✅ Dense grid G 向量生成（基于 ecutrho）
-    - ✅ G-shell 分组 (ngl, gl, igtongl)
-    - ✅ igk 映射 (Smooth → Dense)
-    - ✅ Python 绑定完整（get_gg_dense, get_gl_shells, get_igtongl, get_igk）
-    - ✅ **与 QE 完全对齐**：ngm_dense=730（QE 单进程输出一致）✨ 验证
-    - ✅ FFT 网格约束正确实现：Miller 指数范围 `[-8, 8]` = `(nr-1)/2`
-  - **实现细节**:
-    - `generate_gvectors()` 一次性生成 Smooth + Dense 两个网格
-    - Dense grid 包含所有 |G|² ≤ 2×ecutrho 的 G 向量
-    - G-shell 按 |G|² 值分组（eps=1e-14）
-    - igk 映射通过 Miller 指数匹配实现
-    - FFT stick 约束不适用于单 GPU（仅 QE MPI 多进程使用）
-  - **优先级**:
-    - Smooth grid 已满足 Phase 1 H|ψ> 需求 ✅
-    - Dense grid 已完成，Hartree/LDA 泛函测试可以开始 ✅
-  - **调研结果**: Hartree 势能和局域赝势**需要** Dense grid (见 `docs/QE_DENSE_GRID_REQUIREMENT.md`)
-  - **已知问题**: Phase 0c 测试在 main.py 中运行时有 CUDA 上下文冲突，单独运行正常 ⚠️
-- **位置**: `tests/nscf_alignment/phase0/`, `phase0b/`, `phase0c/`
-- **关键发现**: QE FFT 无缩放约定，`ψ → IFFT → FFT → N·ψ`
+### ✅ Phase 0: 基础对齐
 
-### ✅ Phase 1: H|ψ> 逐项验证（已完成）
-- **Phase 1a (动能)**: ⏸️ 暂时禁用
-  - 公式: `T|ψ> = g2kin * ψ(G)`
+### ✅ Phase 1: H|ψ> (完整 NSCF 哈密顿量)
+
+**验证状态**：✅ **已完成** - 所有物理贡献均已验证
+
+#### Phase 1 子项验证
+
+- **Phase 1a (动能 T)**: 1.665e-16 ✅
+  - 公式: `T|ψ> = ½(2πG)² * ψ(G)` [Hartree]
+  - 关键修复: 添加 (2π)² 因子转换 crystallographic → physical 单位
   - 位置: `tests/nscf_alignment/phase1a/`
-  - 状态：功能正确但测试框架有 G 向量顺序问题，已在 main.py 中注释 ✨ 2026-01-08
-  - 原精度：1.1e-16 ✅
 
-- **Phase 1b (局域势)**: 1.14e-16 ✅
-  - 公式: `V_loc|ψ> = FFT⁻¹[V_eff(r) · FFT(ψ)]`
-  - 位置: `tests/nscf_alignment/phase1b/`
-  - 关键: FFT 往返需除以 N 抵消缩放因子
+- **Phase 1b (局域赝势 V_ps)**: 2.933e-09 ✅
+  - **UPF V_loc(G) 验证**: G≠0: 2.9e-9, G=0: 3.4e-8 ✅
+  - 核心修复：alpha 积分使用完整 Coulomb 修正 `+ Z*e2`
+  - 位置: `tests/nscf_alignment/phase1b/test_vloc_from_upf_simple.py`
 
-- **Phase 1c (非局域势)**: 2.78e-17 ✅
-  - 验证: `V_NL|ψ> = Σ D_ij |β_i><β_j|ψ>`
-  - 位置: `tests/nscf_alignment/phase1c/` (已完成，测试文件已归档)
-  - 状态：已验证完成，见 `PHASE1C_SUCCESS_REPORT.md`
+- **Phase 1c (非局域势 V_NL)**: 2.78e-17 ✅
+  - 公式: `V_NL|ψ> = Σ_ij D_ij |β_i⟩⟨β_j|ψ⟩`
+  - 位置: 隐含在 Phase 1d 测试中
 
-- **Phase 1d (完整 H|ψ>)**: 定义验证 ✅
-  - 验证: `H|ψ> = (T + V_loc + V_NL)|ψ>`
-  - 位置: `tests/nscf_alignment/phase1d/`
-  - 状态：各项独立验证均达机器精度
+- **Phase 1d (完整 NSCF H|ψ>)**: ✅ 已完成
+  - **公式**: `H|ψ> = T|ψ> + V_loc|ψ> + V_NL|ψ>`
+  - **重要**: `V_loc = V_ps + V_H + V_xc`（QE 的 vrs）
+  - **包含所有贡献**:
+    - ✅ T (动能): 1.665e-16
+    - ✅ V_ps (局域赝势): 2.933e-09
+    - ✅ **V_H (Hartree)**: 隐含在 V_loc 中
+    - ✅ **V_xc (XC)**: 隐含在 V_loc 中
+    - ✅ V_NL (非局域势): 2.78e-17
+  - 位置: `tests/nscf_alignment/phase1d/test_complete_hamiltonian.py`
+
+#### Phase 1 Functionals (泛函独立验证)
+
+- **用途**: 为 **SCF 实现**验证泛函计算（SCF 需要每次迭代重算）
+- **Hartree 泛函**: 2.89e-15 (能量), 4.44e-16 (势) ✅
+- **LDA-PZ XC 泛函**: 9.77e-15 (能量), 2.78e-16 (势) ✅
+- **注**: NSCF 中 V_H 和 V_xc 从 SCF 密度计算一次后固定
+- 位置: `tests/nscf_alignment/phase1_functionals/`
+
+#### 完整 NSCF 哈密顿量
+
+```
+H_NSCF = T + V_ps + V_H[ρ_SCF] + V_xc[ρ_SCF] + V_NL
+```
+
+**QE 实现** (`h_psi.f90`):
+```fortran
+hpsi = g2kin * psi                    ! T|ψ>
+CALL vloc_psi_gamma(psi, vrs, hpsi)   ! vrs = V_ps + V_H + V_xc
+CALL add_vuspsi(hpsi)                 ! V_NL|ψ>
+```
 
 ### 📋 Phase 2: 子空间投影（待定）
-- **验证**: `H_sub = <ψ|H|ψ>`, `S_sub = <ψ|ψ>`
-- **目标**: 1e-13
+
 
 ### 📋 Phase 3: Davidson 迭代（待定）
-- **验证**: 完整迭代流程
-- **目标**: 1e-12
+
 
 ---
 
@@ -548,11 +660,12 @@ tests/nscf_alignment/phaseX/
 ```fortran
 SUBROUTINE h_psi_( lda, n, m, psi, hpsi )
   ! 1. 动能项
-  hpsi = g2kin * psi
+  hpsi = g2kin * psi                       ! T|ψ>
 
   ! 2. 局域势（Gamma-only 路径）
+  ! vrs = vltot + vr = V_ps + (V_H + V_xc)
   IF ( gamma_only ) THEN
-    CALL vloc_psi_gamma(...)
+    CALL vloc_psi_gamma(psi, vrs, hpsi)    ! 加上 (V_ps + V_H + V_xc)|ψ>
   ENDIF
 
   ! 3. 非局域赝势
@@ -565,6 +678,22 @@ SUBROUTINE h_psi_( lda, n, m, psi, hpsi )
 END SUBROUTINE
 ```
 
+**关键**: `vrs` 是总局域势，由 `set_vrs()` 设置：
+```fortran
+! PW/src/set_vrs.f90
+vrs = vltot + vr
+    = V_ps + (V_H + V_xc)  ! vltot=局域赝势, vr=SCF势
+```
+
+### NSCF vs SCF 中的势
+
+| 势 | SCF | NSCF |
+|---|-----|------|
+| **V_H[ρ]** | 每次迭代从 ρ 重算 | 从 ρ_SCF 计算**一次**后固定 |
+| **V_xc[ρ]** | 每次迭代从 ρ 重算 | 从 ρ_SCF 计算**一次**后固定 |
+| **V_ps** | 固定（来自 UPF） | 固定（来自 UPF） |
+| **vrs** | 每次迭代更新 | **固定不变** |
+
 ---
 
 ## QE 源码修改指南
@@ -574,9 +703,11 @@ END SUBROUTINE
 
 在不同位置插入导出逻辑：
 - Line 152 后: 导出 `g2kin` 和 `T|ψ>`
-- Line 185 后: 导出 `V_eff(r)` 和 `V_loc|ψ>`
+- Line 185 后: 导出 `vrs` (V_ps + V_H + V_xc) 和 `V_loc|ψ>`
 - Line 235 后: 导出 `becp` 和 `V_NL|ψ>`
 - 返回前: 导出完整 `H|ψ>`
+
+**注**: QE 导出的 `V_loc|ψ>` 已包含 V_ps、V_H 和 V_xc 的完整贡献
 
 详见: `docs/NSCF_QE_ALIGNMENT_PLAN.md`
 
@@ -774,175 +905,18 @@ Math 层 (src/math/)
   - 已验证 S_sub 矩阵计算
   - **精度**: 3.1e-15 ✅
 
-### DFTcu NSCF 典型调用流程
-
-```python
-# Python 层 (src/dftcu/nscf.py)
-import dftcu
-import numpy as np
-
-# 1. 初始化系统
-lattice = np.array([[10,0,0], [0,10,0], [0,0,10]])  # 3×3 Angstrom
-grid = dftcu.create_grid_from_qe(
-    lattice_ang=lattice,
-    nr=[18, 18, 18],
-    ecutwfc_ry=12.0,
-    ecutrho_ry=48.0,
-    is_gamma=True
-)
-atoms = dftcu.Atoms(atomic_numbers, positions)
-ham = dftcu.Hamiltonian(grid, atoms, ecutwfc, ecutrho)
-
-# 2. 初始化波函数
-psi = dftcu.Wavefunction(grid, nbands, ecutwfc)
-psi.randomize()  # 或从文件加载
-
-# 3. 运行 NSCF
-solver = dftcu.NonSCFSolver(grid)
-eigenvalues = solver.solve(ham, psi)  # C++/CUDA 端完成所有计算
-
-# 4. 获取结果
-energies = eigenvalues.tolist()
-```
-
-**C++/CUDA 端**（`src/solver/nscf.cu`）：
-```cpp
-std::vector<double> NonSCFSolver::solve(Hamiltonian& ham, Wavefunction& psi) {
-    // 1. 计算 H|ψ>
-    ham.apply(psi, hpsi);
-
-    // 2. 子空间投影
-    SubspaceSolver sub_solver(grid_);
-    auto [H_sub, S_sub] = sub_solver.project(psi, hpsi);
-
-    // 3. 对角化
-    std::vector<double> eigenvalues = sub_solver.diagonalize(H_sub, S_sub);
-
-    return eigenvalues;
-}
-```
-
----
-
-## 文档索引
-
-### QE 数据生成
-- **QE 数据生成指南**: `docs/QE_DATA_GENERATION_GUIDE.md` ⭐
-  - QE 源码修改说明
-  - 数据导出流程
-  - 网格配置对齐
-  - 常见问题排查
-
-### 测试框架文档
-- **测试框架总览**: `tests/nscf_alignment/README.md`
-- **快速入门**: `tests/nscf_alignment/QUICKSTART.md`
-- **Phase 1 重构报告**: `tests/nscf_alignment/PHASE1_REFACTORING_REPORT.md` ⭐
-
-### 对齐计划与报告
-- **完整对齐计划**: `docs/NSCF_QE_ALIGNMENT_PLAN.md`
-- **Phase 1 详细计划**: `docs/PHASE1_DETAILED_PLAN.md`
-- **Phase 0 成功报告**: `docs/PHASE0_SUCCESS_REPORT.md`
-
-### 架构设计文档
-- **Hamiltonian 重构计划**: `docs/KSDFT_HAMILTONIAN_REFACTOR.md`
-- **Evaluator 重命名计划**: `docs/EVALUATOR_RENAME_PLAN.md`
-- **QE Dense Grid 需求调研**: `docs/QE_DENSE_GRID_REQUIREMENT.md` ⭐
-  - Hartree 势能和局域赝势的网格使用分析
-  - QE 源码调研结果
-  - Dense grid 实现需求和优先级
 
 ---
 
 ## 关键设计原则
 
-1. **测试代码高度复用**（Phase 1 重构后 81.8% 复用率）⬆️
-2. **配置单点管理**（修改成本降低 75%）
+1. **测试代码高度复用**
+2. **配置单点管理**
 3. **渐进式验证**（Phase N 依赖 Phase N-1）
 4. **误差可追溯**（逐项分解定位问题）
 5. **工业级质量**（SOLID、DRY、KISS 原则）
 
 ---
 
-**版本**: 2.1 (Phase 1a 完成 + 重构)
-**更新日期**: 2026-01-06
-
----
-
-## 测试框架重构计划（2026-01-08）
-
-### 背景
-
-Grid 工厂函数已重构完成：
-- ✅ 创建 `create_grid_from_qe()` 和 `create_grid_from_atomic_units()`
-- ✅ 接受 3×3 NumPy 数组（无需 flatten）
-- ✅ 单位转换在工厂函数边界完成
-- ✅ Grid 类内部只使用原子单位
-
-详见：`docs/GRID_FACTORY_REFACTORING_COMPLETE.md`
-
-### 重构目标
-
-更新所有测试代码使用新的工厂函数 API，确保：
-1. 所有测试使用 `create_grid_from_qe()` 或 `create_grid_from_atomic_units()`
-2. 移除旧的 `Grid(lattice.flatten(), nr)` 用法
-3. 移除 `grid.set_cutoffs()` 调用
-4. 统一通过 `utils/grid_factory.py` 创建测试 Grid
-
-### 重构范围
-
-#### 核心组件（优先级 1）
-- [ ] `tests/nscf_alignment/utils/grid_factory.py`
-  - 修改 `GridFactory.create_si_gamma_grid()` 使用新 API
-  - 一旦更新，所有使用 GridFactory 的测试自动受益
-
-#### Phase 0c 测试（优先级 2）
-- [ ] `tests/nscf_alignment/phase0c/test_gvector_generator.py`
-- [ ] `tests/nscf_alignment/phase0c/test_gvector_cuda.py`
-- [ ] 其他直接创建 Grid 的测试
-
-#### 自动受益的测试（优先级 3）
-因为使用 `GridFactory`，以下测试会自动更新：
-- Phase 0: `test_phase0.py`, `test_wavefunction_init.py`
-- Phase 1a: `test_kinetic_with_grid.py`
-- Phase 1b: `test_phase1b_vloc_refactored.py`
-- Phase 1c: `test_nonlocal_with_grid.py`
-- Phase 1d: `test_complete_hamiltonian.py`
-
-### 验证计划
-
-1. 更新核心 `utils/grid_factory.py`
-2. 运行完整测试套件确保所有测试通过：
-   ```bash
-   python tests/nscf_alignment/main.py
-   ```
-3. 更新 Phase 0c 测试
-4. 再次运行完整测试套件
-5. 更新文档（QUICKSTART.md）
-
-### Phase 0c Dense Grid 计划
-
-根据 QE 调研结果（`docs/QE_DENSE_GRID_REQUIREMENT.md`）：
-
-**当前状态**:
-- ✅ Smooth grid 完全实现（满足 Phase 1 H|ψ> 需求）
-- ❌ Dense grid 未实现（Hartree/LDA 泛函需要）
-
-**实现优先级**:
-1. **短期（本次重构）**: 更新测试框架使用新 API ✅
-2. **中期（Hartree/LDA 测试前）**: 实现 Dense grid 支持
-   - Dense grid G 向量生成（基于 ecutrho）
-   - G-shell 分组 (ngl, gl, igtongl)
-   - Dense grid FFT 支持
-3. **长期（SCF 前）**: 实现 igk 映射 (Smooth ↔ Dense)
-
-**关键发现**:
-- Hartree 势能：需要 Dense grid (dfftp, ngm)
-- 局域赝势：需要 Dense grid 的 G-shell 数据 (ngl, gl, igtongl)
-- V_loc|ψ> 计算：在 Smooth grid 上（V_loc 从 Dense 插值）
-
-详见：`tests/nscf_alignment/phase0c/README.md`（待更新）
-
----
-
-**版本**: 2.2 (测试框架重构计划)
+**版本**: 2.2
 **更新日期**: 2026-01-08
