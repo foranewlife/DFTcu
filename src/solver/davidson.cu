@@ -1,4 +1,5 @@
 #include "solver/davidson.cuh"
+#include "solver/gamma_utils.cuh"
 #include "utilities/cublas_manager.cuh"
 #include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
@@ -87,40 +88,50 @@ std::vector<double> DavidsonSolver::solve(Hamiltonian& ham, Wavefunction& psi) {
 
     Wavefunction h_psi(grid_, nbands, psi.encut());
     std::vector<double> eigenvalues(nbands, 0.0);
-    cublasHandle_t handle = CublasManager::instance().handle();
-    CUBLAS_SAFE_CALL(cublasSetStream(handle, grid_.stream()));
 
-    GPU_Vector<gpufftComplex> h_sub(nbands * nbands);
-    GPU_Vector<gpufftComplex> s_sub(nbands * nbands);
+    // Use REAL symmetric matrices for Gamma-only subspace
+    GPU_Vector<double> h_sub(nbands * nbands);
+    GPU_Vector<double> s_sub(nbands * nbands);
     GPU_Vector<double> d_evals(nbands);
 
     for (int iter = 0; iter < max_iter_; ++iter) {
+        // Ensure psi is clean (mask + gamma constraint)
+        psi.apply_mask();
+        psi.force_gamma_constraint();
+
         ham.apply(psi, h_psi);
 
-        cuDoubleComplex alpha = {1.0, 0.0}, beta = {0.0, 0.0};
+        // Form H_sub and S_sub using Gamma-only optimized functions (REAL symmetric)
+        // These handle the G=0 correction and 2.0 factor correctly.
+        compute_h_subspace_gamma(n, nbands, 2, psi.data(), n, h_psi.data(), n, h_sub.data(), nbands,
+                                 grid_.stream());
+        compute_s_subspace_gamma(n, nbands, 2, psi.data(), n, s_sub.data(), nbands, grid_.stream());
 
-        // Form H_sub = Psi^H * H * Psi
-        {
-            CUBLAS_SAFE_CALL(cublasSetPointerMode(handle, CUBLAS_POINTER_MODE_HOST));
-            CUBLAS_SAFE_CALL(cublasZgemm(handle, CUBLAS_OP_C, CUBLAS_OP_N, nbands, nbands, n,
-                                         &alpha, (const cuDoubleComplex*)psi.data(), n,
-                                         (const cuDoubleComplex*)h_psi.data(), n, &beta,
-                                         (cuDoubleComplex*)h_sub.data(), nbands));
+        // Solve H_sub * c = epsilon * S_sub * c (REAL symmetric)
+        // eigenvectors are returned in h_sub
 
-            // Form S_sub = Psi^H * Psi
-            CUBLAS_SAFE_CALL(cublasZgemm(handle, CUBLAS_OP_C, CUBLAS_OP_N, nbands, nbands, n,
-                                         &alpha, (const cuDoubleComplex*)psi.data(), n,
-                                         (const cuDoubleComplex*)psi.data(), n, &beta,
-                                         (cuDoubleComplex*)s_sub.data(), nbands));
-            CUBLAS_SAFE_CALL(cublasSetPointerMode(handle, CUBLAS_POINTER_MODE_DEVICE));
-        }
+        // Debug print H_sub diagonal
+        std::vector<double> h_diag(nbands * nbands);
+        h_sub.copy_to_host(h_diag.data(), grid_.stream());
+        grid_.synchronize();
+        printf("DEBUG Davidson: iter=%d, H_sub diag[0]=%f, [1]=%f, [2]=%f\n", iter, h_diag[0],
+               h_diag[nbands + 1], h_diag[2 * nbands + 2]);
 
-        // Solve H_sub * c = epsilon * S_sub * c
-        subspace_solver_->solve_generalized(nbands, h_sub.data(), s_sub.data(), d_evals.data(),
-                                            h_sub.data());
+        subspace_solver_->solve_generalized_gamma(nbands, h_sub.data(), s_sub.data(),
+                                                  d_evals.data(), h_sub.data());
 
-        // Rotate wavefunctions
-        rotate_subspace(psi, h_sub);
+        // Subspace Rotation: psi' = psi * c
+        // Since c is REAL, we need a real-complex GEMM or promote c to complex.
+        // For simplicity, we promote c (in h_sub) to complex.
+        GPU_Vector<gpufftComplex> c_complex(nbands * nbands);
+        std::vector<double> h_sub_host(nbands * nbands);
+        h_sub.copy_to_host(h_sub_host.data(), grid_.stream());
+        std::vector<gpufftComplex> c_host(nbands * nbands);
+        for (int i = 0; i < nbands * nbands; ++i)
+            c_host[i] = {h_sub_host[i], 0.0};
+        c_complex.copy_from_host(c_host.data(), grid_.stream());
+
+        rotate_subspace(psi, c_complex);
 
         d_evals.copy_to_host(eigenvalues.data());
         double v0 = ham.get_v_of_0();
@@ -128,8 +139,6 @@ std::vector<double> DavidsonSolver::solve(Hamiltonian& ham, Wavefunction& psi) {
             e += v0;
         }
 
-        // For now, this is just a subspace diagonalization (e.g. for initial wfcs).
-        // Real Davidson would expand the subspace here.
         if (iter == 0 && max_iter_ == 1)
             break;
 
@@ -139,6 +148,9 @@ std::vector<double> DavidsonSolver::solve(Hamiltonian& ham, Wavefunction& psi) {
                                                    grid_.stream()>>>(
                 n, nbands, h_psi.data(), d_evals.data(), psi.data(), grid_.gg(), psi.data(), 0.2);
             GPU_CHECK_KERNEL;
+
+            // IMPORTANT: Orthonormalize after preconditioned update
+            psi.orthonormalize();
         }
     }
     return eigenvalues;

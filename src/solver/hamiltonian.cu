@@ -14,11 +14,14 @@ __global__ void apply_kinetic_kernel(size_t n, int num_bands, const double* gg,
         int grid_idx = i % n;
         // gg is |G|^2 in crystallographic units (1/Bohr^2, no 2π factor)
         // Convert to physical units: multiply by (2π)^2
-        // QE uses g2kin = |G|^2 × tpiba^2 where tpiba^2 = (2π/alat)^2
         const double TWOPI_SQ = constants::D_PI * constants::D_PI * 4.0;  // (2π)²
-        double t = gg[grid_idx] * TWOPI_SQ;
+        double t = 0.5 * gg[grid_idx] * TWOPI_SQ;
         h_psi[i].x = t * psi[i].x;
         h_psi[i].y = t * psi[i].y;
+
+        if (grid_idx == 1 && i / n == 0) {  // First non-zero G-vector, first band
+            printf("DEBUG KE: gg[1]=%f, t=%f Hartree\n", gg[1], t);
+        }
     }
 }
 

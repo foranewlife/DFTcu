@@ -51,6 +51,7 @@ void compute_subspace_matrix_gamma(int npw, int nbands, int gstart, const gpufft
     // G=0 修正：如果包含 G=0，需要减去虚部的重复计数
     if (gstart == 2) {
         // 在 GPU 上执行修正
+        // 使用 nbands 个 block，每个 block nbands 个线程，正好处理 nbands x nbands 矩阵
         correct_g0_term_kernel<<<nbands, nbands, 0, stream>>>(npw, nbands, gstart, psi_a, lda_a,
                                                               psi_b, lda_b, matrix_out, ldr);
         CHECK(cudaGetLastError());
@@ -68,18 +69,20 @@ __global__ void correct_g0_term_kernel(int npw, int nbands, int gstart, const gp
      * 修正 G=0 项：matrix_out[i,j] -= Re[psi_a[0,i]] * Re[psi_b[0,j]]
      *
      * 因为在 DGEMM 中我们对所有项乘以了 2，但 G=0 项只应计数一次
-     * QE: MYDGER(nbase, my_n, -1.D0, psi, npwx2, hpsi, npwx2, hr, nvecx)
      */
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    int i = blockIdx.x;   // 行索引
+    int j = threadIdx.x;  // 列索引
 
     if (i < nbands && j < nbands) {
         // G=0 对应索引 0，只取实部
+        // lda_a 是波函数的 leading dimension
         double psi_a_g0 = psi_a[i * lda_a].x;  // Re[psi_a(G=0, band_i)]
         double psi_b_g0 = psi_b[j * lda_b].x;  // Re[psi_b(G=0, band_j)]
 
         // 减去重复计数的 G=0 项
-        matrix_out[i * ldr + j] -= psi_a_g0 * psi_b_g0;
+        // matrix_out 是 column-major (由 cublasDgemm 输出)
+        // 索引 [i, j] 对应 i + j * ldr
+        matrix_out[i + j * ldr] -= psi_a_g0 * psi_b_g0;
     }
 }
 

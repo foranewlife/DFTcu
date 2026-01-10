@@ -25,6 +25,7 @@
 #include "model/wavefunction_builder.cuh"
 #include "solver/davidson.cuh"
 #include "solver/evaluator.cuh"  // Keep for backward compatibility
+#include "solver/gamma_utils.cuh"
 #include "solver/hamiltonian.cuh"
 #include "solver/nscf.cuh"
 #include "solver/phase0_verifier.cuh"
@@ -336,6 +337,14 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("get_g2kin", &dftcu::Wavefunction::get_g2kin)
         .def("orthonormalize", &dftcu::Wavefunction::orthonormalize)
         .def("dot", &dftcu::Wavefunction::dot, py::arg("band_a"), py::arg("band_b"))
+        .def("force_gamma_constraint", &dftcu::Wavefunction::force_gamma_constraint,
+             "Force Gamma-point constraint: Im[ψ(G=0)] = 0 for all bands")
+        .def(
+            "data",
+            [](dftcu::Wavefunction& self) { return reinterpret_cast<std::uintptr_t>(self.data()); },
+            "Get raw pointer to wavefunction data (for C++ interop)")
+        .def("grid", &dftcu::Wavefunction::grid, py::return_value_policy::reference,
+             "Get reference to the Grid object")
         .def("copy_from_host",
              [](dftcu::Wavefunction& self,
                 py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> arr) {
@@ -635,6 +644,7 @@ PYBIND11_MODULE(_dftcu, m) {
             [](dftcu::Hamiltonian& self) -> dftcu::NonLocalPseudo& { return self.get_nonlocal(); },
             py::return_value_policy::reference)
         .def("get_v_of_0", &dftcu::Hamiltonian::get_v_of_0)
+        .def("set_v_of_0", &dftcu::Hamiltonian::set_v_of_0, py::arg("v0"))
         .def("v_loc", (dftcu::RealField & (dftcu::Hamiltonian::*)()) & dftcu::Hamiltonian::v_loc,
              py::return_value_policy::reference)
 
@@ -665,6 +675,115 @@ PYBIND11_MODULE(_dftcu, m) {
                  d_e.copy_to_host(h_e.data());
                  return h_e;
              });
+
+    // Gamma-only subspace projection functions
+    m.def(
+        "compute_h_subspace_gamma",
+        [](dftcu::Wavefunction& psi, dftcu::Wavefunction& hpsi, int nbands,
+           py::array_t<double, py::array::c_style | py::array::forcecast> h_sub_out) {
+            if (h_sub_out.ndim() != 2 || h_sub_out.shape(0) != nbands ||
+                h_sub_out.shape(1) != nbands) {
+                throw std::runtime_error("h_sub_out must be (nbands, nbands) array");
+            }
+
+            int npw = psi.num_pw();
+            int lda = psi.grid().nnr();  // leading dimension = nnr
+            int gstart = 2;              // Gamma-only, G=0 exists (Fortran 1-based)
+
+            // Allocate GPU memory for H_sub
+            dftcu::GPU_Vector<double> d_h_sub(nbands * nbands);
+
+            // Call the compute function
+            dftcu::compute_h_subspace_gamma(npw, nbands, gstart, psi.data(), lda, hpsi.data(), lda,
+                                            d_h_sub.data(), nbands, psi.grid().stream());
+
+            // Copy result to host
+            d_h_sub.copy_to_host((double*)h_sub_out.mutable_data());
+            psi.grid().synchronize();
+        },
+        py::arg("psi"), py::arg("hpsi"), py::arg("nbands"), py::arg("h_sub_out"),
+        "Compute H_sub = <psi|H|psi> for Gamma-only (real symmetric matrix)");
+
+    m.def(
+        "compute_s_subspace_gamma",
+        [](dftcu::Wavefunction& psi, int nbands,
+           py::array_t<double, py::array::c_style | py::array::forcecast> s_sub_out) {
+            if (s_sub_out.ndim() != 2 || s_sub_out.shape(0) != nbands ||
+                s_sub_out.shape(1) != nbands) {
+                throw std::runtime_error("s_sub_out must be (nbands, nbands) array");
+            }
+
+            int npw = psi.num_pw();
+            int lda = psi.grid().nnr();  // leading dimension = nnr
+            int gstart = 2;              // Gamma-only, G=0 exists (Fortran 1-based)
+
+            // Allocate GPU memory for S_sub
+            dftcu::GPU_Vector<double> d_s_sub(nbands * nbands);
+
+            // Call the compute function
+            dftcu::compute_s_subspace_gamma(npw, nbands, gstart, psi.data(), lda, d_s_sub.data(),
+                                            nbands, psi.grid().stream());
+
+            // Copy result to host
+            d_s_sub.copy_to_host((double*)s_sub_out.mutable_data());
+            psi.grid().synchronize();
+        },
+        py::arg("psi"), py::arg("nbands"), py::arg("s_sub_out"),
+        "Compute S_sub = <psi|psi> for Gamma-only (real symmetric matrix)");
+
+    // --- Pure Logic Test Bindings (Packed Layout) ---
+
+    m.def(
+        "compute_h_subspace_gamma_packed",
+        [](py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> psi,
+           py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> hpsi,
+           int npw, int nbands, int gstart) {
+            if (psi.size() < (size_t)npw * nbands || hpsi.size() < (size_t)npw * nbands) {
+                throw std::runtime_error("Input array size too small for specified npw/nbands");
+            }
+
+            dftcu::GPU_Vector<gpufftComplex> d_psi(npw * nbands);
+            d_psi.copy_from_host((const gpufftComplex*)psi.data());
+
+            dftcu::GPU_Vector<gpufftComplex> d_hpsi(npw * nbands);
+            d_hpsi.copy_from_host((const gpufftComplex*)hpsi.data());
+
+            dftcu::GPU_Vector<double> d_h_sub(nbands * nbands);
+
+            // Use stream 0 for simplicity in logic test
+            dftcu::compute_h_subspace_gamma(npw, nbands, gstart, d_psi.data(), npw, d_hpsi.data(),
+                                            npw, d_h_sub.data(), nbands, 0);
+
+            py::array_t<double> h_sub_out({nbands, nbands});
+            d_h_sub.copy_to_host((double*)h_sub_out.mutable_data());
+            cudaDeviceSynchronize();
+            return h_sub_out;
+        },
+        "Pure logic test for H_sub projection using packed plane-wave coefficients");
+
+    m.def(
+        "compute_s_subspace_gamma_packed",
+        [](py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> psi,
+           int npw, int nbands, int gstart) {
+            if (psi.size() < (size_t)npw * nbands) {
+                throw std::runtime_error("Input array size too small for specified npw/nbands");
+            }
+
+            dftcu::GPU_Vector<gpufftComplex> d_psi(npw * nbands);
+            d_psi.copy_from_host((const gpufftComplex*)psi.data());
+
+            dftcu::GPU_Vector<double> d_s_sub(nbands * nbands);
+
+            // Use stream 0 for simplicity in logic test
+            dftcu::compute_s_subspace_gamma(npw, nbands, gstart, d_psi.data(), npw, d_s_sub.data(),
+                                            nbands, 0);
+
+            py::array_t<double> s_sub_out({nbands, nbands});
+            d_s_sub.copy_to_host((double*)s_sub_out.mutable_data());
+            cudaDeviceSynchronize();
+            return s_sub_out;
+        },
+        "Pure logic test for S_sub projection using packed plane-wave coefficients");
 
     py::class_<dftcu::NonSCFSolver>(m, "NonSCFSolver")
         .def(py::init<dftcu::Grid&>())

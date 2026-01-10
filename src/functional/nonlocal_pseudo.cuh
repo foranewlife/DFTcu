@@ -37,10 +37,10 @@ class NonLocalPseudo {
     void clear();
     double calculate_energy(const Wavefunction& psi, const std::vector<double>& occupations);
 
-    void init_tab_beta(int type, const std::vector<double>& r_grid,
-                       const std::vector<std::vector<double>>& beta_r,
+    void init_tab_beta(int type, const std::vector<double>& r,
+                       const std::vector<std::vector<double>>& betas,
                        const std::vector<double>& rab, const std::vector<int>& l_list,
-                       const std::vector<int>& kkbeta_list, double omega_angstrom);
+                       const std::vector<int>& kkbeta_list, double omega_bohr);
 
     void set_tab_beta(int type, int nb, const std::vector<double>& tab);
     void init_dij(int type, const std::vector<double>& dij);

@@ -250,6 +250,33 @@ void Grid::generate_gvectors() {
     CHECK(
         cudaMemcpy(miller_l_.data(), l_smooth.data(), ngw_ * sizeof(int), cudaMemcpyHostToDevice));
 
+    // Generate nl_d and nlm_d mapping for Smooth grid
+    nl_d_.resize(ngw_);
+    nlm_d_.resize(ngw_);
+    std::vector<int> nl_smooth_h(ngw_);
+    std::vector<int> nlm_smooth_h(ngw_);
+
+    auto miller_to_fft = [this](int m, int nr) -> int { return (m >= 0) ? m : (nr + m); };
+
+    for (int ig = 0; ig < ngw_; ++ig) {
+        int h = h_smooth[ig];
+        int k = k_smooth[ig];
+        int l = l_smooth[ig];
+
+        int i0 = miller_to_fft(h, nr_[0]);
+        int i1 = miller_to_fft(k, nr_[1]);
+        int i2 = miller_to_fft(l, nr_[2]);
+        nl_smooth_h[ig] = i0 * nr_[1] * nr_[2] + i1 * nr_[2] + i2;
+
+        int i0m = miller_to_fft(-h, nr_[0]);
+        int i1m = miller_to_fft(-k, nr_[1]);
+        int i2m = miller_to_fft(-l, nr_[2]);
+        nlm_smooth_h[ig] = i0m * nr_[1] * nr_[2] + i1m * nr_[2] + i2m;
+    }
+    CHECK(cudaMemcpy(nl_d_.data(), nl_smooth_h.data(), ngw_ * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK(
+        cudaMemcpy(nlm_d_.data(), nlm_smooth_h.data(), ngw_ * sizeof(int), cudaMemcpyHostToDevice));
+
     // g2kin in Hartree: T = ½|G|²
     std::vector<double> g2kin_ha(ngw_);
     std::vector<double> gg_wfc_ha(ngw_);
@@ -285,9 +312,6 @@ void Grid::generate_gvectors() {
         int k = k_dense[ig];
         int l = l_dense[ig];
 
-        // Miller index -> FFT grid index (QE convention)
-        auto miller_to_fft = [this](int m, int nr) -> int { return (m >= 0) ? m : (nr + m); };
-
         int i0 = miller_to_fft(h, nr_[0]);
         int i1 = miller_to_fft(k, nr_[1]);
         int i2 = miller_to_fft(l, nr_[2]);
@@ -312,10 +336,15 @@ void Grid::generate_gvectors() {
     // ========================================================================
     generate_gshell_grouping(g2_dense);
 
-    // ========================================================================
-    // Generate igk mapping (Smooth -> Dense)
-    // ========================================================================
+    // Build igk mapping
     generate_igk_mapping(h_smooth, k_smooth, l_smooth, h_dense, k_dense, l_dense);
+
+    // Final Validation of Index 0 (G=0)
+    std::vector<int> h_nl(ngw_);
+    nl_d_.copy_to_host(h_nl.data());
+    std::vector<double> h_gg_full(nnr_);
+    gg_.copy_to_host(h_gg_full.data());
+    printf("DEBUG Grid: G=0 is at nl_d[0]=%d, gg[nl_d[0]]=%f\n", h_nl[0], h_gg_full[h_nl[0]]);
 }
 
 void Grid::load_gvectors_from_qe(const std::string& data_dir) {

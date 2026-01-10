@@ -58,6 +58,9 @@ class Hamiltonian {
     /** @brief Get the aggregate G=0 potential in Hartree. Matches QE v_of_0 * 0.5. */
     double get_v_of_0() const { return v_of_0_; }
 
+    /** @brief Set the aggregate G=0 potential in Hartree. */
+    void set_v_of_0(double v0) { v_of_0_ = v0; }
+
     /** @brief Update the local potential from the density functional potential */
     void update_potentials(const RealField& rho);
 

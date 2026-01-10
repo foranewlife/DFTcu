@@ -53,23 +53,23 @@ __device__ __constant__ int c_nl_atom_type[256];
 
 __global__ void interpolate_beta_kernel(int n, const double* gx, const double* gy, const double* gz,
                                         const double* gg, int l, int m, int iat, const double* tab,
-                                        int stride, double dq, double omega,
+                                        int stride, double dq, double omega_bohr,
                                         gpufftComplex* beta_g) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < n) {
-        const double B = constants::BOHR_TO_ANGSTROM;
-        double gmod = sqrt(gg[i]) * B;  // Bohr^-1
+        const double TWO_PI = constants::D_PI * 2.0;
+        double gmod_phys = sqrt(gg[i]) * TWO_PI;  // Physical G in Bohr^-1
         double betag = 0.0;
 
-        if (gmod < 1e-12) {
+        if (gmod_phys < 1e-12) {
             if (l == 0)
                 betag = tab[0];
             else
                 betag = 0.0;
         } else {
-            int i0 = (int)(gmod / dq) + 1;
+            int i0 = (int)(gmod_phys / dq) + 1;
             if (i0 < stride - 4) {
-                double px = gmod / dq - (double)(i0 - 1);
+                double px = gmod_phys / dq - (double)(i0 - 1);
                 double ux = 1.0 - px;
                 double vx = 2.0 - px;
                 double wx = 3.0 - px;
@@ -79,13 +79,12 @@ __global__ void interpolate_beta_kernel(int n, const double* gx, const double* g
             }
         }
 
-        double ylm_val = get_ylm(l, m, gx[i], gy[i], gz[i], gmod / B);
+        double ylm_val = get_ylm(l, m, gx[i], gy[i], gz[i], sqrt(gg[i]));
         double val = betag * ylm_val;
 
-        // Apply phase factor exp(-iG.R)
-
-        double phase =
-            -(gx[i] * c_nl_atom_x[iat] + gy[i] * c_nl_atom_y[iat] + gz[i] * c_nl_atom_z[iat]);
+        // Apply phase factor exp(-iG_phys.R)
+        double phase = -TWO_PI * (gx[i] * c_nl_atom_x[iat] + gy[i] * c_nl_atom_y[iat] +
+                                  gz[i] * c_nl_atom_z[iat]);
         double s, c;
         sincos(phase, &s, &c);
 
@@ -116,7 +115,7 @@ NonLocalPseudo::NonLocalPseudo(Grid& grid) : grid_(grid), omega_(grid.volume_boh
 void NonLocalPseudo::init_tab_beta(int type, const std::vector<double>& r,
                                    const std::vector<std::vector<double>>& betas,
                                    const std::vector<double>& rab, const std::vector<int>& l_list,
-                                   const std::vector<int>& kkbeta_list, double omega_ang) {
+                                   const std::vector<int>& kkbeta_list, double omega_bohr) {
     if (type >= static_cast<int>(tab_beta_.size())) {
         tab_beta_.resize(type + 1);
         l_list_.resize(type + 1);
@@ -126,12 +125,11 @@ void NonLocalPseudo::init_tab_beta(int type, const std::vector<double>& r,
     l_list_[type] = l_list;
 
     const double fpi = 4.0 * constants::D_PI;
-    const double B = constants::BOHR_TO_ANGSTROM;
-    double omega_b = omega_ang / (B * B * B);
 
     dq_ = 0.01;  // Match QE dq
-    double g2max_bohr = grid_.g2max() * (B * B);
-    nqx_ = (int)(sqrt(g2max_bohr) / dq_) + 10;
+    const double TWO_PI = constants::D_PI * 2.0;
+    double g2max_phys = grid_.g2max() * (TWO_PI * TWO_PI);
+    nqx_ = (int)(sqrt(g2max_phys) / dq_) + 10;
 
     for (int nb = 0; nb < n_betas; ++nb) {
         tab_beta_[type][nb].resize(nqx_ + 1);
@@ -142,7 +140,7 @@ void NonLocalPseudo::init_tab_beta(int type, const std::vector<double>& r,
         for (int ir = 0; ir < kkbeta; ++ir)
             rab_sub[ir] = rab[ir];
 
-        for (int iq = 0; iq < nqx_; ++iq) {
+        for (int iq = 0; iq < nqx_ + 1; ++iq) {
             double q = iq * dq_;
             for (int ir = 0; ir < kkbeta; ++ir) {
                 double x = q * r[ir];
@@ -151,7 +149,7 @@ void NonLocalPseudo::init_tab_beta(int type, const std::vector<double>& r,
                 // QE logic: aux = beta(r) * jl(qr) * r
                 aux[ir] = betas[nb][ir] * r[ir] * jl;
             }
-            tab_beta_[type][nb][iq] = simpson_integrate(aux, rab_sub) * fpi / sqrt(omega_b);
+            tab_beta_[type][nb][iq] = simpson_integrate(aux, rab_sub) * fpi / sqrt(omega_bohr);
         }
     }
 }
@@ -251,7 +249,9 @@ void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
     CublasPointerModeGuard guard(h, CUBLAS_POINTER_MODE_HOST);
 
     // 1. Projections: result = <beta | psi> = sum_G beta_G* * psi_G
-    cuDoubleComplex alpha_nl_v = {1.0, 0.0}, beta_zero_v = {0.0, 0.0};
+    // In G-space, the integral <beta|psi> is equivalent to Omega * sum(beta_G* * psi_G)
+    // because sum(exp(i(G-G')R)) = N * delta_GG'.
+    cuDoubleComplex alpha_nl_v = {grid_.volume_bohr(), 0.0}, beta_zero_v = {0.0, 0.0};
     CUBLAS_SAFE_CALL(cublasZgemm(h, CUBLAS_OP_C, CUBLAS_OP_N, num_projectors_, nb, (int)n,
                                  &alpha_nl_v, (const cuDoubleComplex*)d_projectors_.data(), (int)n,
                                  (const cuDoubleComplex*)psi.data(), (int)n, &beta_zero_v,
@@ -277,8 +277,8 @@ void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
                                  num_projectors_));
 
     // 3. Contribution to H*psi: hpsi += Vkb * dps
-    // In Gamma-only mode, QE uses a factor of 0.5 (fac in add_vuspsi.f90).
-    // This compensates for the fact that we calculate the full sum over G and -G.
+    // In Gamma-only mode, we need a factor of 0.5 to compensate for the fact that
+    // we use the full FFT grid (counting G and -G).
     cuDoubleComplex alpha_apply = {1.0, 0.0};
     if (grid_.is_gamma()) {
         alpha_apply.x = 0.5;

@@ -77,17 +77,13 @@ class Grid {
      */
     size_t nnr() const { return nnr_; }
 
-    double volume() const { return volume_; }
     /** @brief Unit cell volume in Bohr³ (Hartree atomic units) */
-    double volume_bohr() const {
-        return volume_;  // volume_ is already in Bohr³
-    }
-    /** @brief Differential volume element dv = Volume / N (in Angstrom³) */
-    double dv() const { return volume_ / (double)nnr_; }
+    double volume() const { return volume_; }
+    double volume_bohr() const { return volume_; }
+
     /** @brief Differential volume element in Bohr³ (Hartree atomic units) */
-    double dv_bohr() const {
-        return volume_ / (double)nnr_;  // volume_ is already in Bohr³
-    }
+    double dv() const { return volume_ / (double)nnr_; }
+    double dv_bohr() const { return volume_ / (double)nnr_; }
     const int* nr() const { return nr_; }
 
     /**
