@@ -38,19 +38,20 @@ def import_test_module(phase_name: str):
         "phase0": "phase0/test_phase0.py",
         "phase0b": "phase0b/test_phase0b4d_end_to_end.py",  # 端到端测试代表 0b
         "phase0_gvector_smooth": "phase0c/test_smooth_grid.py",  # Phase 0: Smooth grid 生成
-        "phase0_gvector_g2kin": "phase0c/test_phase0c2_g2kin.py",  # Phase 0: g2kin 验证
+        "phase0_gvector_g2kin": "phase0c/test_smooth_grid.py",  # Phase 0: g2kin 验证 (与 Smooth grid 合并)
         "phase0_gvector_dense": "phase0c/test_dense_grid.py",  # Phase 0: Dense grid 生成
         "phase0_gvector_igk": "phase0c/test_igk_mapping.py",  # Phase 0: igk 映射
         "phase0_wavefunction": "phase0/test_wavefunction_init.py",  # 新增：波函数初始化
         "phase0_density": "phase0/test_density_init.py",  # 新增：电荷密度初猜
         # "phase1a": "phase1a/test_kinetic_with_grid.py",  # 暂时禁用：测试框架问题（G向量顺序）
         "phase1b": "phase1b/test_vloc_from_upf_simple.py",  # 修正：实际文件名
-        # "phase1c": "phase1c/test_nonlocal_with_grid.py",  # 已归档：见 PHASE1C_SUCCESS_REPORT.md
+        # "phase1c": "phase1c/test_nonlocal_with_grid.py",  # 未完成
         "phase1d": "phase1d/test_complete_hamiltonian.py",  # 更新：完整验证
         "phase1_hartree": "phase1_functionals/test_hartree.py",  # 新增：Hartree 泛函
         "phase1_lda": "phase1_functionals/test_lda_pz.py",  # 新增：LDA-PZ XC 泛函
         "phase2": "phase2/test_subspace.py",
-        # "phase3": "phase3/test_davidson.py",  # 待实现
+        "phase3a": "phase3a/test_subspace_diagonalization.py",  # 新增：子空间对角化
+        "phase3c": "phase3c/test_nscf_solver.py",  # 新增：完整 NSCF 求解器
     }
 
     if phase_name not in test_file_map:
@@ -192,6 +193,8 @@ def main():
             "1_hartree",
             "1_lda",
             "2",
+            "3a",
+            "3c",
             "all",
         ],
         default="all",
@@ -229,7 +232,8 @@ def main():
         ("phase1_hartree", "Hartree 泛函验证", 1e-10),  # 更新阈值
         ("phase1_lda", "LDA-PZ XC 泛函验证", 1e-10),  # 更新阈值
         ("phase2", "子空间投影与对角化", PRECISION.phase2_subspace),
-        # phase3 待实现
+        ("phase3a", "子空间对角化", 1e-13),  # 新增：Phase 3a
+        ("phase3c", "完整 NSCF 求解器", 1e-10),  # 新增：Phase 3c
     ]
 
     # 运行测试
