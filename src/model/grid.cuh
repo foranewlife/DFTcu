@@ -61,6 +61,9 @@ class Grid {
         gy_.resize(nnr_);
         gz_.resize(nnr_);
         compute_g_vectors();
+
+        // Generate Smooth and Dense grids
+        generate_gvectors();
     }
 
     ~Grid() {
@@ -132,6 +135,14 @@ class Grid {
 
     bool is_gamma() const { return is_gamma_; }
 
+    /**
+     * @brief Get gstart index for Gamma-only calculations.
+     * @return 2 if G=0 exists (Gamma-only), 1 otherwise.
+     * @note QE uses Fortran 1-based indexing, so gstart=2 means G=0 is at index 1.
+     *       In DFTcu (C++, 0-based), G=0 is at index 0, but we return 2 to match QE convention.
+     */
+    int gstart() const { return is_gamma_ ? 2 : 1; }
+
     // ========================================================================
     // Cutoff energies (双网格设计) - Read-only accessors
     // ========================================================================
@@ -177,6 +188,11 @@ class Grid {
      * NOTE: This loads Smooth grid (ecutwfc) G-vectors.
      */
     void load_gvectors_from_qe(const std::string& data_dir);
+
+    /**
+     * @brief Load Miller indices (h, k, l) from file (TEST ONLY).
+     */
+    void load_miller_indices_from_file(const std::string& filename);
 
     /**
      * @brief Load nl_d and nlm_d mapping from file (TEST ONLY).
@@ -289,10 +305,48 @@ class Grid {
     }
 
     /**
+     * @brief Dense grid G-vector components (GPU).
+     * @note Units: 1/Bohr (crystallographic, NO 2π factor)
+     */
+    const double* gx_dense() const { return gx_dense_.data(); }
+    const double* gy_dense() const { return gy_dense_.data(); }
+    const double* gz_dense() const { return gz_dense_.data(); }
+
+    /**
      * @brief Dense grid FFT mapping (GPU).
      */
     const int* nl_dense() const { return nl_dense_.data(); }
     const int* nlm_dense() const { return nlm_dense_.data(); }
+
+    /**
+     * @brief Dense grid Miller indices (GPU).
+     * @note Available for debugging and verification purposes.
+     */
+    const int* miller_h_dense() const { return miller_h_dense_.data(); }
+    const int* miller_k_dense() const { return miller_k_dense_.data(); }
+    const int* miller_l_dense() const { return miller_l_dense_.data(); }
+
+    /**
+     * @brief Get Dense grid Miller indices as host vectors.
+     */
+    std::vector<int> miller_h_dense_host() const {
+        std::vector<int> h(ngm_dense_);
+        if (ngm_dense_ > 0)
+            miller_h_dense_.copy_to_host(h.data());
+        return h;
+    }
+    std::vector<int> miller_k_dense_host() const {
+        std::vector<int> k(ngm_dense_);
+        if (ngm_dense_ > 0)
+            miller_k_dense_.copy_to_host(k.data());
+        return k;
+    }
+    std::vector<int> miller_l_dense_host() const {
+        std::vector<int> l(ngm_dense_);
+        if (ngm_dense_ > 0)
+            miller_l_dense_.copy_to_host(l.data());
+        return l;
+    }
 
     // ========================================================================
     // Smooth to Dense grid mapping
@@ -462,6 +516,14 @@ class Grid {
     GPU_Vector<int> igtongl_;     /**< Dense G → G-shell mapping (GPU) */
     GPU_Vector<int> nl_dense_;    /**< Dense G → FFT grid mapping (GPU) */
     GPU_Vector<int> nlm_dense_;   /**< Dense -G → FFT grid mapping (GPU) */
+    GPU_Vector<double> gx_dense_; /**< Dense grid Gx components (GPU, 1/Bohr) */
+    GPU_Vector<double> gy_dense_; /**< Dense grid Gy components (GPU, 1/Bohr) */
+    GPU_Vector<double> gz_dense_; /**< Dense grid Gz components (GPU, 1/Bohr) */
+
+    // Dense grid Miller indices (for debugging and verification)
+    GPU_Vector<int> miller_h_dense_; /**< Dense grid Miller index h (GPU) */
+    GPU_Vector<int> miller_k_dense_; /**< Dense grid Miller index k (GPU) */
+    GPU_Vector<int> miller_l_dense_; /**< Dense grid Miller index l (GPU) */
 
     // ========================================================================
     // Smooth to Dense grid mapping

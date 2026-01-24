@@ -127,8 +127,8 @@ __global__ void pack_two_kernel(int npw, int nx, int ny, int nz, const int* mill
 /**
  * @brief 解包两个波函数（QE fftx_psi2c_gamma）
  *
- * fp = [packed(G) + packed(-G)] / 2
- * fm = [packed(G) - packed(-G)] / 2
+ * fp = [packed(G) + packed(-G)]
+ * fm = [packed(G) - packed(-G)]
  * ψ₁(G) = Re(fp) + i·Im(fm)
  * ψ₂(G) = Im(fp) - i·Re(fm)
  */
@@ -164,14 +164,16 @@ __global__ void unpack_two_kernel(int npw, int nx, int ny, int nz, const int* mi
         p_neg = packed[idx_neg];
     }
 
-    // QE 解包公式
-    // fp = (p_pos + p_neg) * 0.5
-    double fp_re = (p_pos.x + p_neg.x) * 0.5;
-    double fp_im = (p_pos.y + p_neg.y) * 0.5;
-
-    // fm = (p_pos - p_neg) * 0.5
-    double fm_re = (p_pos.x - p_neg.x) * 0.5;
-    double fm_im = (p_pos.y - p_neg.y) * 0.5;
+    // ✅ QE 解包公式（无 × 0.5 因子）
+    // QE fftx_psi2c_gamma (FFTXlib/src/fft_helper_subroutines.f90:56-60):
+    //   fp = vin(nl_d(ig)) + vin(nlm_d(ig))
+    //   fm = vin(nl_d(ig)) - vin(nlm_d(ig))
+    //   vout1 = CMPLX(DBLE(fp), AIMAG(fm))
+    //   vout2 = CMPLX(AIMAG(fp), -DBLE(fm))
+    double fp_re = p_pos.x + p_neg.x;
+    double fp_im = p_pos.y + p_neg.y;
+    double fm_re = p_pos.x - p_neg.x;
+    double fm_im = p_pos.y - p_neg.y;
 
     // psi1 = Re(fp) + i*Im(fm)
     psi1[ig].x = fp_re;
@@ -274,9 +276,16 @@ void GammaFFTSolver::wave_g2r_single(const ComplexField& psi_g_half,
     GPU_CHECK_KERNEL;
     grid_.synchronize();  // Ensure kernel completes before FFT
 
-    // 3. IFFT (cuFFT INVERSE, 无缩放 - 匹配 QE wave_g2r 约定)
+    // 3. IFFT (cuFFT INVERSE)
     CUFFT_CHECK(cufftExecZ2Z(plan_z2z_, (cufftDoubleComplex*)psi_r.data(),
                              (cufftDoubleComplex*)psi_r.data(), CUFFT_INVERSE));
+    GPU_CHECK_KERNEL;
+
+    // 4. Normalize by 1/N (QE convention: invfft includes 1/N normalization)
+    const int bs_norm = 256;
+    const int gs_norm = (nnr + bs_norm - 1) / bs_norm;
+    scale_complex_kernel<<<gs_norm, bs_norm, 0, grid_.stream()>>>(nnr, psi_r.data(),
+                                                                  1.0 / (double)nnr);
     GPU_CHECK_KERNEL;
     grid_.synchronize();
 }
@@ -296,16 +305,21 @@ void GammaFFTSolver::wave_r2g_single(const ComplexField& psi_r, const std::vecto
     CHECK(cudaMemcpyAsync(temp.data(), psi_r.data(), nnr * sizeof(gpufftComplex),
                           cudaMemcpyDeviceToDevice, grid_.stream()));
 
-    // 2. FFT (cuFFT FORWARD, 无缩放 - 匹配 QE wave_r2g 约定)
+    // 2. FFT (cuFFT FORWARD, 不归一化 - 匹配 QE fwfft 约定)
     CUFFT_CHECK(cufftExecZ2Z(plan_z2z_, (cufftDoubleComplex*)temp.data(),
                              (cufftDoubleComplex*)temp.data(), CUFFT_FORWARD));
     GPU_CHECK_KERNEL;
 
-    // 3. 提取 Miller 指数对应的系数
-    const int block_size = 256;
-    const int grid_size = (npw + block_size - 1) / block_size;
+    // 注意：根据 QE fft_scalar.f90 约定
+    // - invfft (G→R): FFTW_BACKWARD + 归一化 1/N
+    // - fwfft (R→G): FFTW_FORWARD，不归一化
+    // 因此 wave_r2g 不需要归一化
 
-    extract_miller_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+    // 3. 提取 Miller 指数对应的系数
+    const int bs_r2g = 256;
+    const int grid_size = (npw + bs_r2g - 1) / bs_r2g;
+
+    extract_miller_kernel<<<grid_size, bs_r2g, 0, grid_.stream()>>>(
         npw, nr[0], nr[1], nr[2], d_miller_h_, d_miller_k_, d_miller_l_, temp.data(),
         psi_g_half.data());
     GPU_CHECK_KERNEL;
@@ -348,14 +362,83 @@ void GammaFFTSolver::wave_g2r_pair(const ComplexField& psi1_g, const ComplexFiel
     }
     fflush(stdout);
 
-    // 3. IFFT (cuFFT INVERSE, 无缩放 - 匹配 QE wave_g2r 约定)
+    // 3. IFFT (cuFFT INVERSE)
     CUFFT_CHECK(cufftExecZ2Z(plan_z2z_, (cufftDoubleComplex*)psi_r_packed.data(),
                              (cufftDoubleComplex*)psi_r_packed.data(), CUFFT_INVERSE));
+    GPU_CHECK_KERNEL;
+
+    // 4. Normalize by 1/N (QE convention: invfft includes 1/N normalization)
+    const int bs_norm = 256;
+    const int gs_norm = (nnr + bs_norm - 1) / bs_norm;
+    scale_complex_kernel<<<gs_norm, bs_norm, 0, grid_.stream()>>>(nnr, psi_r_packed.data(),
+                                                                  1.0 / (double)nnr);
     GPU_CHECK_KERNEL;
     grid_.synchronize();
 
     // Debug: check result after FFT
     printf("[wave_g2r_pair] After FFT, checking first few r-space values...\n");
+    gpufftComplex h_r[10];
+    CHECK(cudaMemcpy(h_r, psi_r_packed.data(), 10 * sizeof(gpufftComplex), cudaMemcpyDeviceToHost));
+    for (int i = 0; i < 5; i++) {
+        printf("  psi_r[%d] = (%.6f, %.6f)\n", i, h_r[i].x, h_r[i].y);
+    }
+    fflush(stdout);
+}
+
+void GammaFFTSolver::wave_g2r_pair_compact(const gpufftComplex* psi1_smooth,
+                                           const gpufftComplex* psi2_smooth,
+                                           const std::vector<int>& miller_h,
+                                           const std::vector<int>& miller_k,
+                                           const std::vector<int>& miller_l,
+                                           ComplexField& psi_r_packed) {
+    int npw = miller_h.size();
+    int nnr = grid_.nnr();
+    const int* nr = grid_.nr();
+
+    printf("[GammaFFTSolver::wave_g2r_pair_compact] Called with npw=%d, nnr=%d\n", npw, nnr);
+    fflush(stdout);
+
+    // 缓存 Miller 指数
+    cache_miller_indices(miller_h, miller_k, miller_l);
+
+    // 1. 清零输出
+    CHECK(cudaMemsetAsync(psi_r_packed.data(), 0, nnr * sizeof(gpufftComplex), grid_.stream()));
+
+    // 2. 打包两个波函数（输入是紧凑数组）
+    const int block_size = 256;
+    const int grid_size = (npw + block_size - 1) / block_size;
+
+    pack_two_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+        npw, nr[0], nr[1], nr[2], d_miller_h_, d_miller_k_, d_miller_l_, psi1_smooth, psi2_smooth,
+        psi_r_packed.data());
+    GPU_CHECK_KERNEL;
+    grid_.synchronize();  // Ensure packing completes before FFT
+
+    // Debug: check packed result before FFT
+    printf("[wave_g2r_pair_compact] After packing, checking first few packed G values...\n");
+    gpufftComplex h_packed[10];
+    CHECK(cudaMemcpy(h_packed, psi_r_packed.data(), 10 * sizeof(gpufftComplex),
+                     cudaMemcpyDeviceToHost));
+    for (int i = 0; i < 5; i++) {
+        printf("  packed[%d] = (%.6f, %.6f)\n", i, h_packed[i].x, h_packed[i].y);
+    }
+    fflush(stdout);
+
+    // 3. IFFT (cuFFT INVERSE)
+    CUFFT_CHECK(cufftExecZ2Z(plan_z2z_, (cufftDoubleComplex*)psi_r_packed.data(),
+                             (cufftDoubleComplex*)psi_r_packed.data(), CUFFT_INVERSE));
+    GPU_CHECK_KERNEL;
+
+    // 4. Normalize by 1/N (QE convention: invfft includes 1/N normalization)
+    const int bs_norm = 256;
+    const int gs_norm = (nnr + bs_norm - 1) / bs_norm;
+    scale_complex_kernel<<<gs_norm, bs_norm, 0, grid_.stream()>>>(nnr, psi_r_packed.data(),
+                                                                  1.0 / (double)nnr);
+    GPU_CHECK_KERNEL;
+    grid_.synchronize();
+
+    // Debug: check result after FFT
+    printf("[wave_g2r_pair_compact] After FFT, checking first few r-space values...\n");
     gpufftComplex h_r[10];
     CHECK(cudaMemcpy(h_r, psi_r_packed.data(), 10 * sizeof(gpufftComplex), cudaMemcpyDeviceToHost));
     for (int i = 0; i < 5; i++) {
@@ -381,9 +464,15 @@ void GammaFFTSolver::wave_r2g_pair(const ComplexField& psi_r_packed,
     CHECK(cudaMemcpyAsync(temp.data(), psi_r_packed.data(), nnr * sizeof(gpufftComplex),
                           cudaMemcpyDeviceToDevice, grid_.stream()));
 
+    // 1. FFT (R→G, cuFFT FORWARD, 不归一化 - 匹配 QE fwfft 约定)
     CUFFT_CHECK(cufftExecZ2Z(plan_z2z_, (cufftDoubleComplex*)temp.data(),
                              (cufftDoubleComplex*)temp.data(), CUFFT_FORWARD));
     GPU_CHECK_KERNEL;
+
+    // 注意：根据 QE fft_scalar.f90 约定
+    // - invfft (G→R): FFTW_BACKWARD + 归一化 1/N
+    // - fwfft (R→G): FFTW_FORWARD，不归一化
+    // 因此 wave_r2g 不需要归一化
 
     // 2. 解包两个波函数
     const int block_size = 256;

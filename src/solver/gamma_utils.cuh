@@ -29,30 +29,33 @@ using gpufftComplex = cufftDoubleComplex;
  * @param npw        平面波数量
  * @param nbands     能带数量
  * @param gstart     G=0 起始索引 (1=不含G=0, 2=含G=0)
- * @param psi_a      第一组波函数 (npw x nbands)
- * @param lda_a      psi_a 的 leading dimension
- * @param psi_b      第二组波函数 (npw x nbands)
- * @param lda_b      psi_b 的 leading dimension
+ * @param psi_a      第一组波函数 (lda_a x nbands, FFT grid)
+ * @param lda_a      psi_a 的 leading dimension (通常为 nnr)
+ * @param psi_b      第二组波函数 (lda_b x nbands, FFT grid)
+ * @param lda_b      psi_b 的 leading dimension (通常为 nnr)
  * @param matrix_out 输出矩阵 (nbands x nbands, 实对称矩阵)
  * @param ldr        matrix_out 的 leading dimension
+ * @param nl_d       G-vector 到 FFT grid 的映射 (npw 个元素)
  * @param stream     CUDA stream
  */
 void compute_subspace_matrix_gamma(int npw, int nbands, int gstart, const gpufftComplex* psi_a,
                                    int lda_a, const gpufftComplex* psi_b, int lda_b,
-                                   double* matrix_out, int ldr, cudaStream_t stream);
+                                   double* matrix_out, int ldr, const int* nl_d,
+                                   cudaStream_t stream);
 
 /**
  * 计算哈密顿子空间矩阵: H_sub[i,j] = <psi_i | H | psi_j>
  */
 void compute_h_subspace_gamma(int npw, int nbands, int gstart, const gpufftComplex* psi,
                               int lda_psi, const gpufftComplex* hpsi, int lda_hpsi, double* h_sub,
-                              int ldh, cudaStream_t stream);
+                              int ldh, const int* nl_d, cudaStream_t stream);
 
 /**
  * 计算重叠子空间矩阵: S_sub[i,j] = <psi_i | psi_j>
  */
 void compute_s_subspace_gamma(int npw, int nbands, int gstart, const gpufftComplex* psi,
-                              int lda_psi, double* s_sub, int lds, cudaStream_t stream);
+                              int lda_psi, double* s_sub, int lds, const int* nl_d,
+                              cudaStream_t stream);
 
 // ============================================================================
 // CUDA Kernel

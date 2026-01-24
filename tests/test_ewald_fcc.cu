@@ -12,7 +12,8 @@ int main() {
     double a0 = 7.6;
     std::vector<double> lattice = {0, a0 / 2, a0 / 2, a0 / 2, 0, a0 / 2, a0 / 2, a0 / 2, 0};
     std::vector<int> nr = {32, 32, 32};
-    auto grid = std::make_shared<Grid>(lattice, nr);
+    double ecutwfc = 30.0;  // 30 Ha cutoff
+    auto grid = std::make_shared<Grid>(lattice, nr, ecutwfc);
 
     std::vector<Atom> atoms_vec;
     Atom a;

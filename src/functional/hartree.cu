@@ -8,6 +8,16 @@
 namespace dftcu {
 
 namespace {
+
+// Helper kernel to scale complex array
+__global__ void scale_complex_kernel(size_t n, gpufftComplex* data, double scale) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i < n) {
+        data[i].x *= scale;
+        data[i].y *= scale;
+    }
+}
+
 /**
  * @brief Compute Hartree potential and energy contributions using nl_dense mapping.
  *
@@ -79,6 +89,13 @@ __global__ void scale_vh_kernel(int ngm, gpufftComplex* vh_g, double fac) {
     if (ig < ngm) {
         vh_g[ig].x *= fac;
         vh_g[ig].y *= fac;
+    }
+}
+
+__global__ void scale_vloc_kernel(int n, double* data, double scale) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i < n) {
+        data[i] *= scale;
     }
 }
 
@@ -276,7 +293,15 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
 
     // Inverse FFT: V_H(G) → V_H(r)
     fft_->backward(*rho_g_);
+
     complex_to_real(nnr, rho_g_->data(), vh.data());
+
+    // ✅ Scale by 0.5 because we filled both +G and -G (Hermitian symmetry)
+    // cuFFT Z2Z IFFT computes \sum V_G e^{iGr}, which results in 2*Re[V_G]
+    const int block_size_h = 256;
+    const int grid_size_h = (nnr + block_size_h - 1) / block_size_h;
+    scale_vloc_kernel<<<grid_size_h, block_size_h, 0, grid.stream()>>>(nnr, vh.data(), 0.5);
+    GPU_CHECK_KERNEL;
 
     // ========================================================================
     // Step 6: Compute Hartree energy

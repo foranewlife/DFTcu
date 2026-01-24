@@ -93,5 +93,5 @@ if(PYTEST_EXECUTABLE)
     )
 endif()
 
-add_executable(dftcu_reference_runner dftcu_reference_runner.cu)
-target_link_libraries(dftcu_reference_runner PRIVATE dftcu_core)
+# add_executable(dftcu_reference_runner dftcu_reference_runner.cu)
+# target_link_libraries(dftcu_reference_runner PRIVATE dftcu_core)

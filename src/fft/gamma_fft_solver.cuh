@@ -85,6 +85,20 @@ class GammaFFTSolver {
                        ComplexField& psi_r_packed);  // 打包的全空间
 
     /**
+     * @brief 两个波函数打包 G -> R (紧凑数组版本)
+     *
+     * ✅ 修复版本：接受紧凑数组 (npw) 而不是 FFT grid (nnr)
+     *
+     * 输入: psi1_smooth, psi2_smooth 紧凑数组指针 (npw 个元素)
+     * 输出: psi_r_packed 打包的实空间波函数 (FFT grid)
+     */
+    void wave_g2r_pair_compact(const gpufftComplex* psi1_smooth,  // 紧凑数组 (npw)
+                               const gpufftComplex* psi2_smooth,  // 紧凑数组 (npw)
+                               const std::vector<int>& miller_h, const std::vector<int>& miller_k,
+                               const std::vector<int>& miller_l,
+                               ComplexField& psi_r_packed);  // FFT grid (nnr)
+
+    /**
      * @brief 从打包的 FFT 结果解包两个波函数 R -> G
      *
      * 解包公式（QE fftx_psi2c_gamma:39-42）：

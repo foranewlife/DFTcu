@@ -82,6 +82,7 @@ void DavidsonSolver::orthogonalize(Wavefunction& psi) {
 
 std::vector<double> DavidsonSolver::solve(Hamiltonian& ham, Wavefunction& psi) {
     int nbands = (int)psi.num_bands();
+    int npw = (int)psi.num_pw();  // Smooth grid size (e.g., 85 for Si Gamma)
     int n = (int)grid_.nnr();
     if (nbands <= 0)
         return {};
@@ -103,9 +104,12 @@ std::vector<double> DavidsonSolver::solve(Hamiltonian& ham, Wavefunction& psi) {
 
         // Form H_sub and S_sub using Gamma-only optimized functions (REAL symmetric)
         // These handle the G=0 correction and 2.0 factor correctly.
-        compute_h_subspace_gamma(n, nbands, 2, psi.data(), n, h_psi.data(), n, h_sub.data(), nbands,
+        // Use npw (Smooth grid size) not n (FFT grid size)
+        const int* nl_d = grid_.nl_d();  // Get nl_d mapping
+        compute_h_subspace_gamma(npw, nbands, 2, psi.data(), n, h_psi.data(), n, h_sub.data(),
+                                 nbands, nl_d, grid_.stream());
+        compute_s_subspace_gamma(npw, nbands, 2, psi.data(), n, s_sub.data(), nbands, nl_d,
                                  grid_.stream());
-        compute_s_subspace_gamma(n, nbands, 2, psi.data(), n, s_sub.data(), nbands, grid_.stream());
 
         // Solve H_sub * c = epsilon * S_sub * c (REAL symmetric)
         // eigenvectors are returned in h_sub

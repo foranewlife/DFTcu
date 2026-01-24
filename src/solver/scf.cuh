@@ -17,13 +17,14 @@ namespace dftcu {
  * @brief Detailed energy breakdown for SCF analysis
  */
 struct EnergyBreakdown {
-    double etot;    ///< Total energy (Ha)
-    double eband;   ///< Band energy: Σ f_i * ε_i (Ha)
-    double deband;  ///< Double-counting correction: -∫ ρ * V_eff dr (Ha)
-    double ehart;   ///< Hartree energy (Ha)
-    double etxc;    ///< XC energy (Ha)
-    double eewld;   ///< Ewald energy (Ha)
-    double alpha;   ///< Alpha term (G=0 limit correction) (Ha)
+    double etot;                      ///< Total energy (Ha)
+    double eband;                     ///< Band energy: Σ f_i * ε_i (Ha)
+    double deband;                    ///< Double-counting correction: -∫ ρ * V_eff dr (Ha)
+    double ehart;                     ///< Hartree energy (Ha)
+    double etxc;                      ///< XC energy (Ha)
+    double eewld;                     ///< Ewald energy (Ha)
+    double alpha;                     ///< Alpha term (G=0 limit correction) (Ha)
+    std::vector<double> eigenvalues;  ///< Eigenvalues from last diagonalization (Ha)
 };
 
 /**

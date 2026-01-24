@@ -184,6 +184,8 @@ PYBIND11_MODULE(_dftcu, m) {
              "Load G-vector data from QE output files (TEST ONLY)")
         .def("load_nl_mapping_from_file", &dftcu::Grid::load_nl_mapping_from_file,
              py::arg("filename"), "Load nl_d/nlm_d mapping from file (TEST ONLY)")
+        .def("load_miller_indices_from_file", &dftcu::Grid::load_miller_indices_from_file,
+             py::arg("filename"), "Load Miller indices (h, k, l) from file (TEST ONLY)")
         // Cutoff energies - read-only (set at construction)
         .def("ecutwfc", &dftcu::Grid::ecutwfc, "Get wavefunction cutoff energy (Hartree)")
         .def("ecutrho", &dftcu::Grid::ecutrho, "Get density cutoff energy (Hartree)")
@@ -270,7 +272,15 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("get_igtongl", &dftcu::Grid::get_igtongl,
              "Get igtongl (Dense G → shell mapping) as host vector")
         .def("get_igk", &dftcu::Grid::get_igk,
-             "Get igk (Smooth G → Dense G mapping) as host vector");
+             "Get igk (Smooth G → Dense G mapping) as host vector")
+        // Dense grid Miller indices (for debugging/verification)
+        .def("miller_h_dense_host", &dftcu::Grid::miller_h_dense_host,
+             "Get Miller index h for Dense grid G-vectors")
+        .def("miller_k_dense_host", &dftcu::Grid::miller_k_dense_host,
+             "Get Miller index k for Dense grid G-vectors")
+        .def("miller_l_dense_host", &dftcu::Grid::miller_l_dense_host,
+             "Get Miller index l for Dense grid G-vectors")
+        .def("ngm_dense", &dftcu::Grid::ngm_dense, "Number of G-vectors in Dense grid (ecutrho)");
 
     py::class_<dftcu::RealField>(m, "RealField")
         .def(py::init<dftcu::Grid&, int>(), py::arg("grid"), py::arg("rank") = 1)
@@ -637,6 +647,12 @@ PYBIND11_MODULE(_dftcu, m) {
              &dftcu::Hamiltonian::set_density_functional_potential)
         .def("update_potentials", &dftcu::Hamiltonian::update_potentials)
         .def("apply", &dftcu::Hamiltonian::apply)
+        .def("apply_kinetic", &dftcu::Hamiltonian::apply_kinetic, py::arg("psi"), py::arg("h_psi"),
+             "Apply only kinetic energy operator: T|psi>")
+        .def("apply_local", &dftcu::Hamiltonian::apply_local, py::arg("psi"), py::arg("h_psi"),
+             "Apply only local potential operator: V_loc|psi>")
+        .def("apply_nonlocal", &dftcu::Hamiltonian::apply_nonlocal, py::arg("psi"),
+             py::arg("h_psi"), "Apply only nonlocal potential operator: V_NL|psi>")
         .def("set_nonlocal", &dftcu::Hamiltonian::set_nonlocal)
         .def("has_nonlocal", &dftcu::Hamiltonian::has_nonlocal)
         .def(
@@ -646,7 +662,14 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("get_v_of_0", &dftcu::Hamiltonian::get_v_of_0)
         .def("set_v_of_0", &dftcu::Hamiltonian::set_v_of_0, py::arg("v0"))
         .def("v_loc", (dftcu::RealField & (dftcu::Hamiltonian::*)()) & dftcu::Hamiltonian::v_loc,
-             py::return_value_policy::reference)
+             py::return_value_policy::reference,
+             "Get total local potential V_loc = V_ps + V_H + V_xc")
+        .def("v_ps", (dftcu::RealField & (dftcu::Hamiltonian::*)()) & dftcu::Hamiltonian::v_ps,
+             py::return_value_policy::reference, "Get pseudopotential local component V_ps")
+        .def("v_h", (dftcu::RealField & (dftcu::Hamiltonian::*)()) & dftcu::Hamiltonian::v_h,
+             py::return_value_policy::reference, "Get Hartree potential V_H")
+        .def("v_xc", (dftcu::RealField & (dftcu::Hamiltonian::*)()) & dftcu::Hamiltonian::v_xc,
+             py::return_value_policy::reference, "Get exchange-correlation potential V_xc")
 
         .def("set_ecutrho", &dftcu::Hamiltonian::set_ecutrho, py::arg("ecutrho"));
 
@@ -687,15 +710,16 @@ PYBIND11_MODULE(_dftcu, m) {
             }
 
             int npw = psi.num_pw();
-            int lda = psi.grid().nnr();  // leading dimension = nnr
-            int gstart = 2;              // Gamma-only, G=0 exists (Fortran 1-based)
+            int lda = psi.grid().nnr();           // leading dimension = nnr
+            int gstart = 2;                       // Gamma-only, G=0 exists (Fortran 1-based)
+            const int* nl_d = psi.grid().nl_d();  // G-vector to FFT grid mapping
 
             // Allocate GPU memory for H_sub
             dftcu::GPU_Vector<double> d_h_sub(nbands * nbands);
 
             // Call the compute function
             dftcu::compute_h_subspace_gamma(npw, nbands, gstart, psi.data(), lda, hpsi.data(), lda,
-                                            d_h_sub.data(), nbands, psi.grid().stream());
+                                            d_h_sub.data(), nbands, nl_d, psi.grid().stream());
 
             // Copy result to host
             d_h_sub.copy_to_host((double*)h_sub_out.mutable_data());
@@ -714,15 +738,16 @@ PYBIND11_MODULE(_dftcu, m) {
             }
 
             int npw = psi.num_pw();
-            int lda = psi.grid().nnr();  // leading dimension = nnr
-            int gstart = 2;              // Gamma-only, G=0 exists (Fortran 1-based)
+            int lda = psi.grid().nnr();           // leading dimension = nnr
+            int gstart = 2;                       // Gamma-only, G=0 exists (Fortran 1-based)
+            const int* nl_d = psi.grid().nl_d();  // G-vector to FFT grid mapping
 
             // Allocate GPU memory for S_sub
             dftcu::GPU_Vector<double> d_s_sub(nbands * nbands);
 
             // Call the compute function
             dftcu::compute_s_subspace_gamma(npw, nbands, gstart, psi.data(), lda, d_s_sub.data(),
-                                            nbands, psi.grid().stream());
+                                            nbands, nl_d, psi.grid().stream());
 
             // Copy result to host
             d_s_sub.copy_to_host((double*)s_sub_out.mutable_data());
@@ -750,9 +775,16 @@ PYBIND11_MODULE(_dftcu, m) {
 
             dftcu::GPU_Vector<double> d_h_sub(nbands * nbands);
 
+            // For packed data, create identity mapping nl_d[i] = i
+            std::vector<int> nl_d_host(npw);
+            for (int i = 0; i < npw; ++i)
+                nl_d_host[i] = i;
+            dftcu::GPU_Vector<int> d_nl_d(npw);
+            d_nl_d.copy_from_host(nl_d_host.data());
+
             // Use stream 0 for simplicity in logic test
             dftcu::compute_h_subspace_gamma(npw, nbands, gstart, d_psi.data(), npw, d_hpsi.data(),
-                                            npw, d_h_sub.data(), nbands, 0);
+                                            npw, d_h_sub.data(), nbands, d_nl_d.data(), 0);
 
             py::array_t<double> h_sub_out({nbands, nbands});
             d_h_sub.copy_to_host((double*)h_sub_out.mutable_data());
@@ -774,9 +806,16 @@ PYBIND11_MODULE(_dftcu, m) {
 
             dftcu::GPU_Vector<double> d_s_sub(nbands * nbands);
 
+            // For packed data, create identity mapping nl_d[i] = i
+            std::vector<int> nl_d_host(npw);
+            for (int i = 0; i < npw; ++i)
+                nl_d_host[i] = i;
+            dftcu::GPU_Vector<int> d_nl_d(npw);
+            d_nl_d.copy_from_host(nl_d_host.data());
+
             // Use stream 0 for simplicity in logic test
             dftcu::compute_s_subspace_gamma(npw, nbands, gstart, d_psi.data(), npw, d_s_sub.data(),
-                                            nbands, 0);
+                                            nbands, d_nl_d.data(), 0);
 
             py::array_t<double> s_sub_out({nbands, nbands});
             d_s_sub.copy_to_host((double*)s_sub_out.mutable_data());
@@ -785,11 +824,29 @@ PYBIND11_MODULE(_dftcu, m) {
         },
         "Pure logic test for S_sub projection using packed plane-wave coefficients");
 
+    // NonSCF Diagnostics
+    py::class_<dftcu::NonSCFDiagnostics>(m, "NonSCFDiagnostics")
+        .def(py::init<>())
+        .def_readwrite("enabled", &dftcu::NonSCFDiagnostics::enabled)
+        .def_readwrite("output_dir", &dftcu::NonSCFDiagnostics::output_dir)
+        .def_readwrite("dump_psi_initial", &dftcu::NonSCFDiagnostics::dump_psi_initial)
+        .def_readwrite("dump_hpsi", &dftcu::NonSCFDiagnostics::dump_hpsi)
+        .def_readwrite("dump_h_subspace", &dftcu::NonSCFDiagnostics::dump_h_subspace)
+        .def_readwrite("dump_s_subspace", &dftcu::NonSCFDiagnostics::dump_s_subspace)
+        .def_readwrite("dump_eigenvalues", &dftcu::NonSCFDiagnostics::dump_eigenvalues)
+        .def_readwrite("dump_occupations", &dftcu::NonSCFDiagnostics::dump_occupations)
+        .def_readwrite("dump_density", &dftcu::NonSCFDiagnostics::dump_density)
+        .def_readwrite("dump_energy_breakdown", &dftcu::NonSCFDiagnostics::dump_energy_breakdown)
+        .def("enable_all", &dftcu::NonSCFDiagnostics::enable_all)
+        .def("enable_essential", &dftcu::NonSCFDiagnostics::enable_essential);
+
+    // NonSCF Solver
     py::class_<dftcu::NonSCFSolver>(m, "NonSCFSolver")
         .def(py::init<dftcu::Grid&>())
+        .def("enable_diagnostics", &dftcu::NonSCFSolver::enable_diagnostics, py::arg("diagnostics"))
         .def("solve", &dftcu::NonSCFSolver::solve, py::arg("ham"), py::arg("psi"), py::arg("nelec"),
-             py::arg("atoms"), py::arg("ecutrho"), py::arg("rho_core") = nullptr,
-             py::arg("alpha_energy") = 0.0);
+             py::arg("atoms"), py::arg("ecutrho"), py::arg("rho_scf") = nullptr,
+             py::arg("rho_core") = nullptr, py::arg("alpha_energy") = 0.0);
 
     py::class_<dftcu::DavidsonSolver>(m, "DavidsonSolver")
         .def(py::init<dftcu::Grid&, int, double>(), py::arg("grid"), py::arg("max_iter") = 50,
@@ -806,6 +863,7 @@ PYBIND11_MODULE(_dftcu, m) {
         .def_readwrite("etxc", &dftcu::EnergyBreakdown::etxc)
         .def_readwrite("eewld", &dftcu::EnergyBreakdown::eewld)
         .def_readwrite("alpha", &dftcu::EnergyBreakdown::alpha)
+        .def_readwrite("eigenvalues", &dftcu::EnergyBreakdown::eigenvalues)
         .def("__repr__", [](const dftcu::EnergyBreakdown& eb) {
             return "<EnergyBreakdown: etot=" + std::to_string(eb.etot) +
                    " eband=" + std::to_string(eb.eband) + " deband=" + std::to_string(eb.deband) +

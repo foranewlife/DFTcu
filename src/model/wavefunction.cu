@@ -31,9 +31,15 @@ __global__ void initialize_mask_kernel(size_t n, const double* gg, double encut,
                                        int* count) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
-        // gg is already in Bohr^-2 (no conversion needed)
-        double g2_bohr = gg[i];
-        if (0.5 * g2_bohr <= encut) {
+        // gg is in crystallographic units [1/Bohr²]
+        // Convert to physical units: |G|²_phys = |G|²_cryst × (2π)²
+        // Kinetic energy: T = ½|G|²_phys [Ha]
+        const double TWO_PI_SQ = 4.0 * 3.141592653589793 * 3.141592653589793;  // (2π)²
+        double g2_cryst = gg[i];
+        double g2_phys = g2_cryst * TWO_PI_SQ;
+        double T = 0.5 * g2_phys;
+
+        if (T <= encut) {
             mask[i] = 1;
             atomicAdd(count, 1);
         } else {
@@ -115,28 +121,25 @@ __global__ void set_coefficients_miller_kernel(int nr0, int nr1, int nr2, int np
         int n1 = (k_val % nr1 + nr1) % nr1;
         int n2 = (l_val % nr2 + nr2) % nr2;
         size_t nnr_v = (size_t)nr0 * nr1 * nr2;
-        size_t idx = (size_t)n0 * nr1 * nr2 + n1 * nr2 + n2;
+        // ✅ Column-major (Fortran-style) indexing to match QE
+        size_t idx = (size_t)n0 + n1 * nr0 + n2 * nr0 * nr1;
 
         for (int b = 0; b < num_bands; ++b) {
             gpufftComplex val = values[b * npw + ig];
-            const double inv_sqrt2 = 0.7071067811865475;
 
             if (expand_hermitian && (h_val != 0 || k_val != 0 || l_val != 0)) {
-                // QE Gamma-only 数据带 sqrt(2) 因子，需要归一化
-                // 展开到全球：G 位置和 -G 位置都是 val/sqrt(2)
-                val.x *= inv_sqrt2;
-                val.y *= inv_sqrt2;
-
-                // 填充 -G 位置（复共轭）
+                // ✅ QE Gamma-only 数据已经包含 sqrt(2) 因子
+                // 直接展开到 -G 位置（复共轭），无需额外归一化
                 int n0_i = (-h_val % nr0 + nr0) % nr0;
                 int n1_i = (-k_val % nr1 + nr1) % nr1;
                 int n2_i = (-l_val % nr2 + nr2) % nr2;
-                size_t idx_i = (size_t)n0_i * nr1 * nr2 + n1_i * nr2 + n2_i;
+                // ✅ Column-major (Fortran-style) indexing to match QE
+                size_t idx_i = (size_t)n0_i + n1_i * nr0 + n2_i * nr0 * nr1;
                 data[b * nnr_v + idx_i].x = val.x;
                 data[b * nnr_v + idx_i].y = -val.y;
             }
 
-            // 填充 G 位置（expand_hermitian 时已经缩放过）
+            // 填充 G 位置（保持原值，QE 的 sqrt(2) 因子已正确）
             data[b * nnr_v + idx] = val;
         }
     }
@@ -149,22 +152,26 @@ Wavefunction::Wavefunction(Grid& grid, int num_bands, double encut)
       num_bands_(num_bands),
       encut_(encut),
       data_(grid.nnr() * num_bands),
-      pw_mask_(grid.nnr()) {
+      pw_mask_(grid.nnr()),
+      num_pw_(grid.ngw()) {  // Use Smooth grid size directly
     data_.fill({0.0, 0.0}, grid_.stream());
     initialize_mask();
 }
 
 void Wavefunction::initialize_mask() {
     size_t n = grid_.nnr();
+    const int block_size = 256;
+    const int grid_size = (n + block_size - 1) / block_size;
+
+    // Initialize mask based on encut
+    // Note: num_pw_ is set in constructor to grid_.ngw()
+    // This mask is used internally for FFT operations
     int* d_count;
     CHECK(cudaMalloc(&d_count, sizeof(int)));
     CHECK(cudaMemset(d_count, 0, sizeof(int)));
-    const int block_size = 256;
-    const int grid_size = (n + block_size - 1) / block_size;
     initialize_mask_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(n, grid_.gg(), encut_,
                                                                          pw_mask_.data(), d_count);
     GPU_CHECK_KERNEL;
-    CHECK(cudaMemcpy(&num_pw_, d_count, sizeof(int), cudaMemcpyDeviceToHost));
     CHECK(cudaFree(d_count));
 }
 
@@ -368,9 +375,18 @@ std::vector<double> Wavefunction::get_g2kin() {
     CHECK(cudaMemcpy(h_gg.data(), grid_.gg(), n * sizeof(double), cudaMemcpyDeviceToHost));
     std::vector<double> g2kin;
     g2kin.reserve(indices.size());
-    const double b2 = constants::BOHR_TO_ANGSTROM * constants::BOHR_TO_ANGSTROM;
+
+    // g2kin = 0.5 * |G|² (Physical units)
+    // gg is in Crystallographic units (1/Bohr²)
+    // Convert to Physical: multiply by (2π)²
+    // Then multiply by 0.5 for kinetic energy coefficient
+    const double TWO_PI = 2.0 * constants::D_PI;
+    const double TWO_PI_SQ = TWO_PI * TWO_PI;
+    const double factor = 0.5 * TWO_PI_SQ;  // 0.5 × (2π)²
+
     for (int idx : indices)
-        g2kin.push_back(h_gg[idx] * b2);
+        g2kin.push_back(h_gg[idx] * factor);
+
     return g2kin;
 }
 

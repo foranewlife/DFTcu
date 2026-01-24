@@ -33,62 +33,6 @@
 - QE: `wave_g2r`，无缩放
 - numpy: `np.fft.ifftn()` 有 1/N 缩放（**需要手动 × N 对齐 QE**）
 
-### 往返归一化
-```
-ψ(G) → IFFT → ψ(r) → FFT → ψ'(G)
-ψ'(G) = N · ψ(G)  (其中 N = nr[0] × nr[1] × nr[2])
-```
-
-### 代码实现规范
-
-**✅ 正确**（DFTcu 统一约定）：
-```cpp
-// G -> R: IFFT 不缩放（匹配 QE）
-cufftExecZ2Z(plan, psi_g, psi_r, CUFFT_INVERSE);
-// 输出：psi_r 未缩放
-
-// R -> G: FFT 不缩放
-cufftExecZ2Z(plan, psi_r, psi_g, CUFFT_FORWARD);
-// 输出：psi_g = N × 输入的 psi_g
-```
-
-**❌ 错误**（不要使用 numpy 约定）：
-```cpp
-// ❌ 不要添加 1/N 缩放
-cufftExecZ2Z(plan, psi_g, psi_r, CUFFT_INVERSE);
-scale_kernel(psi_r, 1.0/N);  // ❌ 错误！破坏 QE 对齐
-```
-
-### Python 测试中的对齐
-
-当与 QE 数据对比时：
-```python
-# QE 导出的 ψ(r) 未缩放
-psi_r_qe = load_qe_data()
-
-# DFTcu 计算（匹配 QE 约定，未缩放）
-psi_r_dftcu = gamma_fft.wave_g2r(psi_g)
-
-# 直接对比，无需额外缩放
-assert np.allclose(psi_r_dftcu, psi_r_qe)
-```
-
-**如果使用 numpy 作为参考**：
-```python
-# numpy ifftn 使用 1/N 缩放
-psi_r_numpy = np.fft.ifftn(psi_g)
-
-# 需要 × N 才能与 QE/DFTcu 对齐
-psi_r_numpy *= N
-assert np.allclose(psi_r_dftcu, psi_r_numpy)
-```
-
-### 相关文件
-
-- **`src/fft/gamma_fft_solver.cu`**: 实现 QE 约定（无缩放）
-- **`src/fft/fft_solver.cuh`**: 标准 FFTSolver（历史遗留，需统一）
-- **Phase 0b 测试**: 验证 FFT 约定对齐
-
 ---
 
 ## 🌐 全局单位约定（Hartree 原子单位制）
@@ -279,36 +223,6 @@ atoms = dftcu.create_atoms_from_angstrom(atoms_list)  # ✅ 单位明确
 - ✅ 编译和功能测试通过
 
 
-
-### 能量积分单位
-
-**所有能量密度积分必须使用原子单位体积元**：
-
-```cpp
-// ✅ 正确：使用 Bohr³
-double E_total = 0.0;
-for (int i = 0; i < grid.nnr(); ++i) {
-    E_total += energy_density[i] * grid.dv_bohr();  // [Ha/Bohr³] × [Bohr³] = [Ha]
-}
-
-// ❌ 错误：使用 Angstrom³（历史遗留代码）
-double E_wrong = energy_density.integral() * grid.dv();  // 单位不匹配！
-```
-
-### 验证结果（Phase 0c）
-
-| 测试项 | DFTcu 单位 | QE 单位 | 转换 | 精度 | 状态 |
-|-------|-----------|---------|------|------|------|
-| Miller 指数 | 无量纲 | 无量纲 | 1:1 | **0** (exact) | ✅ |
-| G 向量数量 | 85 | 85 | 1:1 | **完全匹配** | ✅ |
-| g2kin 计算 | Ha | Ry | × 0.5 | **<1e-14** | 待验证 |
-
-**测试命令**：
-```bash
-python tests/nscf_alignment/phase0c/test_smooth_grid.py  # Smooth grid & g2kin 验证
-python tests/nscf_alignment/phase0c/test_dense_grid.py   # Dense grid 验证
-```
-
 ---
 
 ## ⚠️ 重要架构约束
@@ -369,92 +283,6 @@ ham.set_nonlocal(nl_pseudo)
 ham.apply(psi, h_psi)
 ```
 
-**当前 Hamiltonian 构造函数的问题**：
-```cpp
-// src/solver/hamiltonian.cuh (当前实现)
-Hamiltonian(Grid& grid, std::shared_ptr<Evaluator> evaluator, ...);
-// ❌ 强制要求 Evaluator，但 Phase 1a 动能验证不需要它
-```
-
-**✅ Phase 1a 已实现**（Hamiltonian 已重构）：
-```python
-# Phase 1a 动能验证（不需要 DensityFunctionalPotential）
-ham = dftcu.Hamiltonian(grid)
-# v_loc 默认为 0，nonlocal 默认为 None
-ham.apply(psi, h_psi)  # 只计算 T|ψ>
-# ✅ 验证状态: 精度 1.1e-16 (机器精度)
-
-# KS-DFT NSCF（需要 DensityFunctionalPotential，调用一次）
-dfp = dftcu.DensityFunctionalPotential(grid)
-dfp.add_functional(...)
-ham = dftcu.Hamiltonian(grid)
-ham.set_density_functional_potential(dfp)
-rho = read_scf_charge_density()
-ham.update_potentials(rho)  # 只调用一次
-ham.set_nonlocal(nl_pseudo)
-
-# KS-DFT SCF（需要 DensityFunctionalPotential，每次迭代调用）
-dfp = dftcu.DensityFunctionalPotential(grid)
-dfp.add_functional(...)
-ham = dftcu.Hamiltonian(grid)
-ham.set_density_functional_potential(dfp)
-for iter in range(max_iter):
-    ham.update_potentials(rho)  # 每次迭代调用
-    ham.apply(psi, h_psi)
-    rho = compute_density(psi)
-```
-
-**详细重构计划**：见 `docs/KSDFT_HAMILTONIAN_REFACTOR.md`
-
----
-
-## NSCF 哈密顿量完整组成
-
-### 完整物理公式
-
-```
-H_NSCF = T + V_ps + V_H[ρ_SCF] + V_xc[ρ_SCF] + V_NL
-```
-
-**各项说明**：
-- **T**: 动能算符 = ½(2πG)² [Hartree]
-- **V_ps**: 局域赝势（来自 UPF 文件）
-- **V_H[ρ_SCF]**: Hartree 势（从 SCF 自洽密度计算，NSCF 中固定）
-- **V_xc[ρ_SCF]**: 交换关联势（从 SCF 自洽密度计算，NSCF 中固定）
-- **V_NL**: 非局域赝势 = Σ_ij D_ij |β_i⟩⟨β_j|
-
-### QE 中的实现
-
-QE 将局域贡献合并为 `vrs`（总局域势）：
-
-```fortran
-! PW/src/set_vrs.f90
-vrs = vltot + vr
-    = V_ps + (V_H + V_xc)
-```
-
-然后在 `h_psi` 中应用：
-
-```fortran
-! PW/src/h_psi.f90
-hpsi = g2kin * psi                    ! T|ψ>
-CALL vloc_psi_gamma(psi, vrs, hpsi)   ! 加上 (V_ps + V_H + V_xc)|ψ>
-CALL add_vuspsi(hpsi)                 ! 加上 V_NL|ψ>
-```
-
-### NSCF vs SCF 的关键区别
-
-| 项目 | SCF | NSCF |
-|------|-----|------|
-| **目标** | 求自洽密度 ρ | 用固定 ρ_SCF 求更多能带 |
-| **密度 ρ** | 自洽迭代更新 | **从 SCF 读取（固定）** |
-| **V_H[ρ]** | 每次迭代重算 | **只计算一次**（用 ρ_SCF） |
-| **V_xc[ρ]** | 每次迭代重算 | **只计算一次**（用 ρ_SCF） |
-| **vrs** | 每次迭代更新 | **固定不变** |
-| **H|ψ>** | 完整哈密顿量 | **完全相同**的完整哈密顿量 |
-| **迭代** | 直到 ρ 收敛 | Davidson 求本征态（不更新 ρ） |
-
-**重点**：NSCF 和 SCF 使用**完全相同**的哈密顿量形式，区别只在于 NSCF 的 V_H 和 V_xc 是固定的。
 
 ---
 
@@ -542,518 +370,65 @@ aux(ir) = (r*vloc(r) + Z*e2*erf(r)) * sin(q*r) / q
 实现 DFTcu NSCF 与 QE 的完全对齐（Si + Gamma-only）
 
 ### 测试框架位置
-**新测试框架**: `tests/nscf_alignment/` ✅
-- 独立开发，与旧测试完全隔离
-- **Phase 1 重构后代码复用率: 81.8%** ⬆️
-- 维护成本降低 75%
-- 通用工具库: `utils/hamiltonian_tester.py`
+
+**⚠️ 重要变更 (2026-01-12)**：
+
+**当前测试框架**: `tests/nscf_step_by_step/` ✅
+- **简洁独立**: 零外部依赖，只使用 DFTcu 核心 API
+- **逐步验证**: 5 个测试步骤，分步验证 NSCF 哈密顿量各组成部分
+- **易于维护**: 每个文件 < 200 行，逻辑清晰
+- **完整文档**: README.md 包含详细使用说明
+- **状态**: ✅ **Step 1 已完成** (2026-01-12)
+  - 动能项验证通过: 2.66e-07 Ha (相对误差 ~1 ppm)
+  - QE 数据导出已修复 (机器精度 3.5e-18 Ry)
+  - Step 2-5 待验证
+
+**已废弃**: `tests/nscf_alignment/` ❌
+- 过于复杂，工具链繁琐
+- 代码重复率高，难以维护
+- **已不再使用**，仅作参考保留
 
 **旧测试**: `tests/test_*.py` ❌
 - 保持不动，不要修改
-- 代码重复率高，不适合 NSCF 对齐
+- 历史遗留，不适合 NSCF 对齐
 
 ### 测试入口
 ```bash
-# 运行所有测试
-python tests/nscf_alignment/main.py
+# 进入测试目录
+cd tests/nscf_step_by_step
 
-# 运行单个 Phase (重构版推荐)
-python tests/nscf_alignment/phase1a/test_kinetic_cuda_refactored.py
+# 运行完整测试套件
+python run_scf.py && python compare_qe.py
 
-# 生成报告
-python tests/nscf_alignment/main.py
+
+# 查看文档
+cat README.md
 ```
 
-### QE 配置文件备份
-每个测试 Phase 独立备份自己的 QE 配置文件:
+### QE 数据目录
+测试数据位于:
 ```
-tests/nscf_alignment/phaseX/
-├── qe_config/           # QE 配置备份（独立自包含）
-│   ├── si_nscf.in       # QE 输入文件
-│   ├── Si.pz-rrkj.UPF   # 赝势文件
-│   └── README.md        # 配置说明
-└── data/                # 测试数据
-```
-
-**扩展到其他材料体系**（如 SiO2）:
-1. 准备新的 QE 输入文件和赝势文件
-2. 复制到 `phaseX/qe_config/` 目录
-3. 测试代码无需修改
-
-**优势**:
-- ✅ 自包含，无需依赖外部路径
-- ✅ 版本控制友好
-- ✅ 简单明了，直接复制配置文件即可
-
-详见: `tests/nscf_alignment/QE_CONFIG_BACKUP_DESIGN.md`
-
----
-
-## 分阶段对齐计划
-
-### ✅ Phase 0: 基础对齐
-
-### ✅ Phase 1: H|ψ> (完整 NSCF 哈密顿量)
-
-**验证状态**：✅ **已完成** - 所有物理贡献均已验证
-
-#### Phase 1 子项验证
-
-- **Phase 1a (动能 T)**: 1.665e-16 ✅
-  - 公式: `T|ψ> = ½(2πG)² * ψ(G)` [Hartree]
-  - 关键修复: 添加 (2π)² 因子转换 crystallographic → physical 单位
-  - 位置: `tests/nscf_alignment/phase1a/`
-
-- **Phase 1b (局域赝势 V_ps)**: 2.933e-09 ✅
-  - **UPF V_loc(G) 验证**: G≠0: 2.9e-9, G=0: 3.4e-8 ✅
-  - 核心修复：alpha 积分使用完整 Coulomb 修正 `+ Z*e2`
-  - 位置: `tests/nscf_alignment/phase1b/test_vloc_from_upf_simple.py`
-
-- **Phase 1c (非局域势 V_NL)**: 2.78e-17 ✅
-  - 公式: `V_NL|ψ> = Σ_ij D_ij |β_i⟩⟨β_j|ψ⟩`
-  - 位置: 隐含在 Phase 1d 测试中
-
-- **Phase 1d (完整 NSCF H|ψ>)**: ✅ 已完成
-  - **公式**: `H|ψ> = T|ψ> + V_loc|ψ> + V_NL|ψ>`
-  - **重要**: `V_loc = V_ps + V_H + V_xc`（QE 的 vrs）
-  - **包含所有贡献**:
-    - ✅ T (动能): 1.665e-16
-    - ✅ V_ps (局域赝势): 2.933e-09
-    - ✅ **V_H (Hartree)**: 隐含在 V_loc 中
-    - ✅ **V_xc (XC)**: 隐含在 V_loc 中
-    - ✅ V_NL (非局域势): 2.78e-17
-  - 位置: `tests/nscf_alignment/phase1d/test_complete_hamiltonian.py`
-
-#### Phase 1 Functionals (泛函独立验证)
-
-- **用途**: 为 **SCF 实现**验证泛函计算（SCF 需要每次迭代重算）
-- **Hartree 泛函**: 2.89e-15 (能量), 4.44e-16 (势) ✅
-- **LDA-PZ XC 泛函**: 9.77e-15 (能量), 2.78e-16 (势) ✅
-- **注**: NSCF 中 V_H 和 V_xc 从 SCF 密度计算一次后固定
-- 位置: `tests/nscf_alignment/phase1_functionals/`
-
-#### 完整 NSCF 哈密顿量
-
-```
-H_NSCF = T + V_ps + V_H[ρ_SCF] + V_xc[ρ_SCF] + V_NL
+tests/nscf_step_by_step/qe_run/
+├── Si.pz-rrkj.UPF           # 赝势文件
+├── si_nscf.in               # QE NSCF 输入文件
+├── si_scf.out               # QE SCF 输出
+├── si_nscf.out              # QE NSCF 输出
+├── dftcu_debug_*.txt        # QE 导出的调试数据
+└── run_qe.sh                # QE 运行脚本
 ```
 
-**QE 实现** (`h_psi.f90`):
-```fortran
-hpsi = g2kin * psi                    ! T|ψ>
-CALL vloc_psi_gamma(psi, vrs, hpsi)   ! vrs = V_ps + V_H + V_xc
-CALL add_vuspsi(hpsi)                 ! V_NL|ψ>
-```
-
-### 📋 Phase 2: 子空间投影（研究中）
-
-**目标**: 验证 H_sub = ⟨ψ|H|ψ⟩ 和 S_sub = ⟨ψ|ψ⟩ 的计算
-
-#### Phase 2 在 Davidson 迭代中的作用
-
-**核心作用**：子空间投影是 Davidson 迭代的**核心操作**，用于将大规模本征值问题降维到小子空间求解。
-
-**完整 Davidson 流程** (`regterg.f90`):
-
-```
-1. [初始化] 准备初始波函数 ψ (nvec bands)
-   └─> 从 evc 复制或从文件加载随机波函数
-
-2. [Phase 1] 计算 H|ψ>
-   └─> CALL h_psi_ptr(psi, hpsi)  ✅ Phase 1d 已验证
-
-3. [Phase 2] 子空间投影 ⬅ 本阶段验证重点
-   ├─> H_sub = ⟨ψ|H|ψ⟩ = ψ^† H ψ  (nbase × nbase 实数矩阵)
-   └─> S_sub = ⟨ψ|ψ⟩ = ψ^† ψ      (nbase × nbase 实数矩阵)
-
-4. [对角化] 求解子空间本征值问题
-   └─> CALL diaghg(H_sub, S_sub, eigenvalues, eigenvectors)
-       求解: H_sub * c = ε * S_sub * c
-
-5. [收敛检查] 计算残差
-   └─> R = (H - ε*S)|ψ>  (对每个 band)
-       IF |R| < threshold: 收敛 ✅
-       ELSE: 继续迭代 ↓
-
-6. [迭代扩展] (如果未收敛)
-   ├─> 计算修正向量: δψ = (H - ε)^-1 R  (预条件)
-   ├─> 正交化: δψ ⊥ 当前子空间
-   ├─> 扩展子空间: nbase = nbase + notcnv
-   ├─> 计算新的 H|δψ>
-   ├─> 更新 H_sub, S_sub (增量更新)
-   └─> 回到步骤 4，重新对角化
-```
-
-**子空间投影的物理意义**:
-
-1. **降维**: 将 O(10^5) 维度的 Hilbert 空间投影到 O(10-100) 维子空间
-2. **变分原理**: 在子空间中求解的本征值是精确本征值的变分上界
-3. **迭代改进**: 每次迭代通过扩展子空间逐步逼近真实本征态
-
-**Phase 2 测试验证什么**:
-
-- ✅ **正确性**: H_sub, S_sub 与 QE 完全一致（1e-13 精度）
-- ✅ **对称性**: 实数对称矩阵（Gamma-only 特性）
-- ✅ **归一化**: S_sub 对角线 = 1.0（波函数归一化）
-- ✅ **Gamma-only 优化**: 因子 2 和 G=0 修正
-
-**为什么 Phase 2 如此重要**:
-
-1. **子空间投影在每次迭代中都会执行** (通常 3-10 次)
-2. **任何误差都会累积** 导致收敛失败或错误的本征值
-3. **是 Davidson 算法的瓶颈操作** (矩阵乘法性能关键)
-4. **后续 Phase 3 依赖于此** Phase 2 错误会导致整个 Davidson 失败
-
-**Phase 2 与 NSCF 对齐路线图的关系**:
-
-```
-NSCF 完整流程验证路线图:
-
-Phase 0: 基础验证 ✅
-  └─> G-vectors, Miller 指数, FFT 映射
-
-Phase 1: 哈密顿量算符 H ✅
-  └─> H|ψ> = T|ψ> + V_loc|ψ> + V_NL|ψ>
-      (所有物理贡献已验证)
-
-Phase 2: 子空间投影 ⬅ 当前阶段 🔧
-  ├─> H_sub = ⟨ψ|H|ψ⟩  (将 H 投影到子空间)
-  └─> S_sub = ⟨ψ|ψ⟩    (重叠矩阵)
-      └─> 关键: Gamma-only 内积 (因子 2, G=0 修正)
-
-Phase 3: Davidson 迭代 (待验证)
-  ├─> 初始化 (使用 Phase 1, Phase 2)
-  ├─> 对角化 H_sub
-  ├─> 收敛检查
-  └─> 迭代扩展 (循环使用 Phase 1, Phase 2)
-
-完整 NSCF 对齐 ✅
-  └─> 本征值、本征态完全匹配 QE
-```
-
-**调研结果**（2026-01-10）：
-
-#### QE 的 Gamma-only 内积计算
-
-**关键发现**: QE 在 Gamma-only 模式下使用特殊的内积公式，利用 Hermitian 对称性只存储半球 G-vectors：
-
-**QE 实现** (`regterg.f90:241-257`):
-```fortran
-! 计算 H_sub = ψ^† H ψ (实数矩阵)
-CALL DGEMM('T','N', nbase, my_n, npw2, 2.D0, psi, npwx2, hpsi(1,n_start), npwx2, 0.D0, hr(1,n_start), nvecx)
-! 减去 G=0 的重复计数
-IF (gstart == 2) CALL MYDGER(nbase, my_n, -1.D0, psi, npwx2, hpsi(1,n_start), npwx2, hr(1,n_start), nvecx)
-
-! 计算 S_sub = ψ^† ψ (非 USPP 情况)
-CALL DGEMM('T','N', nbase, my_n, npw2, 2.D0, psi, npwx2, psi(1,n_start), npwx2, 0.D0, sr(1,n_start), nvecx)
-IF (gstart == 2) CALL MYDGER(nbase, my_n, -1.D0, psi, npwx2, psi(1,n_start), npwx2, sr(1,n_start), nvecx)
-```
-
-**公式推导**:
-
-1. **标准内积**（全球面）：
-   ```
-   ⟨ψ_i|ψ_j⟩ = Σ_G conj(ψ_i(G)) * ψ_j(G)
-   ```
-
-2. **Gamma-only 对称性**：
-   ```
-   ψ(-G) = conj(ψ(G))  (Hermitian 对称)
-   ```
-
-3. **半球存储公式**：
-   ```
-   ⟨ψ_i|ψ_j⟩ = ψ_i*(G=0) * ψ_j(G=0) + 2 * Σ_{G≠0, half-sphere} Re[ψ_i*(G) * ψ_j(G)]
-   ```
-
-4. **QE 的实现技巧**：
-   - 将复数波函数视为实数数组（长度 `npw2 = 2*npw`）
-   - `DGEMM(..., 2.0, ...)`: 对所有 G 点乘以 2
-   - `MYDGER(..., -1.0, ...)`: 减去 G=0 的重复计数（因为 G=0 只应计数 1 次，不是 2 次）
-
-**关键参数**:
-- `npw2 = 2*npw`: 复数转实数，数组长度翻倍
-- `npwx2 = 2*npwx`: leading dimension
-- `gstart = 2`: Fortran 1-based 索引，表示 G=0 存在（C++ 中对应 index 0）
-
-#### DFTcu 当前问题
-
-**现状分析**:
-- **DFTcu `Wavefunction::dot()`** (`src/model/wavefunction.cu:338-350`):
-  ```cpp
-  std::complex<double> Wavefunction::dot(int band_a, int band_b) {
-      // 使用 HermitianProductOp: conj(a) * b
-      Complex sum = thrust::transform_reduce(..., HermitianProductOp(), ...);
-      return {sum.real(), sum.imag()};
-  }
-  ```
-
-**问题**:
-1. ❌ **缺少 Gamma-only 的因子 2**: 对 G≠0 点应该乘以 2
-2. ❌ **缺少 G=0 的特殊处理**: G=0 不应该乘以 2
-3. ❌ **结果是复数**: Gamma-only 内积应该是实数
-
-**测试失败症状**:
-- `S_sub` 对角线: 应该是 1.0，实际是 0.5 或 0.93
-- `S_sub` 误差: 8.496e-01
-- `H_sub` 误差: 3.947e+00
-
-**根因**: 缺少因子 2 导致归一化错误（0.5 ≈ 1.0 / 2）
-
-#### ✅ DFTcu 已有完整实现！
-
-**重大发现**（2026-01-10）：DFTcu 已经实现了完整的 Gamma-only 子空间投影！
-
-**已实现的代码** (`src/solver/gamma_utils.cu`):
-
-```cpp
-void compute_subspace_matrix_gamma(int npw, int nbands, int gstart,
-                                   const gpufftComplex* psi_a, int lda_a,
-                                   const gpufftComplex* psi_b, int lda_b,
-                                   double* matrix_out, int ldr, cudaStream_t stream);
-
-void compute_h_subspace_gamma(int npw, int nbands, int gstart,
-                              const gpufftComplex* psi, int lda_psi,
-                              const gpufftComplex* hpsi, int lda_hpsi,
-                              double* h_sub, int ldh, cudaStream_t stream);
-
-void compute_s_subspace_gamma(int npw, int nbands, int gstart,
-                              const gpufftComplex* psi, int lda_psi,
-                              double* s_sub, int lds, cudaStream_t stream);
-```
-
-**实现逻辑**（完全匹配 QE）:
-1. ✅ 使用 `cublasDgemm(..., alpha=2.0, ...)` 对所有 G 点乘以 2
-2. ✅ 使用 `correct_g0_term_kernel` 减去 G=0 的重复计数
-3. ✅ 完全遵循 QE `regterg.f90:241-257` 的实现
-
-**问题分析**:
-- ❌ **这些函数尚未导出到 Python 层**
-- ❌ **测试代码使用了 `Wavefunction::dot()`，它不支持 Gamma-only**
-- ✅ **C++ 层实现完全正确，只需要导出即可**
-
-#### 修复方案
-
-**推荐方案: 导出现有的 `compute_*_subspace_gamma` 函数到 Python**
-
-1. **在 `src/api/dftcu_api.cu` 中添加导出**:
-   ```cpp
-   m.def("compute_h_subspace_gamma", &dftcu::compute_h_subspace_gamma, ...);
-   m.def("compute_s_subspace_gamma", &dftcu::compute_s_subspace_gamma, ...);
-   ```
-
-2. **修改测试代码** (`tests/nscf_alignment/phase2/test_subspace.py`):
-   ```python
-   # 不再使用 Wavefunction::dot()
-   # 直接调用 C++ 的 compute_h_subspace_gamma
-
-   import numpy as np
-   H_sub = np.zeros((nbands, nbands), dtype=np.float64)
-   S_sub = np.zeros((nbands, nbands), dtype=np.float64)
-
-   dftcu.compute_h_subspace_gamma(
-       npw=psi.num_pw(),
-       nbands=nbands,
-       gstart=2,  # Gamma-only, G=0 exists
-       psi=psi.data(),
-       hpsi=hpsi.data(),
-       h_sub=H_sub,
-       stream=grid.stream()
-   )
-   ```
-
-**为什么不修改 `Wavefunction::dot()`**:
-- `dot()` 是通用接口，不应该硬编码 Gamma-only 逻辑
-- 子空间投影应该使用专门的高效 BLAS 实现
-- QE 也不使用逐个内积，而是批量 DGEMM
-
-#### 下一步计划
-
-**立即任务**（Phase 2 完成所需）:
-1. ✅ **已完成**: 调研 QE Gamma-only 内积计算逻辑
-2. ✅ **已完成**: 发现 DFTcu 已有完整实现 (`gamma_utils.cu`)
-3. 🔧 **待实现**: 导出 `compute_h_subspace_gamma` 和 `compute_s_subspace_gamma` 到 Python
-4. 🔧 **待修改**: 更新 `tests/nscf_alignment/phase2/test_subspace.py` 使用导出的函数
-5. ✅ **待验证**: 运行测试，验证精度达到 1e-13
-
-**预期结果**:
-- S_sub 对角线: 1.0（当前 0.5 或 0.93）
-- S_sub 误差: < 1e-13（当前 8.496e-01）
-- H_sub 误差: < 1e-13（当前 3.947e+00）
-
-**位置**: `tests/nscf_alignment/phase2/test_subspace.py`
-
----
-
-### 📋 Phase 3: Davidson 迭代与 NSCF 完整验证
-
-**目标**: 验证完整的 Davidson 迭代收敛过程和 NSCF 求解器
-
-#### Phase 3 子阶段设计
-
-Phase 3 分为三个子阶段，渐进式验证 Davidson 算法和 NSCF 求解器：
-
-##### Phase 3a: SubspaceSolver 子空间对角化 ✅ 已实现
-
-**验证内容**:
-1. 从初始波函数计算 H_sub, S_sub (复用 Phase 2)
-2. 对角化子空间矩阵得到本征值
-3. 验证本征值与 QE 第一次迭代的本征值对齐
-
-**QE 对应代码** (`regterg.f90:242-261`):
-```fortran
-! 对角化子空间
-CALL diaghg(nbase, nvec, hc, sc, nvecx, ew, vc)
-! 调用 DSYGVD 求解广义本征值问题: H_sub * c = ε * S_sub * c
-```
-
-**DFTcu 实现**:
-```python
-solver = dftcu.SubspaceSolver(grid)
-eigenvalues = solver.solve_direct(ham, psi)
-```
-
-**精度目标**: 本征值差异 < 1e-13 Ha
-
-**测试位置**: `tests/nscf_alignment/phase3a/test_subspace_diagonalization.py`
-
-**验证状态**: ✅ 已实现（待运行验证）
-
----
-
-##### Phase 3b: Davidson 迭代过程（可选）
-
-**验证内容**:
-1. 验证 Davidson 迭代的每一步（残差、预条件、子空间扩展）
-2. 逐步对比 QE 的迭代轨迹
-3. 验证收敛判据
-
-**QE 对应代码** (`regterg.f90:265-end`):
-```fortran
-! Davidson 迭代主循环
-DO iter = 2, maxter
-    ! 计算残差: R = (H - ε*S)|ψ>
-    ! 预条件: g_psi(R)
-    ! 正交化并扩展子空间
-    ! 重新对角化
-    ! 检查收敛
-END DO
-```
-
-**精度目标**:
-- 每次迭代的残差与 QE 对齐 < 1e-10
-- 收敛轨迹一致
-
-**测试位置**: `tests/nscf_alignment/phase3b/` (可选实现)
-
-**验证状态**: 📋 可选（Phase 3a + 3c 已足够验证正确性）
-
----
-
-##### Phase 3c: NonSCFSolver 完整测试 ✅ 已实现
-
-**验证内容**:
-1. 调用 `NonSCFSolver.solve()` 执行完整 NSCF 计算
-2. 验证最终收敛的本征值与 QE 完全对齐
-3. 验证本征态（波函数）与 QE 对齐
-4. 验证能量分解（Ewald, 总能量等）
-
-**QE 对应流程**:
-```
-non_scf() [PW/src/non_scf.f90]
-  └─> c_bands_nscf() [PW/src/c_bands.f90]
-       ├─> init_wfc()          # 初始化波函数
-       ├─> diag_bands_gamma()  # Gamma-only 对角化
-       │    └─> regterg()       # Davidson 迭代
-       └─> 返回本征值
-  └─> 计算 Ewald 能量和总能量
-```
-
-**DFTcu 实现**:
-```python
-solver = dftcu.NonSCFSolver(grid)
-breakdown = solver.solve(ham, psi, nelec, atoms, ecutrho)
-
-# 输出:
-# - breakdown.etot: 总能量 (Ha)
-# - breakdown.eewld: Ewald 能量 (Ha)
-# - breakdown.eband: 能带能量 (Ha)
-# - psi: 更新为收敛的本征态
-# - psi.eigenvalues(): 收敛的本征值 (Ha)
-```
-
-**精度目标**:
-- 本征值差异 < 1e-10 Ha
-- 总能量差异 < 1e-10 Ha
-- Ewald 能量差异 < 1e-12 Ha
-- 波函数重叠度 > 0.9999
-
-**测试位置**: `tests/nscf_alignment/phase3c/test_nscf_solver.py`
-
-**验证状态**: ✅ 已实现（待运行验证）
-
----
-
-#### Phase 3 在 NSCF 路线图中的位置
-
-```
-NSCF 完整流程验证路线图:
-
-Phase 0: 基础验证 ✅
-  └─> G-vectors, Miller 指数, FFT 映射
-
-Phase 1: 哈密顿量算符 H ✅
-  └─> H|ψ> = T|ψ> + V_loc|ψ> + V_NL|ψ>
-      (所有物理贡献已验证)
-
-Phase 2: 子空间投影 🔧
-  ├─> H_sub = ⟨ψ|H|ψ⟩
-  └─> S_sub = ⟨ψ|ψ⟩
-      (Gamma-only 内积，待导出 Python 接口)
-
-Phase 3: Davidson 迭代与 NSCF ⬅ 当前阶段
-  ├─> Phase 3a: 子空间对角化 ✅ 已实现
-  ├─> Phase 3b: 迭代过程 📋 可选
-  └─> Phase 3c: 完整 NSCF ✅ 已实现
-
-完整 NSCF 对齐 ✅ 即将完成
-  └─> 本征值、本征态、能量完全匹配 QE
-```
-
----
-
-#### Phase 3 验证完成标准
-
-**Phase 3a (SubspaceSolver)**:
-- ✅ 本征值与 QE iter 0 差异 < 1e-13 Ha
-- ✅ 所有能带本征值均对齐
-- ✅ 对角化过程无数值异常
-
-**Phase 3c (NonSCFSolver)**:
-- ✅ 最终本征值差异 < 1e-10 Ha
-- ✅ 波函数重叠度 > 0.9999
-- ✅ 总能量差异 < 1e-10 Ha
-- ✅ Ewald 能量差异 < 1e-12 Ha
-- ✅ 收敛无异常
-
----
-
-#### Phase 3 完成后的里程碑
-
-完成 Phase 3 意味着：
-
-1. **DFTcu NSCF 与 QE 完全对齐** ✅
-   - 所有物理量（本征值、波函数、能量）匹配 QE
-   - 可以用于生产环境的 NSCF 计算
-
-2. **为 SCF 实现奠定基础** 🚀
-   - NSCF 是 SCF 每次迭代的核心
-   - 已验证的 Hamiltonian 和求解器可直接用于 SCF
-   - 只需添加密度更新和混合逻辑
-
-3. **性能优化的基准** 📊
-   - 正确性已验证，可专注于性能优化
-   - GPU kernel 优化、内存管理改进
+**QE 导出数据文件**:
+- `dftcu_debug_miller_smooth.txt` - Miller 指数
+- `dftcu_debug_nl_mapping.txt` - G → FFT 映射
+- `dftcu_debug_psi_iter0.txt` - 初始波函数
+- `dftcu_debug_tpsi_iter0.txt` - T|ψ>
+- `dftcu_debug_vps_r.txt` - 局域赝势
+- `dftcu_debug_v_hartree.txt` - Hartree 势
+- `dftcu_debug_v_xc.txt` - XC 势
+- `dftcu_debug_tvlocpsi_iter0.txt` - (T + V_loc)|ψ>
+- `dftcu_debug_fullhpsi_iter0.txt` - 完整 H|ψ>
+- `dftcu_debug_hr_iter0.txt` - H_sub 矩阵
+- `dftcu_debug_sr_iter0.txt` - S_sub 矩阵
 
 ---
 
@@ -1125,31 +500,6 @@ vrs = vltot + vr
 cd external/qe
 cmake --build build --target pw -j8
 ```
-
----
-
-## 开发工作流
-
-### 添加新测试
-1. 创建目录: `mkdir -p tests/nscf_alignment/phaseX/data`
-2. 使用工具库:
-   ```python
-   from utils import QEDataLoader, Comparator, TestReporter, GridFactory
-   ```
-3. 参考模板: `tests/nscf_alignment/QUICKSTART.md`
-
-### 修改配置
-所有配置集中在 `tests/nscf_alignment/test_config.py`
-
-### 运行测试
-```bash
-# 完整测试套件
-python tests/nscf_alignment/main.py
-
-# 单个 Phase
-python tests/nscf_alignment/phase0/test_phase0.py
-```
-
 ---
 
 ## 常见问题
@@ -1158,18 +508,6 @@ python tests/nscf_alignment/phase0/test_phase0.py
 ```bash
 happy notify -p "<message>"
 ```
-
-### Q: 测试数据放哪里？
-`tests/nscf_alignment/phaseX/data/`
-
-**不要加入 .gitignore！**
-
-### Q: 如何更改精度阈值？
-修改 `tests/nscf_alignment/test_config.py` 中的 `PrecisionTargets`
-
-### Q: Phase0Verifier 在哪里？
-C++ 代码: `src/solver/phase0_verifier.cu`
-Python 测试: `tests/nscf_alignment/phase0/test_phase0.py`
 
 ---
 
@@ -1304,11 +642,6 @@ Math 层 (src/math/)
   - 完整 Davidson 算法（Phase 3 待验证）
   - 残差计算、预条件、子空间扩展
 
-- **`src/solver/phase0_verifier.cu`**: Phase 0 验证器
-  - 已验证 Miller 指数映射
-  - 已验证 S_sub 矩阵计算
-  - **精度**: 3.1e-15 ✅
-
 
 ---
 
@@ -1319,8 +652,3 @@ Math 层 (src/math/)
 3. **渐进式验证**（Phase N 依赖 Phase N-1）
 4. **误差可追溯**（逐项分解定位问题）
 5. **工业级质量**（SOLID、DRY、KISS 原则）
-
----
-
-**版本**: 2.2
-**更新日期**: 2026-01-08

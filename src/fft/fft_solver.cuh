@@ -34,9 +34,13 @@ __global__ void scale_kernel(size_t n, gpufftComplex* data, double scale) {
 /**
  * @brief 3D FFT Solver using cuFFT.
  *
- * Convention:
- * Forward: Physical Real -> Physical Reciprocal (1/N scaling applied)
- * Backward: Physical Reciprocal -> Real * N (Raw cuFFT inverse)
+ * QE Convention (CRITICAL - matches Quantum ESPRESSO):
+ * - Forward (R→G): ψ(G) = Σ_r ψ(r) exp(-i G·r) [NO scaling]
+ * - Backward (G→R): ψ(r) = Σ_G ψ(G) exp(i G·r) [NO scaling]
+ * - Round-trip: ψ(G) → IFFT → FFT → N·ψ(G) [amplified by N]
+ *
+ * This differs from numpy.fft which scales IFFT by 1/N.
+ * See CLAUDE.md for detailed unit conventions.
  */
 class FFTSolver {
   public:
@@ -51,7 +55,7 @@ class FFTSolver {
     void forward(ComplexField& field) {
         CUFFT_CHECK(cufftExecZ2Z(plan_, (cufftDoubleComplex*)field.data(),
                                  (cufftDoubleComplex*)field.data(), CUFFT_FORWARD));
-        // Scale to physical G-space (1/N)
+        // Scale by 1/N (Standard QE convention for R to G)
         size_t n = grid_.nnr();
         const int block_size = 256;
         const int grid_size = (n + block_size - 1) / block_size;

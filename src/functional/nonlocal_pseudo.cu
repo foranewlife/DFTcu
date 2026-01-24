@@ -32,8 +32,9 @@ std::shared_ptr<NonLocalPseudo> NonLocalPseudo::from_upf(Grid& grid, const Atoms
     }
 
     // Initialize beta tabulation
+    // CRITICAL: Pass volume in Bohr³ (grid.volume_bohr(), not grid.volume())
     nl_pseudo->init_tab_beta(atom_type, mesh.r, beta_r, mesh.rab, l_list, kkbeta_list,
-                             grid.volume());
+                             grid.volume_bohr());
 
     // Initialize D_ij matrix
     nl_pseudo->init_dij(atom_type, nl_pot.dij);
@@ -50,6 +51,95 @@ __device__ __constant__ double c_nl_atom_x[256];
 __device__ __constant__ double c_nl_atom_y[256];
 __device__ __constant__ double c_nl_atom_z[256];
 __device__ __constant__ int c_nl_atom_type[256];
+
+// Scatter packed array (npw) to FFT grid (nnr) using nl_d mapping and accumulate
+// Input: data_packed[npw] - compact data on Smooth grid
+// Output: data_fft[nnr] - FFT grid (accumulate: += )
+__global__ void scatter_and_accumulate_kernel(int npw, const int* nl_d,
+                                              const gpufftComplex* data_packed,
+                                              gpufftComplex* data_fft) {
+    int ig = blockDim.x * blockIdx.x + threadIdx.x;
+    if (ig < npw) {
+        int ifft = nl_d[ig];  // Map Smooth grid index to FFT grid position
+        // Accumulate (not replace!)
+        data_fft[ifft].x += data_packed[ig].x;
+        data_fft[ifft].y += data_packed[ig].y;
+    }
+}
+
+// Extract packed array from FFT grid using nl_d mapping
+// Input: data_fft[nnr] - sparse data on FFT grid (only nl_d[0:npw-1] are non-zero)
+// Output: data_packed[npw] - packed contiguous array
+__global__ void extract_smooth_to_packed_kernel(int npw, const int* nl_d,
+                                                const gpufftComplex* data_fft,
+                                                gpufftComplex* data_packed) {
+    int ig = blockDim.x * blockIdx.x + threadIdx.x;
+    if (ig < npw) {
+        int ifft = nl_d[ig];  // Map Smooth grid index to FFT grid position
+        data_packed[ig] = data_fft[ifft];
+    }
+}
+
+// NEW: Smooth grid version - only compute on npw G-vectors, use nl_d mapping
+__global__ void interpolate_beta_smooth_kernel(int npw, const int* nl_d, const double* gx,
+                                               const double* gy, const double* gz, const double* gg,
+                                               int l, int m, int iat, const double* tab, int stride,
+                                               double dq, double omega_bohr,
+                                               gpufftComplex* beta_g) {
+    int ig = blockDim.x * blockIdx.x + threadIdx.x;
+    if (ig < npw) {
+        const double TWO_PI = constants::D_PI * 2.0;
+        int ifft = nl_d[ig];  // Map Smooth grid index to FFT grid position
+
+        double gmod_phys = sqrt(gg[ifft]) * TWO_PI;  // Physical G in Bohr^-1
+        double betag = 0.0;
+
+        if (gmod_phys < 1e-12) {
+            if (l == 0)
+                betag = tab[0];
+            else
+                betag = 0.0;
+        } else {
+            int i0 = (int)(gmod_phys / dq) + 1;
+            if (i0 < stride - 4) {
+                double px = gmod_phys / dq - (double)(i0 - 1);
+                double ux = 1.0 - px;
+                double vx = 2.0 - px;
+                double wx = 3.0 - px;
+
+                betag = tab[i0 - 1] * ux * vx * wx / 6.0 + tab[i0] * px * vx * wx / 2.0 -
+                        tab[i0 + 1] * px * ux * wx / 2.0 + tab[i0 + 2] * px * ux * vx / 6.0;
+            }
+        }
+
+        double ylm_val = get_ylm(l, m, gx[ifft], gy[ifft], gz[ifft], sqrt(gg[ifft]));
+        double val = betag * ylm_val;
+
+        // Apply phase factor exp(-iG_phys.R)
+        double phase = -TWO_PI * (gx[ifft] * c_nl_atom_x[iat] + gy[ifft] * c_nl_atom_y[iat] +
+                                  gz[ifft] * c_nl_atom_z[iat]);
+        double s, c;
+        sincos(phase, &s, &c);
+
+        double re_part = val * c;
+        double im_part = val * s;
+
+        // Apply (-i)^l factor (QE convention)
+        if (l == 0) {
+            beta_g[ifft].x = re_part;
+            beta_g[ifft].y = im_part;
+        } else if (l == 1) {
+            beta_g[ifft].x = im_part;
+            beta_g[ifft].y = -re_part;
+        } else if (l == 2) {
+            beta_g[ifft].x = -re_part;
+            beta_g[ifft].y = -im_part;
+        } else if (l == 3) {
+            beta_g[ifft].x = -im_part;
+            beta_g[ifft].y = re_part;
+        }
+    }
+}
 
 __global__ void interpolate_beta_kernel(int n, const double* gx, const double* gy, const double* gz,
                                         const double* gg, int l, int m, int iat, const double* tab,
@@ -175,9 +265,17 @@ void NonLocalPseudo::update_projectors(const Atoms& atoms) {
     if (num_projectors_ == 0)
         return;
 
-    size_t n = grid_.nnr();
-    d_projectors_.resize(n * num_projectors_);
+    // CRITICAL FIX: Only compute projectors on Smooth grid (npw), not full FFT grid (nnr)
+    // This matches QE's init_us_2, which only computes vkb(npw, nkb)
+    size_t npw = grid_.ngw();  // Smooth grid size
+    size_t nnr = grid_.nnr();  // FFT grid size (for storage stride)
+
+    // Allocate storage with FFT grid stride (for nl_d mapping)
+    d_projectors_.resize(nnr * num_projectors_);
     d_coupling_.resize(num_projectors_ * num_projectors_);
+
+    // Initialize all projectors to zero (important for FFT grid points outside Smooth grid)
+    d_projectors_.fill({0.0, 0.0});
     d_coupling_.fill(0.0);
 
     CHECK(cudaMemcpyToSymbolAsync(c_nl_atom_x, atoms.h_pos_x().data(), atoms.nat() * sizeof(double),
@@ -209,11 +307,24 @@ void NonLocalPseudo::update_projectors(const Atoms& atoms) {
 
             for (int m_idx = 0; m_idx < (2 * l + 1); ++m_idx) {
                 int p_idx = radial_to_proj[nb][m_idx];
-                interpolate_beta_kernel<<<(n + 255) / 256, 256, 0, grid_.stream()>>>(
-                    (int)n, grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), l, m_idx, (int)iat,
-                    d_tab.data(), nqx_ + 1, dq_, omega_, d_projectors_.data() + p_idx * n);
+                // FIX: Use new Smooth grid kernel with nl_d mapping
+                interpolate_beta_smooth_kernel<<<(npw + 255) / 256, 256, 0, grid_.stream()>>>(
+                    (int)npw, grid_.nl_d(), grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), l,
+                    m_idx, (int)iat, d_tab.data(), nqx_ + 1, dq_, omega_,
+                    d_projectors_.data() + p_idx * nnr);
             }
             grid_.synchronize();
+        }
+
+        // DEBUG: Print D_ij matrix for first atom type
+        if (type == 0) {
+            printf("[DEBUG D_ij] D_ij matrix (type=%d, size=%dx%d, in Hartree after ×0.5):\n", type,
+                   n_radial, n_radial);
+            for (int i = 0; i < std::min(4, n_radial); ++i) {
+                for (int j = 0; j < std::min(4, n_radial); ++j) {
+                    printf("  D[%d,%d] = %.10e\n", i, j, d_ij_[type][i][j] * 0.5);
+                }
+            }
         }
 
         for (int nb = 0; nb < n_radial; ++nb) {
@@ -225,7 +336,7 @@ void NonLocalPseudo::update_projectors(const Atoms& atoms) {
                         int p1 = radial_to_proj[nb][m];
                         int p2 = radial_to_proj[mb][m];
                         h_coupling[p1 * num_projectors_ + p2] =
-                            d_ij_[type][nb][mb] * 0.5;  // Ry -> Ha
+                            d_ij_[type][nb][mb] * 0.5;  // RESTORE: Ry→Ha conversion
                     }
                 }
             }
@@ -239,8 +350,11 @@ void NonLocalPseudo::update_projectors(const Atoms& atoms) {
 void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
     if (num_projectors_ == 0)
         return;
-    size_t n = grid_.nnr();
+
+    int npw = grid_.ngw();     // Smooth grid size (85 for Si Gamma)
+    size_t nnr = grid_.nnr();  // FFT grid size (3375 for Si Gamma)
     int nb = psi.num_bands();
+
     if (d_projections_.size() < (size_t)num_projectors_ * nb)
         d_projections_.resize(num_projectors_ * nb);
 
@@ -248,46 +362,245 @@ void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
     CUBLAS_SAFE_CALL(cublasSetStream(h, grid_.stream()));
     CublasPointerModeGuard guard(h, CUBLAS_POINTER_MODE_HOST);
 
-    // 1. Projections: result = <beta | psi> = sum_G beta_G* * psi_G
-    // In G-space, the integral <beta|psi> is equivalent to Omega * sum(beta_G* * psi_G)
-    // because sum(exp(i(G-G')R)) = N * delta_GG'.
-    cuDoubleComplex alpha_nl_v = {grid_.volume_bohr(), 0.0}, beta_zero_v = {0.0, 0.0};
-    CUBLAS_SAFE_CALL(cublasZgemm(h, CUBLAS_OP_C, CUBLAS_OP_N, num_projectors_, nb, (int)n,
-                                 &alpha_nl_v, (const cuDoubleComplex*)d_projectors_.data(), (int)n,
-                                 (const cuDoubleComplex*)psi.data(), (int)n, &beta_zero_v,
-                                 (cuDoubleComplex*)d_projections_.data(), num_projectors_));
+    // ========================================================================
+    // NEW IMPLEMENTATION: Use DGEMM on packed arrays (matching QE calbec_gamma)
+    // ========================================================================
+
+    // Step 1: Pack beta projectors from FFT grid (nnr) to compact array (npw)
+    // Beta projectors are stored on FFT grid, but only nl_d[0:npw-1] are non-zero
+    GPU_Vector<gpufftComplex> beta_packed(npw * num_projectors_);
+
+    for (int iproj = 0; iproj < num_projectors_; ++iproj) {
+        extract_smooth_to_packed_kernel<<<(npw + 255) / 256, 256, 0, grid_.stream()>>>(
+            npw, grid_.nl_d(),
+            d_projectors_.data() + iproj * nnr,  // Input: beta on FFT grid
+            beta_packed.data() + iproj * npw     // Output: beta packed
+        );
+    }
+    grid_.synchronize();
+
+    // DEBUG: Export beta_packed for comparison with QE vkb
+    static bool beta_exported = false;
+    if (!beta_exported && nb == 4) {  // Only export once, for NSCF with 4 bands
+        beta_exported = true;
+        std::vector<gpufftComplex> h_beta_packed(npw * num_projectors_);
+        beta_packed.copy_to_host(h_beta_packed.data(), grid_.stream());
+        grid_.synchronize();
+
+        FILE* fp = fopen("dftcu_beta_packed.txt", "w");
+        if (fp) {
+            fprintf(fp, "# DFTcu beta_packed (Gamma-only, complex)\n");
+            fprintf(fp, "# npw = %d\n", npw);
+            fprintf(fp, "# num_projectors = %d\n", num_projectors_);
+            fprintf(fp, "# Format: ig iproj real imag\n");
+            for (int iproj = 0; iproj < num_projectors_; ++iproj) {
+                for (int ig = 0; ig < npw; ++ig) {
+                    gpufftComplex val = h_beta_packed[iproj * npw + ig];
+                    fprintf(fp, "%5d %5d %25.16e %25.16e\n", ig + 1, iproj + 1, val.x,
+                            val.y);  // 1-based for comparison with QE
+                }
+            }
+            fclose(fp);
+            printf("[DEBUG V_NL] Exported beta_packed to dftcu_beta_packed.txt\n");
+        }
+    }
+
+    // Step 2: Pack wavefunctions from FFT grid (nnr) to compact array (npw)
+    GPU_Vector<gpufftComplex> psi_packed(npw * nb);
+
+    for (int ib = 0; ib < nb; ++ib) {
+        extract_smooth_to_packed_kernel<<<(npw + 255) / 256, 256, 0, grid_.stream()>>>(
+            npw, grid_.nl_d(),
+            psi.data() + ib * nnr,        // Input: psi on FFT grid
+            psi_packed.data() + ib * npw  // Output: psi packed
+        );
+    }
+    grid_.synchronize();
+
+    // Step 3: Compute becp = <beta|psi> using DGEMM (Gamma-only formula)
+    // QE formula: becp(i,j) = 2*Re(Σ_k beta^*(k,i) psi(k,j)) - beta^*(0,i)psi(0,j)
+    // Implementation: treat complex arrays as real with size 2*npw
+
+    double* beta_real = reinterpret_cast<double*>(beta_packed.data());
+    double* psi_real = reinterpret_cast<double*>(psi_packed.data());
+
+    // Allocate real becp array (num_projectors × nb)
+    GPU_Vector<double> becp_real(num_projectors_ * nb);
+
+    // DGEMM: becp = 2.0 * beta^T * psi
+    // beta_real: (2*npw, num_projectors) in column-major
+    // psi_real:  (2*npw, nb) in column-major
+    // becp_real: (num_projectors, nb) in column-major
+    double alpha_gamma = 2.0;  // Gamma-only factor
+    double beta_zero_d = 0.0;
+
+    CUBLAS_SAFE_CALL(
+        cublasDgemm(h, CUBLAS_OP_T, CUBLAS_OP_N, num_projectors_, nb, 2 * npw,  // m, n, k
+                    &alpha_gamma, beta_real, 2 * npw,  // A: (2*npw, num_projectors), lda=2*npw
+                    psi_real, 2 * npw,                 // B: (2*npw, nb), ldb=2*npw
+                    &beta_zero_d, becp_real.data(),
+                    num_projectors_));  // C: (num_projectors, nb), ldc=num_projectors
+
+    // DEBUG: Print becp after DGEMM, before G=0 correction (first band only)
+    int debug_count = std::min(8, num_projectors_);
+    if (debug_count > 0) {
+        std::vector<double> h_becp_all(num_projectors_ * nb);
+        becp_real.copy_to_host(h_becp_all.data(), grid_.stream());
+        grid_.synchronize();
+        printf("[DEBUG becp] After DGEMM (before G=0 correction, first %d projectors, band 0):\n",
+               debug_count);
+        for (int i = 0; i < debug_count; ++i) {
+            printf("  becp[%d,0] = %.10e\n", i, h_becp_all[i]);
+        }
+    }
+
+    // Step 4: Subtract G=0 overcounting (gstart=2 means G=0 exists)
+    // becp -= beta(G=0) * psi(G=0)
+    int gstart = grid_.gstart();  // 2 if G=0 exists (Gamma-only), 1 otherwise
+
+    if (gstart == 2) {
+        // DGER: becp -= beta_real[0,:] * psi_real[0,:]^T
+        // beta_real[0,:] is the first row (G=0, real part) of beta_packed
+        // psi_real[0,:] is the first row (G=0, real part) of psi_packed
+        double alpha_correction = -1.0;
+
+        CUBLAS_SAFE_CALL(
+            cublasDger(h, num_projectors_, nb, &alpha_correction, beta_real,
+                       2 * npw,            // x: beta_real[0::2*npw] (stride 2*npw, starting at 0)
+                       psi_real, 2 * npw,  // y: psi_real[0::2*npw] (stride 2*npw, starting at 0)
+                       becp_real.data(), num_projectors_));
+
+        // DEBUG: Print becp after G=0 correction
+        if (debug_count > 0) {
+            std::vector<double> h_becp_all_after(num_projectors_ * nb);
+            becp_real.copy_to_host(h_becp_all_after.data(), grid_.stream());
+            grid_.synchronize();
+            printf("[DEBUG becp] After G=0 correction (first %d projectors, band 0):\n",
+                   debug_count);
+            for (int i = 0; i < debug_count; ++i) {
+                printf("  becp[%d,0] = %.10e\n", i, h_becp_all_after[i]);
+            }
+        }
+    }
+
+    // Step 5: Convert becp from real to complex (imaginary part = 0 for Gamma-only)
+    // Allocate separate GPU storage for becp (don't overwrite d_projectors_ which holds beta!)
+    GPU_Vector<cuDoubleComplex> becp_complex(num_projectors_ * nb);
+
+    // Convert real becp to complex on GPU (more efficient than host conversion)
+    std::vector<double> h_becp_real(num_projectors_ * nb);
+    becp_real.copy_to_host(h_becp_real.data(), grid_.stream());
+    grid_.synchronize();
+
+    std::vector<cuDoubleComplex> h_becp_complex(num_projectors_ * nb);
+    for (size_t i = 0; i < h_becp_real.size(); ++i) {
+        h_becp_complex[i] = {h_becp_real[i], 0.0};
+    }
+    becp_complex.copy_from_host(h_becp_complex.data(), grid_.stream());
+
+    // ========================================================================
+    // D-matrix coupling and final application
+    // ========================================================================
 
     if (d_dps_.size() < (size_t)num_projectors_ * nb)
         d_dps_.resize(num_projectors_ * nb);
 
-    // 2. D-matrix coupling: dps = D * projections
-    GPU_Vector<cuDoubleComplex> d_coup_c(num_projectors_ * num_projectors_);
-    std::vector<double> h_coup(num_projectors_ * num_projectors_);
-    d_coupling_.copy_to_host(h_coup.data(), grid_.stream());
-    std::vector<cuDoubleComplex> h_coup_complex(h_coup.size());
-    for (size_t i = 0; i < h_coup.size(); ++i)
-        h_coup_complex[i] = {h_coup[i], 0.0};
-    d_coup_c.copy_from_host(h_coup_complex.data(), grid_.stream());
+    // Step 6: D-matrix coupling: dps = D * becp
+    // CRITICAL: QE uses DGEMM for Gamma-only! Not ZGEMM!
+    // deeq (real) × becp%r (real) → ps (real)
 
-    cuDoubleComplex alpha_one = {1.0, 0.0}, beta_zero = {0.0, 0.0};
-    CUBLAS_SAFE_CALL(cublasZgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, num_projectors_, nb, num_projectors_,
-                                 &alpha_one, (const cuDoubleComplex*)d_coup_c.data(),
-                                 num_projectors_, (const cuDoubleComplex*)d_projections_.data(),
-                                 num_projectors_, &beta_zero, (cuDoubleComplex*)d_dps_.data(),
-                                 num_projectors_));
+    GPU_Vector<double> dps_real(num_projectors_ * nb);
 
-    // 3. Contribution to H*psi: hpsi += Vkb * dps
-    // In Gamma-only mode, we need a factor of 0.5 to compensate for the fact that
-    // we use the full FFT grid (counting G and -G).
-    cuDoubleComplex alpha_apply = {1.0, 0.0};
-    if (grid_.is_gamma()) {
-        alpha_apply.x = 0.5;
+    // D_coupling is already real (no imaginary part)
+    std::vector<double> h_coupling_real(num_projectors_ * num_projectors_);
+    d_coupling_.copy_to_host(h_coupling_real.data(), grid_.stream());
+    GPU_Vector<double> d_coupling_real(num_projectors_ * num_projectors_);
+    d_coupling_real.copy_from_host(h_coupling_real.data(), grid_.stream());
+
+    // Use DGEMM: dps_real = D_real × becp_real
+    double alpha_dmat = 1.0;
+    double beta_dmat = 0.0;
+
+    CUBLAS_SAFE_CALL(
+        cublasDgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, num_projectors_, nb, num_projectors_, &alpha_dmat,
+                    d_coupling_real.data(), num_projectors_,  // D: (num_projectors, num_projectors)
+                    becp_real.data(), num_projectors_,        // becp: (num_projectors, nb)
+                    &beta_dmat, dps_real.data(), num_projectors_));  // dps: (num_projectors, nb)
+
+    // Step 7: Final contribution to H*psi: hpsi += beta * dps
+    // CRITICAL: QE uses DGEMM treating complex as real (2*npw)!
+    // QE's add_vuspsi_gamma formula: hpsi_real += vkb_real * ps_real
+
+    // Allocate compact V_NL|ψ> result (npw × nb)
+    GPU_Vector<gpufftComplex> vnl_packed(npw * nb);
+
+    // dps_real is already computed in Step 6 via DGEMM (no conversion needed)
+
+    // Use DGEMM: vnl_real = beta_real * dps_real (treating complex as 2*npw real)
+    double* beta_real_final = reinterpret_cast<double*>(beta_packed.data());
+    double* vnl_real = reinterpret_cast<double*>(vnl_packed.data());
+
+    double alpha_vnl = 1.0;
+    double beta_vnl = 0.0;
+
+    // DEBUG: Check beta_packed values (all 8 projectors, G=0 only)
+    std::vector<cuDoubleComplex> h_beta_g0(num_projectors_);
+    for (int iproj = 0; iproj < num_projectors_; ++iproj) {
+        CHECK(cudaMemcpy(&h_beta_g0[iproj], beta_packed.data() + iproj * npw,
+                         sizeof(cuDoubleComplex), cudaMemcpyDeviceToHost));
+    }
+    printf("[DEBUG V_NL] beta_packed at G=0 (all 8 projectors):\n");
+    for (int i = 0; i < num_projectors_; ++i) {
+        printf("  beta[0,proj=%d] = (%.10e, %.10e)\n", i, h_beta_g0[i].x, h_beta_g0[i].y);
     }
 
-    CUBLAS_SAFE_CALL(cublasZgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, (int)n, nb, num_projectors_,
-                                 &alpha_apply, (const cuDoubleComplex*)d_projectors_.data(), (int)n,
-                                 (const cuDoubleComplex*)d_dps_.data(), num_projectors_, &alpha_one,
-                                 (cuDoubleComplex*)h_psi.data(), (int)n));
+    // DEBUG: Check dps_real values (all 8 projectors, band 0)
+    std::vector<double> h_dps_all(num_projectors_ * nb);
+    dps_real.copy_to_host(h_dps_all.data(), grid_.stream());
+    grid_.synchronize();
+    printf("[DEBUG V_NL] dps_real (all 8 projectors, band 0):\n");
+    for (int i = 0; i < num_projectors_; ++i) {
+        // dps_real is (num_projectors, nb) in column-major
+        printf("  dps[proj=%d,band=0] = %.10e\n", i, h_dps_all[i]);
+    }
+
+    // Manual check: compute vnl[0,0] = Σ_i beta[0,i] * dps[i,0]
+    double vnl_g0_manual = 0.0;
+    for (int i = 0; i < num_projectors_; ++i) {
+        vnl_g0_manual += h_beta_g0[i].x * h_dps_all[i];  // Real part only for G=0
+    }
+    printf("[DEBUG V_NL] Manual vnl[G=0,band=0] = %.10e\n", vnl_g0_manual);
+
+    printf("[DEBUG V_NL] Final DGEMM:\n");
+    printf("  beta_real: (%d, %d), lda=%d\n", 2 * npw, num_projectors_, 2 * npw);
+    printf("  dps_real: (%d, %d), ldb=%d\n", num_projectors_, nb, num_projectors_);
+    printf("  vnl_real: (%d, %d), ldc=%d\n", 2 * npw, nb, 2 * npw);
+
+    CUBLAS_SAFE_CALL(cublasDgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, 2 * npw, nb,
+                                 num_projectors_,  // m, n, k (treating complex as real)
+                                 &alpha_vnl, beta_real_final,
+                                 2 * npw,                           // A: (2*npw, num_projectors)
+                                 dps_real.data(), num_projectors_,  // B: (num_projectors, nb)
+                                 &beta_vnl, vnl_real, 2 * npw));    // C: (2*npw, nb)
+
+    // DEBUG: Check vnl_packed values
+    std::vector<cuDoubleComplex> h_vnl_check(std::min(10, npw));
+    CHECK(cudaMemcpy(h_vnl_check.data(), vnl_packed.data(),
+                     h_vnl_check.size() * sizeof(cuDoubleComplex), cudaMemcpyDeviceToHost));
+    printf("[DEBUG V_NL] vnl_packed after DGEMM (band 0, first 10):\n");
+    for (size_t i = 0; i < h_vnl_check.size(); ++i) {
+        printf("  [%zu] = (%.6e, %.6e)\n", i, h_vnl_check[i].x, h_vnl_check[i].y);
+    }
+
+    // Scatter V_NL|ψ> from compact (npw) to FFT grid (nnr) and accumulate to h_psi
+    for (int ib = 0; ib < nb; ++ib) {
+        scatter_and_accumulate_kernel<<<(npw + 255) / 256, 256, 0, grid_.stream()>>>(
+            npw, grid_.nl_d(),
+            vnl_packed.data() + ib * npw,  // Input: compact V_NL
+            h_psi.data() + ib * nnr        // Output: FFT grid h_psi (accumulate)
+        );
+    }
+    grid_.synchronize();
 }
 
 double NonLocalPseudo::calculate_energy(const Wavefunction& psi,

@@ -1,3 +1,4 @@
+#include "solver/gamma_utils.cuh"
 #include "solver/hamiltonian.cuh"
 #include "solver/subspace_solver.cuh"
 #include "utilities/cublas_manager.cuh"
@@ -124,41 +125,38 @@ void SubspaceSolver::solve_generalized_gamma(int nbands, double* h_matrix, doubl
 
 std::vector<double> SubspaceSolver::solve_direct(Hamiltonian& ham, Wavefunction& psi) {
     int nbands = psi.num_bands();
-    size_t nnr = grid_.nnr();
+    int npw = psi.num_pw();  // Smooth grid size (e.g., 85 for Si Gamma)
 
     // 1. Compute H|psi>
     Wavefunction h_psi(grid_, nbands, psi.encut());
     ham.apply(psi, h_psi);
     grid_.synchronize();
 
-    // 2. Build subspace matrices H and S on GPU
-    GPU_Vector<gpufftComplex> h_matrix(nbands * nbands);
-    GPU_Vector<gpufftComplex> s_matrix(nbands * nbands);
+    // 2. Build subspace matrices using Gamma-only optimized functions
+    // These use real symmetric matrices and include factor 2 + G=0 correction
+    GPU_Vector<double> h_matrix(nbands * nbands);
+    GPU_Vector<double> s_matrix(nbands * nbands);
     GPU_Vector<double> eigenvalues_gpu(nbands);
 
-    cublasHandle_t cb_handle = CublasManager::instance().handle();
-    CUBLAS_SAFE_CALL(cublasSetStream(cb_handle, grid_.stream()));
-    CublasPointerModeGuard guard(cb_handle, CUBLAS_POINTER_MODE_HOST);
+    int lda = grid_.nnr();  // leading dimension = nnr (FFT grid size)
+    int gstart = 2;         // Gamma-only, G=0 exists (Fortran 1-based indexing)
 
-    gpufftComplex alpha = {1.0, 0.0};
-    gpufftComplex beta = {0.0, 0.0};
+    // 获取 nl_d 映射（从 FFT grid 提取有效 G-vectors）
+    const int* nl_d = grid_.nl_d();
 
-    // H_ij = <psi_i | H | psi_j> = psi^H * h_psi
-    CUBLAS_SAFE_CALL(cublasZgemm(cb_handle, CUBLAS_OP_C, CUBLAS_OP_N, nbands, nbands, (int)nnr,
-                                 (const cuDoubleComplex*)&alpha, (const cuDoubleComplex*)psi.data(),
-                                 (int)nnr, (const cuDoubleComplex*)h_psi.data(), (int)nnr,
-                                 (const cuDoubleComplex*)&beta, (cuDoubleComplex*)h_matrix.data(),
-                                 nbands));
+    // Compute H_sub = <psi|H|psi> using Gamma-only optimization
+    // Reference: QE regterg.f90:241-257
+    compute_h_subspace_gamma(npw, nbands, gstart, psi.data(), lda, h_psi.data(), lda,
+                             h_matrix.data(), nbands, nl_d, grid_.stream());
 
-    // S_ij = <psi_i | psi_j> = psi^H * psi
-    CUBLAS_SAFE_CALL(cublasZgemm(cb_handle, CUBLAS_OP_C, CUBLAS_OP_N, nbands, nbands, (int)nnr,
-                                 (const cuDoubleComplex*)&alpha, (const cuDoubleComplex*)psi.data(),
-                                 (int)nnr, (const cuDoubleComplex*)psi.data(), (int)nnr,
-                                 (const cuDoubleComplex*)&beta, (cuDoubleComplex*)s_matrix.data(),
-                                 nbands));
+    // Compute S_sub = <psi|psi> using Gamma-only optimization
+    compute_s_subspace_gamma(npw, nbands, gstart, psi.data(), lda, s_matrix.data(), nbands, nl_d,
+                             grid_.stream());
 
-    // 3. Solve generalized eigenvalue problem
-    solve_generalized(nbands, h_matrix.data(), s_matrix.data(), eigenvalues_gpu.data(), nullptr);
+    // 3. Solve generalized eigenvalue problem using real symmetric solver
+    // This matches QE's DSYGVD call in regterg.f90:234
+    solve_generalized_gamma(nbands, h_matrix.data(), s_matrix.data(), eigenvalues_gpu.data(),
+                            nullptr);
     grid_.synchronize();
 
     // 4. Return results
