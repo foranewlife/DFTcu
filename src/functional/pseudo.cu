@@ -16,42 +16,6 @@
 namespace dftcu {
 
 // ============================================================================
-// Factory Methods
-// ============================================================================
-
-std::shared_ptr<LocalPseudo> LocalPseudo::from_upf(Grid& grid, std::shared_ptr<Atoms> atoms,
-                                                   const PseudopotentialData& upf_data,
-                                                   int atom_type) {
-    auto local_pseudo = std::make_shared<LocalPseudo>(grid, atoms);
-
-    // Extract data from UPF
-    const RadialMesh& mesh = upf_data.mesh();
-    const LocalPotential& local_pot = upf_data.local();
-    const PseudopotentialHeader& header = upf_data.header();
-
-    // Calculate mesh cutoff following QE convention (read_pseudo.f90:179-186)
-    // QE uses rcut=10 Bohr to avoid numerical noise in large-r tail
-    const double rcut = 10.0;  // Bohr, matches QE
-    int msh = mesh.r.size();   // Default: use full mesh
-    for (size_t ir = 0; ir < mesh.r.size(); ++ir) {
-        if (mesh.r[ir] > rcut) {
-            msh = ir;  // First point where r > rcut
-            break;
-        }
-    }
-    // Force msh to be odd for Simpson integration (QE convention)
-    msh = 2 * ((msh + 1) / 2) - 1;
-
-    // Initialize tab_vloc
-    // Note: init_tab_vloc uses internal unit conversion for historical reasons
-    // This will be refactored when Grid units are unified
-    local_pseudo->init_tab_vloc(atom_type, mesh.r, local_pot.vloc_r, mesh.rab, header.z_valence,
-                                grid.volume(), msh);
-
-    return local_pseudo;
-}
-
-// ============================================================================
 // Existing LocalPseudo implementation
 // ============================================================================
 

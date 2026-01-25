@@ -7,7 +7,9 @@
 #include "functional/kedf/tf.cuh"
 #include "functional/kedf/vw.cuh"
 #include "functional/kedf/wt.cuh"
+#include "functional/local_pseudo_factory.cuh"
 #include "functional/nonlocal_pseudo.cuh"
+#include "functional/nonlocal_pseudo_factory.cuh"
 #include "functional/pseudo.cuh"
 #include "functional/pseudopotential_data.cuh"
 #include "functional/upf_parser.cuh"
@@ -31,7 +33,9 @@
 #include "solver/phase0_verifier.cuh"
 #include "solver/scf.cuh"
 #include "solver/subspace_solver.cuh"
+#include "utilities/error.cuh"
 #include "utilities/gpu_vector.cuh"
+#include "workflow/nscf_workflow.cuh"
 
 #include <pybind11/complex.h>
 #include <pybind11/numpy.h>
@@ -42,6 +46,16 @@ namespace py = pybind11;
 
 PYBIND11_MODULE(_dftcu, m) {
     m.doc() = "DFTcu: A GPU-accelerated orbital-free DFT code";
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Exception mapping (Python 可以精确捕获不同类型的错误)
+    // ════════════════════════════════════════════════════════════════════════
+    py::register_exception<dftcu::DFTcuException>(m, "DFTcuException");
+    py::register_exception<dftcu::ConfigurationError>(m, "ConfigurationError");
+    py::register_exception<dftcu::PhysicsError>(m, "PhysicsError");
+    py::register_exception<dftcu::ConvergenceError>(m, "ConvergenceError");
+    py::register_exception<dftcu::FileIOError>(m, "FileIOError");
+    py::register_exception<dftcu::CUDAError>(m, "CUDAError");
 
     // --- Constants ---
     py::module m_const = m.def_submodule("constants", "Physical constants");
@@ -557,12 +571,62 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("parse", &dftcu::UPFParser::parse, py::arg("filename"))
         .def_static("detect_version", &dftcu::UPFParser::detect_version, py::arg("filename"));
 
+    // ════════════════════════════════════════════════════════════════════════
+    // Pseudopotential Factory Functions (工厂函数，独立于类)
+    // ════════════════════════════════════════════════════════════════════════
+    m.def("create_local_pseudo", &dftcu::create_local_pseudo, py::arg("grid"), py::arg("atoms"),
+          py::arg("pseudo_data"), py::arg("atom_type") = 0,
+          R"pbdoc(
+        从单原子赝势模型创建 3D 空间局域赝势
+
+        三层赝势模型：
+        1. UPF 文件格式 (*.UPF) - Python 层解析
+        2. 单原子赝势模型 (PseudopotentialData) - 1D 径向函数
+        3. 3D 空间赝势分布 (LocalPseudo) - 基于 Dense grid
+
+        参数:
+            grid: Grid 对象
+            atoms: Atoms 对象
+            pseudo_data: PseudopotentialData（单原子赝势模型）
+            atom_type: 原子类型索引
+
+        返回:
+            LocalPseudo 对象（3D 空间分布）
+
+        示例:
+            upf_parser = dftcu.UPFParser()
+            pseudo_data = upf_parser.parse("Si.pz-rrkj.UPF")
+            local_ps = dftcu.create_local_pseudo(grid, atoms, pseudo_data, 0)
+        )pbdoc");
+
+    m.def("create_nonlocal_pseudo", &dftcu::create_nonlocal_pseudo, py::arg("grid"),
+          py::arg("atoms"), py::arg("pseudo_data"), py::arg("atom_type") = 0,
+          R"pbdoc(
+        从单原子赝势模型创建 3D 空间非局域赝势
+
+        三层赝势模型：
+        1. UPF 文件格式 (*.UPF) - Python 层解析
+        2. 单原子赝势模型 (PseudopotentialData) - 1D 径向函数
+        3. 3D 空间赝势分布 (NonLocalPseudo) - 基于 Smooth grid
+
+        参数:
+            grid: Grid 对象
+            atoms: Atoms 对象
+            pseudo_data: PseudopotentialData（单原子赝势模型）
+            atom_type: 原子类型索引
+
+        返回:
+            NonLocalPseudo 对象（3D 空间分布）
+
+        示例:
+            upf_parser = dftcu.UPFParser()
+            pseudo_data = upf_parser.parse("Si.pz-rrkj.UPF")
+            nonlocal_ps = dftcu.create_nonlocal_pseudo(grid, atoms, pseudo_data, 0)
+        )pbdoc");
+
     py::class_<dftcu::LocalPseudo, std::shared_ptr<dftcu::LocalPseudo>>(m, "LocalPseudo")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>(), py::arg("grid"),
              py::arg("atoms"))
-        .def_static("from_upf", &dftcu::LocalPseudo::from_upf, py::arg("grid"), py::arg("atoms"),
-                    py::arg("upf_data"), py::arg("atom_type") = 0,
-                    "Create LocalPseudo from UPF data")
         .def("init_tab_vloc", &dftcu::LocalPseudo::init_tab_vloc, py::arg("type"),
              py::arg("r_grid"), py::arg("vloc_r"), py::arg("rab"), py::arg("zp"), py::arg("omega"),
              py::arg("mesh_cutoff") = -1)
@@ -585,9 +649,6 @@ PYBIND11_MODULE(_dftcu, m) {
 
     py::class_<dftcu::NonLocalPseudo, std::shared_ptr<dftcu::NonLocalPseudo>>(m, "NonLocalPseudo")
         .def(py::init<dftcu::Grid&>())
-        .def_static("from_upf", &dftcu::NonLocalPseudo::from_upf, py::arg("grid"), py::arg("atoms"),
-                    py::arg("upf_data"), py::arg("atom_type") = 0,
-                    "Create NonLocalPseudo from UPF data")
         .def("apply", &dftcu::NonLocalPseudo::apply, py::arg("psi_in"), py::arg("h_psi_out"))
         .def("add_projector", &dftcu::NonLocalPseudo::add_projector, py::arg("beta_g"),
              py::arg("coupling_constant"))
@@ -936,4 +997,98 @@ PYBIND11_MODULE(_dftcu, m) {
         .def(py::init<dftcu::Grid&>())
         .def("verify", &dftcu::Phase0Verifier::verify, py::arg("wfc_file"), py::arg("s_ref_file"),
              py::arg("nbands"), py::arg("ecutwfc"));
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Workflow Layer - 高级业务流程封装
+    // ════════════════════════════════════════════════════════════════════════
+
+    // NSCFWorkflowConfig
+    py::class_<dftcu::NSCFWorkflowConfig>(m, "NSCFWorkflowConfig")
+        .def(py::init<>())
+        .def_readwrite("nbands", &dftcu::NSCFWorkflowConfig::nbands, "能带数量")
+        .def_readwrite("nelec", &dftcu::NSCFWorkflowConfig::nelec, "电子数")
+        .def_readwrite("enable_diagnostics", &dftcu::NSCFWorkflowConfig::enable_diagnostics,
+                       "启用诊断模式")
+        .def_readwrite("output_dir", &dftcu::NSCFWorkflowConfig::output_dir, "输出目录（诊断模式）")
+        .def("validate", &dftcu::NSCFWorkflowConfig::validate, py::arg("grid"),
+             "验证配置的物理合理性");
+
+    // NSCFWorkflow
+    py::class_<dftcu::NSCFWorkflow>(m, "NSCFWorkflow",
+                                    R"pbdoc(
+        NSCF Workflow - 封装完整的 NSCF 计算流程
+
+        设计理念：
+        1. 构造时初始化：所有配置和数据在构造时传入
+        2. execute() 无参数：一键执行完整流程
+        3. 错误处理集中：所有物理验证在 C++ 端完成
+        4. 生命周期管理：内部管理所有对象的生命周期
+
+        使用示例：
+            config = dftcu.NSCFWorkflowConfig()
+            config.nbands = 4
+            config.nelec = 8.0
+            config.enable_diagnostics = True
+            config.output_dir = "nscf_output"
+
+            workflow = dftcu.NSCFWorkflow(
+                grid, atoms, pseudo_data, rho_data, config
+            )
+
+            result = workflow.execute()
+            print(f"Total energy: {result.etot} Ha")
+        )pbdoc")
+        .def(py::init([](dftcu::Grid& grid, std::shared_ptr<dftcu::Atoms> atoms,
+                         const std::vector<dftcu::PseudopotentialData>& pseudo_data,
+                         py::array_t<double> rho_data, const dftcu::NSCFWorkflowConfig& config) {
+                 // 转换 NumPy 数组为 std::vector
+                 auto buf = rho_data.request();
+                 if (buf.ndim != 1) {
+                     throw std::runtime_error("rho_data 必须是 1D 数组");
+                 }
+                 double* ptr = static_cast<double*>(buf.ptr);
+                 std::vector<double> rho_vec(ptr, ptr + buf.size);
+
+                 return new dftcu::NSCFWorkflow(grid, atoms, pseudo_data, rho_vec, config);
+             }),
+             py::arg("grid"), py::arg("atoms"), py::arg("pseudo_data"), py::arg("rho_data"),
+             py::arg("config"),
+             R"pbdoc(
+        构造 NSCF Workflow
+
+        参数:
+            grid: Grid 对象
+            atoms: Atoms 对象
+            pseudo_data: 赝势数据列表（所有原子类型）
+            rho_data: 输入密度数据（1D NumPy 数组，e/Bohr³）
+            config: NSCF 配置
+
+        异常:
+            ConfigurationError: 如果配置不合理
+            FileIOError: 如果赝势数据无效
+
+        注意:
+            构造函数会执行以下操作：
+            1. 验证配置
+            2. 创建赝势对象
+            3. 创建哈密顿量
+            4. 执行 potinit（计算势能）
+            5. 初始化波函数
+        )pbdoc")
+        .def("execute", &dftcu::NSCFWorkflow::execute,
+             R"pbdoc(
+        执行 NSCF 计算
+
+        返回:
+            EnergyBreakdown: 包含本征值、能量分解等结果
+
+        注意:
+            此函数无参数，所有配置在构造时已传入
+            如果启用诊断模式，会在 output_dir 下生成调试文件
+        )pbdoc")
+        .def("get_wavefunction", &dftcu::NSCFWorkflow::get_wavefunction,
+             py::return_value_policy::reference_internal,
+             "获取收敛后的波函数（只有在 execute() 调用后才有效）")
+        .def("get_hamiltonian", &dftcu::NSCFWorkflow::get_hamiltonian,
+             py::return_value_policy::reference_internal, "获取哈密顿量");
 }

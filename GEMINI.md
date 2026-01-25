@@ -11,6 +11,7 @@
 7. 临时文件以'temp_'开头
 8. qe产生的测试文件要copy到 phase*/data 路径，备份input文件和赝势文件
 9. 不要创建新的markdown文件除非我告诉你， 目前只更新 1. GEMINI.md or CLAUDE.md 2.tests/nscf_alignment/README.md
+10. 另外使用search类型功能的时候要加tail -n防止太多
 
 ---
 

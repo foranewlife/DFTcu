@@ -110,7 +110,9 @@ if(BUILD_WITH_CUDA)
         src/functional/hartree.cu
         src/functional/ewald.cu
         src/functional/pseudo.cu
+        src/functional/local_pseudo_factory.cu
         src/functional/nonlocal_pseudo.cu
+        src/functional/nonlocal_pseudo_factory.cu
         src/functional/pseudopotential_data.cu
         src/functional/upf_parser.cu
         src/functional/density_functional_potential.cu
@@ -134,6 +136,7 @@ if(BUILD_WITH_CUDA)
         src/solver/optimizer.cu
         src/solver/scf.cu
         src/solver/tn_optimizer_legacy.cu
+        src/workflow/nscf_workflow.cu
         src/utilities/kernels.cu
         external/pugixml/src/pugixml.cpp
     )

@@ -21,18 +21,6 @@ class LocalPseudo {
     ~LocalPseudo() = default;
 
     /**
-     * @brief Create LocalPseudo from UPF data (factory method).
-     * @param grid Reference to the simulation grid
-     * @param atoms Atoms in the system
-     * @param upf_data Parsed UPF data
-     * @param atom_type Atom type index (default 0)
-     * @return Shared pointer to initialized LocalPseudo
-     */
-    static std::shared_ptr<LocalPseudo> from_upf(Grid& grid, std::shared_ptr<Atoms> atoms,
-                                                 const PseudopotentialData& upf_data,
-                                                 int atom_type = 0);
-
-    /**
      * @brief Initialize V_loc interpolation table from UPF radial data.
      * @param type Atom type index
      * @param r_grid Radial mesh (Bohr)

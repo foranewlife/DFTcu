@@ -1,0 +1,39 @@
+version: "1.0.0"
+description: "Si 2-atom NSCF calculation example"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Global 配置 (顶级)
+# ═══════════════════════════════════════════════════════════════════════════
+structure_file: ./examples/POSCAR_si
+pseudopotentials:
+  Si: Si.pz-rrkj.UPF
+pseudo_dir: ./tests/nscf_step_by_step/qe_run/
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Grid 配置 (Numerical Grid)
+# ═══════════════════════════════════════════════════════════════════════════
+grid:
+  nr: [15, 15, 15]
+  ecutwfc: 163.268  # eV
+  ecutrho: 653.073  # eV
+  is_gamma: true
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Physics 配置 (Physical Model)
+# ═══════════════════════════════════════════════════════════════════════════
+physics:
+  nelec: 8.0
+  nbands: 4
+  xc_functional: lda
+  occupations: fixed
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Task 配置 (Execution Task)
+# ═══════════════════════════════════════════════════════════════════════════
+task:
+  type: nscf
+  nscf:
+    diagonalization: davidson
+    diago_thr: 1.0e-10
+  outdir: ./output
+  verbosity: high
