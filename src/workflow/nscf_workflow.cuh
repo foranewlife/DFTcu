@@ -116,6 +116,20 @@ class NSCFWorkflow {
                  const std::vector<double>& rho_data, const NSCFWorkflowConfig& config);
 
     /**
+     * @brief 构造 NSCF Workflow (接收已组装好的哈密顿量和波函数)
+     *
+     * @param grid Grid 对象
+     * @param atoms Atoms 对象
+     * @param ham 已配置好的哈密顿量
+     * @param psi 初始波函数
+     * @param rho_data 输入密度数据
+     * @param config NSCF 配置
+     */
+    NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms, const Hamiltonian& ham,
+                 const Wavefunction& psi, const std::vector<double>& rho_data,
+                 const NSCFWorkflowConfig& config);
+
+    /**
      * @brief 执行 NSCF 计算
      *
      * @return EnergyBreakdown 包含本征值、能量分解等结果

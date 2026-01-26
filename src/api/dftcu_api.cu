@@ -19,12 +19,12 @@
 #include "math/ylm.cuh"
 #include "model/atoms.cuh"
 #include "model/atoms_factory.cuh"
-#include "model/density_builder.cuh"
+#include "model/density_factory.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
 #include "model/grid_factory.cuh"
 #include "model/wavefunction.cuh"
-#include "model/wavefunction_builder.cuh"
+#include "model/wavefunction_factory.cuh"
 #include "solver/davidson.cuh"
 #include "solver/evaluator.cuh"  // Keep for backward compatibility
 #include "solver/gamma_utils.cuh"
@@ -137,30 +137,33 @@ PYBIND11_MODULE(_dftcu, m) {
              "Internal constructor - use factory functions instead", py::arg("lattice_bohr"),
              py::arg("nr"), py::arg("ecutwfc_ha"), py::arg("ecutrho_ha") = -1.0,
              py::arg("is_gamma") = false)
-        .def("volume", &dftcu::Grid::volume)
-        .def("volume_bohr", &dftcu::Grid::volume_bohr)
-        .def("dv", &dftcu::Grid::dv)
-        .def("dv_bohr", &dftcu::Grid::dv_bohr)
         .def("nnr", &dftcu::Grid::nnr)
         .def("nr",
              [](dftcu::Grid& self) {
-                 return std::vector<int>{self.nr()[0], self.nr()[1], self.nr()[2]};
+                 auto nr = self.nr();
+                 return std::vector<int>{nr[0], nr[1], nr[2]};
              })
-        .def(
-            "rec_lattice",
-            [](dftcu::Grid& self) {
-                // Return reciprocal lattice as flat array (row-major)
-                std::vector<double> rec_flat(9);
-                const double(*rec)[3] = self.rec_lattice();
-                for (int i = 0; i < 3; ++i) {
-                    for (int j = 0; j < 3; ++j) {
-                        rec_flat[i * 3 + j] = rec[i][j];
-                    }
-                }
-                return rec_flat;
-            },
-            "Get reciprocal lattice vectors (row-major, 9 elements)")
-        .def("g2max", &dftcu::Grid::g2max)
+        .def("volume", &dftcu::Grid::volume)
+        .def("volume_bohr", &dftcu::Grid::volume_bohr)
+        .def("dv", &dftcu::Grid::dv)
+        .def("get_lattice",
+             [](dftcu::Grid& self) {
+                 auto lat = self.lattice();
+                 std::vector<double> res(9);
+                 for (int i = 0; i < 3; ++i)
+                     for (int j = 0; j < 3; ++j)
+                         res[i * 3 + j] = lat[i][j];
+                 return res;
+             })
+        .def("get_rec_lattice",
+             [](dftcu::Grid& self) {
+                 auto lat = self.rec_lattice();
+                 std::vector<double> res(9);
+                 for (int i = 0; i < 3; ++i)
+                     for (int j = 0; j < 3; ++j)
+                         res[i * 3 + j] = lat[i][j];
+                 return res;
+             })
         .def("synchronize", &dftcu::Grid::synchronize)
         .def("gg",
              [](dftcu::Grid& self) {
@@ -287,6 +290,20 @@ PYBIND11_MODULE(_dftcu, m) {
              "Get igtongl (Dense G → shell mapping) as host vector")
         .def("get_igk", &dftcu::Grid::get_igk,
              "Get igk (Smooth G → Dense G mapping) as host vector")
+        .def("get_nl_dense",
+             [](dftcu::Grid& self) {
+                 std::vector<int> res(self.ngm_dense());
+                 CHECK(cudaMemcpy(res.data(), self.nl_dense(), self.ngm_dense() * sizeof(int),
+                                  cudaMemcpyDeviceToHost));
+                 return res;
+             })
+        .def("get_nlm_dense",
+             [](dftcu::Grid& self) {
+                 std::vector<int> res(self.ngm_dense());
+                 CHECK(cudaMemcpy(res.data(), self.nlm_dense(), self.ngm_dense() * sizeof(int),
+                                  cudaMemcpyDeviceToHost));
+                 return res;
+             })
         // Dense grid Miller indices (for debugging/verification)
         .def("miller_h_dense_host", &dftcu::Grid::miller_h_dense_host,
              "Get Miller index h for Dense grid G-vectors")
@@ -342,6 +359,9 @@ PYBIND11_MODULE(_dftcu, m) {
              "Internal constructor - use factory functions instead. Positions must be in BOHR.",
              py::arg("atoms_bohr"))
         .def("nat", &dftcu::Atoms::nat)
+        .def("h_pos_x", &dftcu::Atoms::h_pos_x)
+        .def("h_pos_y", &dftcu::Atoms::h_pos_y)
+        .def("h_pos_z", &dftcu::Atoms::h_pos_z)
         .def("h_type", &dftcu::Atoms::h_type);
 
     // Atoms factory functions
@@ -392,6 +412,7 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("get_coefficients", &dftcu::Wavefunction::get_coefficients, py::arg("band"))
         .def("set_coefficients", &dftcu::Wavefunction::set_coefficients, py::arg("coeffs"),
              py::arg("band"))
+        .def("copy_from", &dftcu::Wavefunction::copy_from, py::arg("other"))
         .def(
             "set_coefficients_miller",
             [](dftcu::Wavefunction& self, const std::vector<int>& h, const std::vector<int>& k,
@@ -407,10 +428,10 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("compute_kinetic_energy", &dftcu::Wavefunction::compute_kinetic_energy,
              py::arg("occupations"));
 
-    py::class_<dftcu::WavefunctionBuilder>(m, "WavefunctionBuilder")
+    py::class_<dftcu::WavefunctionFactory>(m, "WavefunctionFactory")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())
-        .def("add_atomic_orbital", &dftcu::WavefunctionBuilder::add_atomic_orbital)
-        .def("build_atomic_wavefunctions", &dftcu::WavefunctionBuilder::build_atomic_wavefunctions,
+        .def("add_atomic_orbital", &dftcu::WavefunctionFactory::add_atomic_orbital)
+        .def("build_atomic_wavefunctions", &dftcu::WavefunctionFactory::build_atomic_wavefunctions,
              py::arg("psi"), py::arg("randomize_phase") = false);
 
     // DensityFunctionalPotential (new name for Evaluator)
@@ -533,6 +554,21 @@ PYBIND11_MODULE(_dftcu, m) {
         .def(py::init<>())
         .def_readwrite("vloc_r", &dftcu::LocalPotential::vloc_r);
 
+    py::class_<dftcu::AtomicDensity>(m, "AtomicDensity")
+        .def(py::init<>())
+        .def_readwrite("rho_at", &dftcu::AtomicDensity::rho_at);
+
+    py::class_<dftcu::PseudoAtomicWfc>(m, "PseudoAtomicWfc")
+        .def(py::init<>())
+        .def_readwrite("l", &dftcu::PseudoAtomicWfc::l)
+        .def_readwrite("label", &dftcu::PseudoAtomicWfc::label)
+        .def_readwrite("occupation", &dftcu::PseudoAtomicWfc::occupation)
+        .def_readwrite("chi", &dftcu::PseudoAtomicWfc::chi);
+
+    py::class_<dftcu::AtomicWavefunctions>(m, "AtomicWavefunctions")
+        .def(py::init<>())
+        .def_readwrite("wavefunctions", &dftcu::AtomicWavefunctions::wavefunctions);
+
     py::class_<dftcu::PseudopotentialHeader>(m, "PseudopotentialHeader")
         .def(py::init<>())
         .def_readwrite("element", &dftcu::PseudopotentialHeader::element)
@@ -558,6 +594,16 @@ PYBIND11_MODULE(_dftcu, m) {
              py::return_value_policy::reference_internal)
         .def("get_nonlocal", &dftcu::PseudopotentialData::nonlocal,
              py::return_value_policy::reference_internal)
+        .def("atomic_density", &dftcu::PseudopotentialData::atomic_density,
+             py::return_value_policy::reference_internal)
+        .def("atomic_wfc", &dftcu::PseudopotentialData::atomic_wfc,
+             py::return_value_policy::reference_internal)
+        .def("set_header", &dftcu::PseudopotentialData::set_header)
+        .def("set_mesh", &dftcu::PseudopotentialData::set_mesh)
+        .def("set_local", &dftcu::PseudopotentialData::set_local)
+        .def("set_nonlocal", &dftcu::PseudopotentialData::set_nonlocal)
+        .def("set_atomic_density", &dftcu::PseudopotentialData::set_atomic_density)
+        .def("set_atomic_wfc", &dftcu::PseudopotentialData::set_atomic_wfc)
         .def("element", &dftcu::PseudopotentialData::element)
         .def("z_valence", &dftcu::PseudopotentialData::z_valence)
         .def("mesh_size", &dftcu::PseudopotentialData::mesh_size)
@@ -706,6 +752,7 @@ PYBIND11_MODULE(_dftcu, m) {
              py::arg("grid"), py::arg("dfp"), py::arg("nl_pseudo") = nullptr)
         .def("set_density_functional_potential",
              &dftcu::Hamiltonian::set_density_functional_potential)
+        .def("copy_from", &dftcu::Hamiltonian::copy_from, py::arg("other"))
         .def("update_potentials", &dftcu::Hamiltonian::update_potentials)
         .def("apply", &dftcu::Hamiltonian::apply)
         .def("apply_kinetic", &dftcu::Hamiltonian::apply_kinetic, py::arg("psi"), py::arg("h_psi"),
@@ -979,12 +1026,12 @@ PYBIND11_MODULE(_dftcu, m) {
              py::arg("eigenvalues"), py::arg("occupations"), py::arg("ham"), py::arg("psi"),
              py::arg("rho_val"), py::arg("rho_core") = nullptr);
 
-    py::class_<dftcu::DensityBuilder>(m, "DensityBuilder")
+    py::class_<dftcu::DensityFactory>(m, "DensityFactory")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())
-        .def("set_atomic_rho_g", &dftcu::DensityBuilder::set_atomic_rho_g)
-        .def("set_atomic_rho_r", &dftcu::DensityBuilder::set_atomic_rho_r)
-        .def("build_density", &dftcu::DensityBuilder::build_density)
-        .def("set_gcut", &dftcu::DensityBuilder::set_gcut, py::arg("gcut"));
+        .def("set_atomic_rho_g", &dftcu::DensityFactory::set_atomic_rho_g)
+        .def("set_atomic_rho_r", &dftcu::DensityFactory::set_atomic_rho_r)
+        .def("build_density", &dftcu::DensityFactory::build_density)
+        .def("set_gcut", &dftcu::DensityFactory::set_gcut, py::arg("gcut"));
 
     // Phase 0 Verifier
     py::class_<dftcu::VerificationResult>(m, "VerificationResult")
@@ -1062,18 +1109,31 @@ PYBIND11_MODULE(_dftcu, m) {
             pseudo_data: 赝势数据列表（所有原子类型）
             rho_data: 输入密度数据（1D NumPy 数组，e/Bohr³）
             config: NSCF 配置
+        )pbdoc")
+        .def(py::init([](dftcu::Grid& grid, std::shared_ptr<dftcu::Atoms> atoms,
+                         const dftcu::Hamiltonian& ham, const dftcu::Wavefunction& psi,
+                         py::array_t<double> rho_data, const dftcu::NSCFWorkflowConfig& config) {
+                 auto buf = rho_data.request();
+                 if (buf.ndim != 1) {
+                     throw std::runtime_error("rho_data 必须是 1D 数组");
+                 }
+                 double* ptr = static_cast<double*>(buf.ptr);
+                 std::vector<double> rho_vec(ptr, ptr + buf.size);
 
-        异常:
-            ConfigurationError: 如果配置不合理
-            FileIOError: 如果赝势数据无效
+                 return new dftcu::NSCFWorkflow(grid, atoms, ham, psi, rho_vec, config);
+             }),
+             py::arg("grid"), py::arg("atoms"), py::arg("ham"), py::arg("psi"), py::arg("rho_data"),
+             py::arg("config"),
+             R"pbdoc(
+        构造 NSCF Workflow (接收已组装好的哈密顿量和波函数)
 
-        注意:
-            构造函数会执行以下操作：
-            1. 验证配置
-            2. 创建赝势对象
-            3. 创建哈密顿量
-            4. 执行 potinit（计算势能）
-            5. 初始化波函数
+        参数:
+            grid: Grid 对象
+            atoms: Atoms 对象
+            ham: 已配置好的哈密顿量
+            psi: 初始波函数
+            rho_data: 输入密度数据（1D NumPy 数组，e/Bohr³）
+            config: NSCF 配置
         )pbdoc")
         .def("execute", &dftcu::NSCFWorkflow::execute,
              R"pbdoc(

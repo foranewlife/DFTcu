@@ -3,7 +3,7 @@
 
 #include "math/bessel.cuh"
 #include "math/ylm.cuh"
-#include "model/wavefunction_builder.cuh"
+#include "model/wavefunction_factory.cuh"
 #include "utilities/constants.cuh"
 #include "utilities/error.cuh"
 #include "utilities/math_utils.cuh"
@@ -28,13 +28,13 @@ __global__ void build_atomic_band_kernel(int nnr, const double* atom_x, const do
         if (g2_ry > encut_hartree * 2.0 + 1e-5)
             return;
 
-        double gmod_bohr = sqrt(gg[i]);  // |G| in Bohr^-1
+        double gmod_phys = sqrt(gg[i]) * 2.0 * constants::D_PI;  // |G| in Bohr^-1
         double chi_g = 0.0;
 
-        int i0 = (int)(gmod_bohr / dq) + 1;
+        int i0 = (int)(gmod_phys / dq) + 1;
         if (i0 < nqx - 4) {
             i0 = max(i0, 1);
-            double px = gmod_bohr / dq - (double)(i0 - 1);
+            double px = gmod_phys / dq - (double)(i0 - 1);
             double ux = 1.0 - px;
             double vx = 2.0 - px;
             double wx = 3.0 - px;
@@ -43,8 +43,9 @@ __global__ void build_atomic_band_kernel(int nnr, const double* atom_x, const do
                     tab_chi[i0 + 2] * px * ux * wx / 2.0 + tab_chi[i0 + 3] * px * ux * vx / 6.0;
         }
 
-        double ylm = get_ylm(l, m_idx, gx[i], gy[i], gz[i], gmod_bohr);
-        double phase = -(gx[i] * atom_x[iat] + gy[i] * atom_y[iat] + gz[i] * atom_z[iat]);
+        double ylm = get_ylm(l, m_idx, gx[i], gy[i], gz[i], sqrt(gg[i]));
+        double phase = -2.0 * constants::D_PI *
+                       (gx[i] * atom_x[iat] + gy[i] * atom_y[iat] + gz[i] * atom_z[iat]);
         double s, c;
         sincos(phase, &s, &c);
 
@@ -83,17 +84,17 @@ __global__ void apply_random_phase_kernel(int nnr, gpufftComplex* band, unsigned
 
 }  // namespace
 
-WavefunctionBuilder::WavefunctionBuilder(Grid& grid, std::shared_ptr<Atoms> atoms)
+WavefunctionFactory::WavefunctionFactory(Grid& grid, std::shared_ptr<Atoms> atoms)
     : grid_(grid), atoms_(atoms) {}
 
-void WavefunctionBuilder::add_atomic_orbital(int type, int l, const std::vector<double>& r,
+void WavefunctionFactory::add_atomic_orbital(int type, int l, const std::vector<double>& r,
                                              const std::vector<double>& chi,
                                              const std::vector<double>& rab) {
     if (type >= (int)orbital_tables_.size())
         orbital_tables_.resize(type + 1);
 
-    const double BOHR_TO_ANGSTROM = constants::BOHR_TO_ANGSTROM;
-    double qmax = sqrt(grid_.g2max() * BOHR_TO_ANGSTROM * BOHR_TO_ANGSTROM) * 2.0;
+    // qmax should be in physical units (Bohr^-1)
+    double qmax = sqrt(grid_.g2max()) * 2.0 * constants::D_PI * 1.1;
     int nqx = static_cast<int>(qmax / dq_) + 10;
 
     std::vector<double> chi_q(nqx + 1, 0.0);
@@ -117,13 +118,18 @@ void WavefunctionBuilder::add_atomic_orbital(int type, int l, const std::vector<
         }
         chi_q[iq] = simpson_integrate(aux, rab) * fpi;
     }
+    printf("DEBUG WavefunctionFactory: Added orbital type=%d, l=%d, chi_q[1](q=0)=%.6f\n", type, l,
+           chi_q[1]);
     orbital_tables_[type].push_back({l, chi_q});
 }
 
-void WavefunctionBuilder::build_atomic_wavefunctions(Wavefunction& psi, bool randomize_phase) {
+void WavefunctionFactory::build_atomic_wavefunctions(Wavefunction& psi, bool randomize_phase) {
     int n_bands = psi.num_bands();
     int nnr = grid_.nnr();
     double omega_bohr = grid_.volume_bohr();
+
+    printf("DEBUG WavefunctionFactory: Building %d bands for %zu atoms...\n", n_bands,
+           atoms_->nat());
 
     grid_.synchronize();
     cudaMemset(psi.data(), 0, n_bands * nnr * sizeof(gpufftComplex));

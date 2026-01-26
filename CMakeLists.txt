@@ -104,9 +104,9 @@ if(BUILD_WITH_CUDA)
         src/model/grid.cu
         src/model/grid_factory.cu
         src/model/atoms_factory.cu
-        src/model/density_builder.cu
+        src/model/density_factory.cu
         src/model/wavefunction.cu
-        src/model/wavefunction_builder.cu
+        src/model/wavefunction_factory.cu
         src/functional/hartree.cu
         src/functional/ewald.cu
         src/functional/pseudo.cu

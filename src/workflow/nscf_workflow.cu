@@ -77,6 +77,32 @@ NSCFWorkflow::NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms,
     initialize_wavefunction();
 }
 
+NSCFWorkflow::NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms, const Hamiltonian& ham,
+                           const Wavefunction& psi, const std::vector<double>& rho_data,
+                           const NSCFWorkflowConfig& config)
+    : grid_(grid),
+      atoms_(atoms),
+      config_(config),
+      ham_(grid),
+      rho_(grid, 1),
+      psi_(grid, config.nbands, grid.ecutwfc()) {
+    // ════════════════════════════════════════════════════════════════════════
+    // Step 1: 验证配置
+    // ════════════════════════════════════════════════════════════════════════
+    config_.validate(grid_);
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Step 2: 复制已组装好的哈密顿量和波函数
+    // ════════════════════════════════════════════════════════════════════════
+    ham_.copy_from(ham);
+    psi_.copy_from(psi);
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Step 3: potinit - 从密度计算势能（确保 Hamiltonian 同步）
+    // ════════════════════════════════════════════════════════════════════════
+    potinit(rho_data);
+}
+
 EnergyBreakdown NSCFWorkflow::execute() {
     // ════════════════════════════════════════════════════════════════════════
     // Step 1: 创建 NonSCFSolver

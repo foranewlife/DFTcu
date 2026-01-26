@@ -1,7 +1,7 @@
 #include <cmath>
 
 #include "fft/fft_solver.cuh"
-#include "model/density_builder.cuh"
+#include "model/density_factory.cuh"
 #include "utilities/constants.cuh"
 #include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
@@ -40,7 +40,7 @@ __global__ void density_sum_kernel(int nnr, const double* gx, const double* gy, 
             double rho_at_g = 0.0;
 
             // 4-point cubic Lagrange interpolation (QE Style)
-            // tab_rho[type * nqx + 1] is q=0
+            // tab_rho[type * nqx + i0] is q=0
             int i0 = (int)(gmod / dq) + 1;
             i0 = min(max(i0, 1), nqx - 4);
             double px = gmod / dq - (double)(i0 - 1);
@@ -66,10 +66,10 @@ __global__ void density_sum_kernel(int nnr, const double* gx, const double* gy, 
 
 }  // namespace
 
-DensityBuilder::DensityBuilder(Grid& grid, std::shared_ptr<Atoms> atoms)
+DensityFactory::DensityFactory(Grid& grid, std::shared_ptr<Atoms> atoms)
     : grid_(grid), atoms_(atoms) {}
 
-void DensityBuilder::set_atomic_rho_g(int type, const std::vector<double>& q,
+void DensityFactory::set_atomic_rho_g(int type, const std::vector<double>& q,
                                       const std::vector<double>& rho_q) {
     if (type >= num_types_) {
         num_types_ = type + 1;
@@ -82,7 +82,7 @@ void DensityBuilder::set_atomic_rho_g(int type, const std::vector<double>& q,
     nqx_ = static_cast<int>(tab_rho_g_[type].size());
 }
 
-void DensityBuilder::set_atomic_rho_r(int type, const std::vector<double>& r,
+void DensityFactory::set_atomic_rho_r(int type, const std::vector<double>& r,
                                       const std::vector<double>& rho_r,
                                       const std::vector<double>& rab) {
     // Massive range and precision
@@ -96,7 +96,7 @@ void DensityBuilder::set_atomic_rho_r(int type, const std::vector<double>& r,
     tab_rho_g_[type].resize(nqx_);
 
     double omega_bohr = grid_.volume_bohr();
-    printf("DEBUG DensityBuilder: omega_bohr = %f\n", omega_bohr);
+    printf("DEBUG DensityFactory: omega_bohr = %f\n", omega_bohr);
     int msh = r.size();
     std::vector<double> aux(msh);
 
@@ -116,19 +116,19 @@ void DensityBuilder::set_atomic_rho_r(int type, const std::vector<double>& r,
         }
         tab_rho_g_[type][iq] = simpson_integrate(aux, rab) / omega_bohr;
         if (iq == 1) {
-            printf("DEBUG DensityBuilder: Type %d, rho(G=0) = %f, expected Zv/Omega = %f\n", type,
+            printf("DEBUG DensityFactory: Type %d, rho(G=0) = %f, expected Zv/Omega = %f\n", type,
                    tab_rho_g_[type][iq], (double)8.0 / omega_bohr);
         }
     }
 }
 
-void DensityBuilder::build_density(RealField& rho) {
+void DensityFactory::build_density(RealField& rho) {
     size_t nnr = grid_.nnr();
     FFTSolver solver(grid_);
     ComplexField rho_g(grid_);
 
     if (atoms_->nat() > constants::MAX_ATOMS_PSEUDO) {
-        throw std::runtime_error("Too many atoms for DensityBuilder");
+        throw std::runtime_error("Too many atoms for DensityFactory");
     }
 
     CHECK(cudaMemcpyToSymbolAsync(c_atom_x, atoms_->h_pos_x().data(),
@@ -172,7 +172,7 @@ void DensityBuilder::build_density(RealField& rho) {
         if (mag > max_mag)
             max_mag = mag;
     }
-    printf("DEBUG DensityBuilder: rho_g[0]=(%f, %f), max_mag=%f\n", rho_g_host[0].x,
+    printf("DEBUG DensityFactory: rho_g[0]=(%f, %f), max_mag=%f\n", rho_g_host[0].x,
            rho_g_host[0].y, max_mag);
 
     solver.backward(rho_g);

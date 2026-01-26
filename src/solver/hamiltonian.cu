@@ -268,6 +268,21 @@ Hamiltonian::Hamiltonian(Grid& grid, std::shared_ptr<DensityFunctionalPotential>
     v_xc_.fill(0.0);
 }
 
+void Hamiltonian::copy_from(const Hamiltonian& other) {
+    if (this != &other) {
+        if (&grid_ != &other.grid_) {
+            throw std::invalid_argument("Hamiltonian must share the same grid for copy_from");
+        }
+        dfp_ = other.dfp_;
+        nonlocal_ = other.nonlocal_;
+        v_loc_tot_.copy_from(other.v_loc_tot_);
+        v_ps_.copy_from(other.v_ps_);
+        v_h_.copy_from(other.v_h_);
+        v_xc_.copy_from(other.v_xc_);
+        v_of_0_ = other.v_of_0_;
+    }
+}
+
 void Hamiltonian::update_potentials(const RealField& rho) {
     if (!dfp_) {
         throw std::runtime_error(
@@ -339,15 +354,17 @@ void Hamiltonian::update_potentials(const RealField& rho) {
                          cudaMemcpyDeviceToHost));
 
         FILE* f = fopen("nscf_output/dftcu_potentials.txt", "w");
-        fprintf(f, "# DFTcu potentials in real space (Hartree units)\n");
-        fprintf(f, "# nnr = %zu\n", nnr);
-        fprintf(f, "# Format: index V_ps V_H V_xc V_tot\n");
-        for (size_t i = 0; i < nnr; i++) {
-            fprintf(f, "%6zu %25.16e %25.16e %25.16e %25.16e\n", i, v_ps_host[i], v_h_host[i],
-                    v_xc_host[i], v_tot_host[i]);
+        if (f) {
+            fprintf(f, "# DFTcu potentials in real space (Hartree units)\n");
+            fprintf(f, "# nnr = %zu\n", nnr);
+            fprintf(f, "# Format: index V_ps V_H V_xc V_tot\n");
+            for (size_t i = 0; i < nnr; i++) {
+                fprintf(f, "%6zu %25.16e %25.16e %25.16e %25.16e\n", i, v_ps_host[i], v_h_host[i],
+                        v_xc_host[i], v_tot_host[i]);
+            }
+            fclose(f);
+            printf("[DEBUG] Exported DFTcu potentials to nscf_output/dftcu_potentials.txt\n");
         }
-        fclose(f);
-        printf("[DEBUG] Exported DFTcu potentials to nscf_output/dftcu_potentials.txt\n");
     }
 
     grid_.synchronize();
@@ -433,14 +450,16 @@ void Hamiltonian::apply_local(Wavefunction& psi, Wavefunction& h_psi) {
                              psi_g_host.size() * sizeof(gpufftComplex), cudaMemcpyDeviceToHost));
 
             FILE* f = fopen("nscf_output/debug_psi_g_compact.txt", "w");
-            fprintf(f, "# DFTcu: psi(G) compact array after gather_fft_to_smooth\n");
-            fprintf(f, "# Format: ig Re Im\n");
-            for (size_t i = 0; i < psi_g_host.size(); i++) {
-                fprintf(f, "%5zu %25.16e %25.16e\n", i + 1, psi_g_host[i].x, psi_g_host[i].y);
+            if (f) {
+                fprintf(f, "# DFTcu: psi(G) compact array after gather_fft_to_smooth\n");
+                fprintf(f, "# Format: ig Re Im\n");
+                for (size_t i = 0; i < psi_g_host.size(); i++) {
+                    fprintf(f, "%5zu %25.16e %25.16e\n", i + 1, psi_g_host[i].x, psi_g_host[i].y);
+                }
+                fclose(f);
+                printf("[DEBUG] Exported psi(G) compact array\n");
+                printf("  psi_g[0] = (%.10e, %.10e)\n", psi_g_host[0].x, psi_g_host[0].y);
             }
-            fclose(f);
-            printf("[DEBUG] Exported psi(G) compact array\n");
-            printf("  psi_g[0] = (%.10e, %.10e)\n", psi_g_host[0].x, psi_g_host[0].y);
         }
 
         // G -> R (Gamma-only 打包: psi_packed = psi1 + i*psi2)
@@ -454,16 +473,18 @@ void Hamiltonian::apply_local(Wavefunction& psi, Wavefunction& h_psi) {
                              psi_r_host.size() * sizeof(gpufftComplex), cudaMemcpyDeviceToHost));
 
             FILE* f = fopen("nscf_output/debug_psi_r_before_vloc.txt", "w");
-            fprintf(f, "# DFTcu: psi(r) after wave_g2r_pair (before V(r) multiplication)\n");
-            fprintf(f, "# Format: index Re Im\n");
-            for (size_t i = 0; i < psi_r_host.size(); i++) {
-                fprintf(f, "%5zu %25.16e %25.16e\n", i + 1, psi_r_host[i].x, psi_r_host[i].y);
+            if (f) {
+                fprintf(f, "# DFTcu: psi(r) after wave_g2r_pair (before V(r) multiplication)\n");
+                fprintf(f, "# Format: index Re Im\n");
+                for (size_t i = 0; i < psi_r_host.size(); i++) {
+                    fprintf(f, "%5zu %25.16e %25.16e\n", i + 1, psi_r_host[i].x, psi_r_host[i].y);
+                }
+                fclose(f);
+                printf("[DEBUG] Exported psi(r) before V(r) multiplication\n");
+                printf("  psi_r[0] = (%.10e, %.10e)\n", psi_r_host[0].x, psi_r_host[0].y);
+                printf("  psi_r[1] = (%.10e, %.10e)\n", psi_r_host[1].x, psi_r_host[1].y);
+                fflush(stdout);
             }
-            fclose(f);
-            printf("[DEBUG] Exported psi(r) before V(r) multiplication\n");
-            printf("  psi_r[0] = (%.10e, %.10e)\n", psi_r_host[0].x, psi_r_host[0].y);
-            printf("  psi_r[1] = (%.10e, %.10e)\n", psi_r_host[1].x, psi_r_host[1].y);
-            fflush(stdout);
         }
 
         // V(r) * ψ(r) - 在打包的实空间数据上应用局域势
@@ -491,17 +512,19 @@ void Hamiltonian::apply_local(Wavefunction& psi, Wavefunction& h_psi) {
                              cudaMemcpyDeviceToHost));
 
             FILE* f = fopen("nscf_output/debug_vpsi_after_r2g.txt", "w");
-            fprintf(f, "# DFTcu: V*psi after wave_r2g_pair (before fac scaling)\n");
-            fprintf(f, "# Format: ig Re Im (Hartree)\n");
-            fprintf(f, "# fac = %.4f, brange = %d\n", fac, brange);
-            for (int ig = 0; ig < std::min(10, npw); ig++) {
-                fprintf(f, "%5d %25.16e %25.16e\n", ig + 1, vpsi1_host[ig].x, vpsi1_host[ig].y);
+            if (f) {
+                fprintf(f, "# DFTcu: V*psi after wave_r2g_pair (before fac scaling)\n");
+                fprintf(f, "# Format: ig Re Im (Hartree)\n");
+                fprintf(f, "# fac = %.4f, brange = %d\n", fac, brange);
+                for (int ig = 0; ig < std::min(10, npw); ig++) {
+                    fprintf(f, "%5d %25.16e %25.16e\n", ig + 1, vpsi1_host[ig].x, vpsi1_host[ig].y);
+                }
+                fclose(f);
+                printf("[DEBUG] Exported vpsi after wave_r2g_pair (before scaling)\n");
+                printf("  vpsi[0] = (%.10e, %.10e)\n", vpsi1_host[0].x, vpsi1_host[0].y);
+                printf("  vpsi[1] = (%.10e, %.10e)\n", vpsi1_host[1].x, vpsi1_host[1].y);
+                fflush(stdout);
             }
-            fclose(f);
-            printf("[DEBUG] Exported vpsi after wave_r2g_pair (before scaling)\n");
-            printf("  vpsi[0] = (%.10e, %.10e)\n", vpsi1_host[0].x, vpsi1_host[0].y);
-            printf("  vpsi[1] = (%.10e, %.10e)\n", vpsi1_host[1].x, vpsi1_host[1].y);
-            fflush(stdout);
         }
 
         // 应用 fac 缩放（直接在紧凑数组的前 npw 个元素上）

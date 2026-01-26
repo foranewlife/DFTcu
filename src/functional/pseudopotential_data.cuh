@@ -84,6 +84,36 @@ struct NonlocalPotential {
 };
 
 /**
+ * @brief Atomic charge density for initializing starting density
+ */
+struct AtomicDensity {
+    std::vector<double> rho_at;  ///< Radial atomic charge density rho(r) * 4πr²
+
+    AtomicDensity() = default;
+};
+
+/**
+ * @brief Pseudo-atomic orbital
+ */
+struct PseudoAtomicWfc {
+    int l;
+    std::string label;
+    double occupation;
+    std::vector<double> chi;  ///< Radial wavefunction chi(r)
+
+    PseudoAtomicWfc() : l(0), occupation(0.0) {}
+};
+
+/**
+ * @brief Atomic wavefunctions for initializing starting wavefunctions
+ */
+struct AtomicWavefunctions {
+    std::vector<PseudoAtomicWfc> wavefunctions;
+
+    AtomicWavefunctions() = default;
+};
+
+/**
  * @brief Complete pseudopotential data parsed from UPF file
  *
  * This class stores all data extracted from a UPF (Unified Pseudopotential Format) file.
@@ -99,12 +129,16 @@ class PseudopotentialData {
     const RadialMesh& mesh() const { return mesh_; }
     const LocalPotential& local() const { return local_; }
     const NonlocalPotential& nonlocal() const { return nonlocal_; }
+    const AtomicDensity& atomic_density() const { return atomic_density_; }
+    const AtomicWavefunctions& atomic_wfc() const { return atomic_wfc_; }
 
     // Setter methods (for parser use)
     void set_header(const PseudopotentialHeader& h) { header_ = h; }
     void set_mesh(const RadialMesh& m) { mesh_ = m; }
     void set_local(const LocalPotential& l) { local_ = l; }
     void set_nonlocal(const NonlocalPotential& nl) { nonlocal_ = nl; }
+    void set_atomic_density(const AtomicDensity& ad) { atomic_density_ = ad; }
+    void set_atomic_wfc(const AtomicWavefunctions& aw) { atomic_wfc_ = aw; }
 
     // Convenience accessors
     std::string element() const { return header_.element; }
@@ -125,6 +159,8 @@ class PseudopotentialData {
     RadialMesh mesh_;
     LocalPotential local_;
     NonlocalPotential nonlocal_;
+    AtomicDensity atomic_density_;
+    AtomicWavefunctions atomic_wfc_;
 };
 
 }  // namespace dftcu

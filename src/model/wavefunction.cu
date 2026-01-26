@@ -246,6 +246,19 @@ void Wavefunction::copy_from_host(const std::complex<double>* data) {
     data_.copy_from_host(reinterpret_cast<const gpufftComplex*>(data), grid_.stream());
 }
 
+void Wavefunction::copy_from(const Wavefunction& other) {
+    if (this != &other) {
+        if (num_bands_ != other.num_bands_ || grid_.nnr() != other.grid_.nnr()) {
+            throw std::invalid_argument("Wavefunction dimensions must match for copy_from");
+        }
+        CHECK(cudaMemcpyAsync(data_.data(), other.data_.data(),
+                              data_.size() * sizeof(gpufftComplex), cudaMemcpyDeviceToDevice,
+                              grid_.stream()));
+        encut_ = other.encut_;
+        num_pw_ = other.num_pw_;
+    }
+}
+
 void Wavefunction::copy_to_host(std::complex<double>* data) const {
     data_.copy_to_host(reinterpret_cast<gpufftComplex*>(data), grid_.stream());
 }

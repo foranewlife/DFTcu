@@ -52,6 +52,9 @@ class Wavefunction {
     /** @brief Get coefficients of a specific band on the full grid */
     std::vector<std::complex<double>> get_coefficients(int band) const;
 
+    /** @brief Copy data from another Wavefunction (device to device) */
+    void copy_from(const Wavefunction& other);
+
     /** @brief Set coefficients of a specific band on the full grid */
     void set_coefficients(const std::vector<std::complex<double>>& coeffs, int band);
 

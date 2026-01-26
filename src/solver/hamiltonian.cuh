@@ -33,6 +33,9 @@ class Hamiltonian {
                 std::shared_ptr<NonLocalPseudo> nl_pseudo = nullptr);
     ~Hamiltonian() = default;
 
+    /** @brief Copy data from another Hamiltonian (device to device copy of potentials) */
+    void copy_from(const Hamiltonian& other);
+
     /**
      * @brief Apply the Hamiltonian to a wavefunction: H|psi> -> H_psi
      *

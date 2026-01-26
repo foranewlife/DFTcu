@@ -11,10 +11,10 @@ namespace dftcu {
 /**
  * @brief Utility to build initial charge density from atomic contributions.
  */
-class DensityBuilder {
+class DensityFactory {
   public:
-    DensityBuilder(Grid& grid, std::shared_ptr<Atoms> atoms);
-    ~DensityBuilder() = default;
+    DensityFactory(Grid& grid, std::shared_ptr<Atoms> atoms);
+    ~DensityFactory() = default;
 
     /**
      * @brief Set atomic radial density in G-space.

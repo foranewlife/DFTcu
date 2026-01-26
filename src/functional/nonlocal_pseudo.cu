@@ -348,28 +348,24 @@ void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
 
     // DEBUG: Export beta_packed for comparison with QE vkb
     static bool beta_exported = false;
-    if (!beta_exported && nb == 4) {  // Only export once, for NSCF with 4 bands
-        beta_exported = true;
-        std::vector<gpufftComplex> h_beta_packed(npw * num_projectors_);
-        beta_packed.copy_to_host(h_beta_packed.data(), grid_.stream());
-        grid_.synchronize();
+    if (!beta_exported) {
+        std::vector<gpufftComplex> h_beta(npw * num_projectors_);
+        beta_packed.copy_to_host(h_beta.data());
 
         FILE* fp = fopen("dftcu_beta_packed.txt", "w");
         if (fp) {
-            fprintf(fp, "# DFTcu beta_packed (Gamma-only, complex)\n");
-            fprintf(fp, "# npw = %d\n", npw);
-            fprintf(fp, "# num_projectors = %d\n", num_projectors_);
-            fprintf(fp, "# Format: ig iproj real imag\n");
-            for (int iproj = 0; iproj < num_projectors_; ++iproj) {
+            fprintf(fp, "# DFTcu: beta_packed(npw, num_projectors)\n");
+            fprintf(fp, "# Format: ig iproj Re Im\n");
+            for (int ip = 0; ip < num_projectors_; ++ip) {
                 for (int ig = 0; ig < npw; ++ig) {
-                    gpufftComplex val = h_beta_packed[iproj * npw + ig];
-                    fprintf(fp, "%5d %5d %25.16e %25.16e\n", ig + 1, iproj + 1, val.x,
-                            val.y);  // 1-based for comparison with QE
+                    fprintf(fp, "%5d %5d %25.16e %25.16e\n", ig + 1, ip + 1,
+                            h_beta[ip * npw + ig].x, h_beta[ip * npw + ig].y);
                 }
             }
             fclose(fp);
-            printf("[DEBUG V_NL] Exported beta_packed to dftcu_beta_packed.txt\n");
+            printf("[DEBUG] Exported beta_packed to dftcu_beta_packed.txt\n");
         }
+        beta_exported = true;
     }
 
     // Step 2: Pack wavefunctions from FFT grid (nnr) to compact array (npw)
