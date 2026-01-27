@@ -128,9 +128,6 @@ void WavefunctionFactory::add_atomic_orbital(int type, int l, const std::vector<
         std::vector<double> rab_truncated(rab.begin(), rab.begin() + mesh_size);
         chi_q[iq] = simpson_integrate(aux, rab_truncated) * fpi;
     }
-    printf(
-        "DEBUG WavefunctionFactory: Added orbital type=%d, l=%d, msh=%d/%zu, chi_q[1](q=0)=%.6f\n",
-        type, l, mesh_size, r.size(), chi_q[1]);
     orbital_tables_[type].push_back({l, chi_q});
 }
 
@@ -138,9 +135,6 @@ void WavefunctionFactory::build_atomic_wavefunctions(Wavefunction& psi, bool ran
     int n_bands = psi.num_bands();
     int nnr = grid_.nnr();
     double omega_bohr = grid_.volume_bohr();
-
-    printf("DEBUG WavefunctionFactory: Building %d bands for %zu atoms...\n", n_bands,
-           atoms_->nat());
 
     grid_.synchronize();
     cudaMemset(psi.data(), 0, n_bands * nnr * sizeof(gpufftComplex));
@@ -196,9 +190,10 @@ void WavefunctionFactory::build_atomic_wavefunctions(Wavefunction& psi, bool ran
             // 遍历所有磁量子数
             for (int m = 0; m < 2 * orb.l + 1; ++m) {
                 if (current_band >= n_bands) {
-                    printf("WARNING: current_band (%d) >= n_bands (%d), stopping early\n",
-                           current_band, n_bands);
-                    goto done;  // 跳出所有循环
+                    throw std::runtime_error(
+                        "WavefunctionFactory: band count exceeds limit (current_band=" +
+                        std::to_string(current_band) + ", n_bands=" + std::to_string(n_bands) +
+                        ")");
                 }
 
                 // 为该 (原子, 轨道, m) 组合生成波函数
@@ -251,17 +246,11 @@ std::unique_ptr<Wavefunction> WavefunctionFactory::build(bool randomize_phase) {
                                  "Call add_atomic_orbital() before build().");
     }
 
-    printf("WavefunctionFactory: Building %d atomic wavefunctions...\n", n_bands);
-
     // Create Wavefunction object
     auto psi = std::make_unique<Wavefunction>(grid_, n_bands, grid_.ecutwfc());
 
     // Fill with atomic orbitals (reuse existing implementation)
     build_atomic_wavefunctions_internal(*psi, randomize_phase);
-
-    printf(
-        "WavefunctionFactory: Atomic wavefunctions built successfully (%d bands, non-orthogonal)\n",
-        n_bands);
 
     return psi;
 }
@@ -272,9 +261,6 @@ void WavefunctionFactory::build_atomic_wavefunctions_internal(Wavefunction& psi,
     int n_bands = psi.num_bands();
     int nnr = grid_.nnr();
     double omega_bohr = grid_.volume_bohr();
-
-    printf("DEBUG WavefunctionFactory: Building %d bands for %zu atoms...\n", n_bands,
-           atoms_->nat());
 
     grid_.synchronize();
     cudaMemset(psi.data(), 0, n_bands * nnr * sizeof(gpufftComplex));
@@ -310,9 +296,10 @@ void WavefunctionFactory::build_atomic_wavefunctions_internal(Wavefunction& psi,
             // 遍历所有磁量子数
             for (int m = 0; m < 2 * orb.l + 1; ++m) {
                 if (current_band >= n_bands) {
-                    printf("WARNING: current_band (%d) >= n_bands (%d), stopping early\n",
-                           current_band, n_bands);
-                    goto done;
+                    throw std::runtime_error(
+                        "WavefunctionFactory: band count exceeds limit (current_band=" +
+                        std::to_string(current_band) + ", n_bands=" + std::to_string(n_bands) +
+                        ")");
                 }
 
                 build_atomic_band_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
@@ -332,7 +319,6 @@ void WavefunctionFactory::build_atomic_wavefunctions_internal(Wavefunction& psi,
         }
     }
 
-done:
     grid_.synchronize();
 }
 
