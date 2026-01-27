@@ -76,7 +76,7 @@ double LDA_PZ::compute(const RealField& rho, RealField& v_xc) {
     Grid& grid = rho.grid();
     double dv = grid.dv_bohr();  // [Bohr³]
 
-    printf("DEBUG LDA_PZ: n = %d, dv = %.6e Bohr³\n", n, dv);
+    // printf("DEBUG LDA_PZ: n = %d, dv = %.6e Bohr³\n", n, dv);
 
     GPU_Vector<double> energy_density(n);
 
@@ -88,20 +88,21 @@ double LDA_PZ::compute(const RealField& rho, RealField& v_xc) {
     GPU_CHECK_KERNEL;
 
     // DEBUG: Sample first few energy_density values
-    std::vector<double> h_rho(std::min(10, n));
-    std::vector<double> h_vxc(std::min(10, n));
-    std::vector<double> h_e_density(std::min(10, n));
-    CHECK(cudaMemcpy(h_rho.data(), rho.data(), std::min(10, n) * sizeof(double),
-                     cudaMemcpyDeviceToHost));
-    CHECK(cudaMemcpy(h_vxc.data(), v_xc.data(), std::min(10, n) * sizeof(double),
-                     cudaMemcpyDeviceToHost));
-    CHECK(cudaMemcpy(h_e_density.data(), energy_density.data(), std::min(10, n) * sizeof(double),
-                     cudaMemcpyDeviceToHost));
+    // std::vector<double> h_rho(std::min(10, n));
+    // std::vector<double> h_vxc(std::min(10, n));
+    // std::vector<double> h_e_density(std::min(10, n));
+    // CHECK(cudaMemcpy(h_rho.data(), rho.data(), std::min(10, n) * sizeof(double),
+    //                  cudaMemcpyDeviceToHost));
+    // CHECK(cudaMemcpy(h_vxc.data(), v_xc.data(), std::min(10, n) * sizeof(double),
+    //                  cudaMemcpyDeviceToHost));
+    // CHECK(cudaMemcpy(h_e_density.data(), energy_density.data(), std::min(10, n) * sizeof(double),
+    //                  cudaMemcpyDeviceToHost));
 
-    printf("DEBUG LDA_PZ: First few points:\n");
-    for (int i = 0; i < std::min(5, n); ++i) {
-        printf("  [%d]: rho=%.6e, vxc=%.6e, e_dens=%.6e\n", i, h_rho[i], h_vxc[i], h_e_density[i]);
-    }
+    // printf("DEBUG LDA_PZ: First few points:\n");
+    // for (int i = 0; i < std::min(5, n); ++i) {
+    //     printf("  [%d]: rho=%.6e, vxc=%.6e, e_dens=%.6e\n", i, h_rho[i], h_vxc[i],
+    //     h_e_density[i]);
+    // }
 
     // Reduce energy density
     GPU_Vector<double> partial_sums(grid_size);
@@ -117,8 +118,8 @@ double LDA_PZ::compute(const RealField& rho, RealField& v_xc) {
     for (double s : h_partial_sums)
         total_energy += s;
 
-    printf("DEBUG LDA_PZ: sum(e_density) = %.12e\n", total_energy);
-    printf("DEBUG LDA_PZ: sum * dv = %.12e Ha\n", total_energy * dv);
+    // printf("DEBUG LDA_PZ: sum(e_density) = %.12e\n", total_energy);
+    // printf("DEBUG LDA_PZ: sum * dv = %.12e Ha\n", total_energy * dv);
 
     return total_energy * dv;  // [Ha]
 }

@@ -158,13 +158,13 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
     int ngm_dense = grid.ngm_dense();
 
     // DEBUG: Print lattice and volume
-    const double(*lat)[3] = grid.lattice();
-    printf("DEBUG Hartree: lattice (Bohr):\n");
-    for (int i = 0; i < 3; ++i) {
-        printf("  [%12.6f, %12.6f, %12.6f]\n", lat[i][0], lat[i][1], lat[i][2]);
-    }
-    printf("DEBUG Hartree: volume_bohr = %.6f Bohr³\n", grid.volume_bohr());
-    printf("DEBUG Hartree: dv_bohr = %.6f Bohr³\n", grid.dv_bohr());
+    // const double(*lat)[3] = grid.lattice();
+    // printf("DEBUG Hartree: lattice (Bohr):\n");
+    // for (int i = 0; i < 3; ++i) {
+    //     printf("  [%12.6f, %12.6f, %12.6f]\n", lat[i][0], lat[i][1], lat[i][2]);
+    // }
+    // printf("DEBUG Hartree: volume_bohr = %.6f Bohr³\n", grid.volume_bohr());
+    // printf("DEBUG Hartree: dv_bohr = %.6f Bohr³\n", grid.dv_bohr());
 
     // Check if Dense grid is available
     if (ngm_dense == 0) {
@@ -179,29 +179,30 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
     fft_->forward(*rho_g_);
 
     // DEBUG: Check rho_g[0] and first few G-vectors via nl_dense
-    std::vector<gpufftComplex> rho_g_h(std::min(100, (int)nnr));
-    CHECK(cudaMemcpy(rho_g_h.data(), rho_g_->data(),
-                     std::min(100, (int)nnr) * sizeof(gpufftComplex), cudaMemcpyDeviceToHost));
-    printf("DEBUG Hartree: rho_g[0] = (%.16e, %.16e)\n", rho_g_h[0].x, rho_g_h[0].y);
+    // std::vector<gpufftComplex> rho_g_h(std::min(100, (int)nnr));
+    // CHECK(cudaMemcpy(rho_g_h.data(), rho_g_->data(),
+    //                  std::min(100, (int)nnr) * sizeof(gpufftComplex), cudaMemcpyDeviceToHost));
+    // printf("DEBUG Hartree: rho_g[0] = (%.16e, %.16e)\n", rho_g_h[0].x, rho_g_h[0].y);
 
     // DEBUG: Check nl_dense mapping for first few G-vectors
-    std::vector<int> nl_dense_h(std::min(10, ngm_dense));
-    CHECK(cudaMemcpy(nl_dense_h.data(), grid.nl_dense(), std::min(10, ngm_dense) * sizeof(int),
-                     cudaMemcpyDeviceToHost));
+    // std::vector<int> nl_dense_h(std::min(10, ngm_dense));
+    // CHECK(cudaMemcpy(nl_dense_h.data(), grid.nl_dense(), std::min(10, ngm_dense) * sizeof(int),
+    //                  cudaMemcpyDeviceToHost));
 
     // DEBUG: Check gg_dense for first few G-vectors
-    std::vector<double> gg_dense_h(std::min(10, ngm_dense));
-    CHECK(cudaMemcpy(gg_dense_h.data(), grid.gg_dense(), std::min(10, ngm_dense) * sizeof(double),
-                     cudaMemcpyDeviceToHost));
+    // std::vector<double> gg_dense_h(std::min(10, ngm_dense));
+    // CHECK(cudaMemcpy(gg_dense_h.data(), grid.gg_dense(), std::min(10, ngm_dense) *
+    // sizeof(double),
+    //                  cudaMemcpyDeviceToHost));
 
-    printf("DEBUG Hartree: First few Dense grid G-vectors:\n");
-    for (int i = 0; i < std::min(10, ngm_dense); ++i) {
-        int fft_idx = nl_dense_h[i];
-        if (fft_idx < 100) {
-            printf("  ig=%d: nl=%4d, |G|²=%.6e, rho_g=(%.6e, %.6e)\n", i, fft_idx, gg_dense_h[i],
-                   rho_g_h[fft_idx].x, rho_g_h[fft_idx].y);
-        }
-    }
+    // printf("DEBUG Hartree: First few Dense grid G-vectors:\n");
+    // for (int i = 0; i < std::min(10, ngm_dense); ++i) {
+    //     int fft_idx = nl_dense_h[i];
+    //     if (fft_idx < 100) {
+    //         printf("  ig=%d: nl=%4d, |G|²=%.6e, rho_g=(%.6e, %.6e)\n", i, fft_idx, gg_dense_h[i],
+    //                rho_g_h[fft_idx].x, rho_g_h[fft_idx].y);
+    //     }
+    // }
 
     // ========================================================================
     // Step 2: Compute unit conversion factor
@@ -224,7 +225,7 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
 
     double fac = e2 * fpi / TWO_PI_SQ;  // Pure constant, no lattice dependence!
 
-    printf("DEBUG Hartree: fac = e2*fpi/(2π)² = %.6f (constant)\n", fac);
+    // printf("DEBUG Hartree: fac = e2*fpi/(2π)² = %.6f (constant)\n", fac);
 
     // ========================================================================
     // Step 3: Compute V_H(G) and energy contributions on Dense grid
@@ -241,7 +242,7 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
     const int block_size = 256;
     const int grid_size_dense = (ngm_dense + block_size - 1) / block_size;
 
-    printf("DEBUG Hartree: Using Dense grid via nl_dense mapping (ngm_dense=%d)\n", ngm_dense);
+    // printf("DEBUG Hartree: Using Dense grid via nl_dense mapping (ngm_dense=%d)\n", ngm_dense);
 
     // Call kernel to compute V_H(G) and energy for Dense grid
     // No alat conversion needed - use crystallographic units directly!
@@ -251,13 +252,13 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
     GPU_CHECK_KERNEL;
 
     // DEBUG: Check energy_contrib for first few G-vectors
-    std::vector<double> energy_contrib_h(std::min(10, ngm_dense));
-    CHECK(cudaMemcpy(energy_contrib_h.data(), energy_contrib_dense.data(),
-                     std::min(10, ngm_dense) * sizeof(double), cudaMemcpyDeviceToHost));
-    printf("DEBUG Hartree: First few energy contributions:\n");
-    for (int i = 0; i < std::min(10, ngm_dense); ++i) {
-        printf("  ig=%d: E_contrib = %.16e\n", i, energy_contrib_h[i]);
-    }
+    // std::vector<double> energy_contrib_h(std::min(10, ngm_dense));
+    // CHECK(cudaMemcpy(energy_contrib_h.data(), energy_contrib_dense.data(),
+    //                  std::min(10, ngm_dense) * sizeof(double), cudaMemcpyDeviceToHost));
+    // printf("DEBUG Hartree: First few energy contributions:\n");
+    // for (int i = 0; i < std::min(10, ngm_dense); ++i) {
+    //     printf("  ig=%d: E_contrib = %.16e\n", i, energy_contrib_h[i]);
+    // }
 
     // IMPORTANT: Dense grid already stores only half-sphere (Gamma-only)!
     // The 730 G-vectors include only h>0, or (h=0,k>0), or (h=0,k=0,l>=0)
@@ -312,18 +313,18 @@ void Hartree::compute(const RealField& rho, RealField& vh, double& energy) {
     double sum_energy = v_sum(ngm_dense, energy_contrib_dense.data(), grid.stream());
     double omega = grid.volume_bohr();  // [Bohr³]
 
-    printf("DEBUG Hartree: sum_energy (before fac*omega) = %.16e\n", sum_energy);
-    printf("DEBUG Hartree: omega = %.6f Bohr³\n", omega);
+    // printf("DEBUG Hartree: sum_energy (before fac*omega) = %.16e\n", sum_energy);
+    // printf("DEBUG Hartree: omega = %.6f Bohr³\n", omega);
 
     // QE: ehart = fac * SUM( |rhog|^2 / gg ) * omega (for Gamma-only)
     energy = fac * sum_energy * omega;  // [Ry]
 
-    printf("DEBUG Hartree: energy (after fac*omega) = %.16e Ry\n", energy);
+    // printf("DEBUG Hartree: energy (after fac*omega) = %.16e Ry\n", energy);
 
     // Convert to Hartree for internal consistency
     energy *= 0.5;  // [Ry → Ha]
 
-    printf("DEBUG Hartree: energy (final) = %.16e Ha\n", energy);
+    // printf("DEBUG Hartree: energy (final) = %.16e Ha\n", energy);
 }
 
 }  // namespace dftcu
