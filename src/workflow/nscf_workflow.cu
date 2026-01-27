@@ -205,11 +205,11 @@ void NSCFWorkflow::initialize_hamiltonian() {
     ham_.set_density_functional_potential(dfp_);
 
     // ════════════════════════════════════════════════════════════════════════
-    // 设置非局域赝势
+    // 设置非局域赝势（支持多元素）
     // ════════════════════════════════════════════════════════════════════════
-    // 注意：目前只支持单一原子类型
-    if (!nonlocal_pseudos_.empty()) {
-        ham_.set_nonlocal(nonlocal_pseudos_[0]);
+    // ✅ 新实现：循环添加所有元素的非局域势
+    for (auto& nonlocal_ps : nonlocal_pseudos_) {
+        ham_.add_nonlocal(nonlocal_ps);
     }
 }
 

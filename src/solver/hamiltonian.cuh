@@ -69,15 +69,41 @@ class Hamiltonian {
     /**
      * @brief Apply only the nonlocal potential operator: V_NL|psi> -> result
      *
-     * V_NL|psi> = Σ_ij D_ij |β_i⟩⟨β_j|psi⟩
+     * V_NL|psi> = Σ_type Σ_ij D_ij^(type) |β_i^(type)⟩⟨β_j^(type)|psi⟩
+     *
+     * Applies all non-local pseudopotential operators (one per element type).
      *
      * @param psi Input wavefunction
      * @param h_psi Output (will be ADDED to, not overwritten)
      */
     void apply_nonlocal(Wavefunction& psi, Wavefunction& h_psi);
 
-    /** @brief Set or update the non-local potential handler */
-    void set_nonlocal(std::shared_ptr<NonLocalPseudoOperator> nl_pseudo) { nonlocal_ = nl_pseudo; }
+    /**
+     * @brief Add a non-local pseudopotential operator
+     *
+     * Supports multiple element types by adding multiple operators.
+     * Each operator corresponds to one element type.
+     *
+     * @param nl_pseudo Non-local pseudopotential operator for one element type
+     */
+    void add_nonlocal(std::shared_ptr<NonLocalPseudoOperator> nl_pseudo) {
+        nonlocal_operators_.push_back(nl_pseudo);
+    }
+
+    /**
+     * @brief Clear all non-local pseudopotential operators
+     */
+    void clear_nonlocal() { nonlocal_operators_.clear(); }
+
+    /**
+     * @brief Set or update the non-local potential handler (deprecated)
+     *
+     * @deprecated Use add_nonlocal() instead for multi-element support
+     */
+    void set_nonlocal(std::shared_ptr<NonLocalPseudoOperator> nl_pseudo) {
+        clear_nonlocal();
+        add_nonlocal(nl_pseudo);
+    }
 
     /** @brief Set or update the density functional potential handler */
     void set_density_functional_potential(std::shared_ptr<DensityFunctionalPotential> dfp) {
@@ -113,20 +139,46 @@ class Hamiltonian {
     void update_potentials_inplace(const RealField& rho);
 
     /** @brief Check if non-local pseudopotential is present */
-    bool has_nonlocal() const { return nonlocal_ != nullptr; }
+    bool has_nonlocal() const { return !nonlocal_operators_.empty(); }
+
+    /** @brief Get number of non-local pseudopotential operators */
+    size_t num_nonlocal() const { return nonlocal_operators_.size(); }
 
     /** @brief Get reference to density functional potential */
     DensityFunctionalPotential& get_density_functional_potential() { return *dfp_; }
     const DensityFunctionalPotential& get_density_functional_potential() const { return *dfp_; }
 
-    /** @brief Get reference to non-local pseudopotential */
-    NonLocalPseudoOperator& get_nonlocal() { return *nonlocal_; }
-    const NonLocalPseudoOperator& get_nonlocal() const { return *nonlocal_; }
+    /**
+     * @brief Get reference to non-local pseudopotential operator by index
+     * @param idx Index of the operator (0 to num_nonlocal()-1)
+     * @return Reference to the operator
+     */
+    NonLocalPseudoOperator& get_nonlocal(size_t idx = 0) {
+        if (idx >= nonlocal_operators_.size()) {
+            throw std::out_of_range("Nonlocal operator index out of range");
+        }
+        return *nonlocal_operators_[idx];
+    }
+
+    const NonLocalPseudoOperator& get_nonlocal(size_t idx = 0) const {
+        if (idx >= nonlocal_operators_.size()) {
+            throw std::out_of_range("Nonlocal operator index out of range");
+        }
+        return *nonlocal_operators_[idx];
+    }
+
+    /**
+     * @brief Get all non-local pseudopotential operators
+     * @return Vector of shared pointers to operators
+     */
+    const std::vector<std::shared_ptr<NonLocalPseudoOperator>>& get_nonlocal_operators() const {
+        return nonlocal_operators_;
+    }
 
   private:
     Grid& grid_;
     std::shared_ptr<DensityFunctionalPotential> dfp_;
-    std::shared_ptr<NonLocalPseudoOperator> nonlocal_;
+    std::vector<std::shared_ptr<NonLocalPseudoOperator>> nonlocal_operators_;
 
     // Persistent buffers for potentials in real space
     RealField v_loc_tot_;  // Total V_loc = V_ps + V_H + V_xc

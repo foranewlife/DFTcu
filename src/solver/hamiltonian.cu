@@ -239,13 +239,7 @@ __global__ void scale_vloc_kernel(size_t n, gpufftComplex* data, double scale) {
 
 // Base constructor - dfp is optional
 Hamiltonian::Hamiltonian(Grid& grid)
-    : grid_(grid),
-      dfp_(nullptr),
-      nonlocal_(nullptr),
-      v_loc_tot_(grid),
-      v_ps_(grid),
-      v_h_(grid),
-      v_xc_(grid) {
+    : grid_(grid), dfp_(nullptr), v_loc_tot_(grid), v_ps_(grid), v_h_(grid), v_xc_(grid) {
     v_loc_tot_.fill(0.0);
     v_ps_.fill(0.0);
     v_h_.fill(0.0);
@@ -255,17 +249,16 @@ Hamiltonian::Hamiltonian(Grid& grid)
 // Backward compatibility constructor
 Hamiltonian::Hamiltonian(Grid& grid, std::shared_ptr<DensityFunctionalPotential> dfp,
                          std::shared_ptr<NonLocalPseudoOperator> nl_pseudo)
-    : grid_(grid),
-      dfp_(dfp),
-      nonlocal_(nl_pseudo),
-      v_loc_tot_(grid),
-      v_ps_(grid),
-      v_h_(grid),
-      v_xc_(grid) {
+    : grid_(grid), dfp_(dfp), v_loc_tot_(grid), v_ps_(grid), v_h_(grid), v_xc_(grid) {
     v_loc_tot_.fill(0.0);
     v_ps_.fill(0.0);
     v_h_.fill(0.0);
     v_xc_.fill(0.0);
+
+    // Add nonlocal operator if provided
+    if (nl_pseudo) {
+        nonlocal_operators_.push_back(nl_pseudo);
+    }
 }
 
 void Hamiltonian::copy_from(const Hamiltonian& other) {
@@ -274,7 +267,7 @@ void Hamiltonian::copy_from(const Hamiltonian& other) {
             throw std::invalid_argument("Hamiltonian must share the same grid for copy_from");
         }
         dfp_ = other.dfp_;
-        nonlocal_ = other.nonlocal_;
+        nonlocal_operators_ = other.nonlocal_operators_;
         v_loc_tot_.copy_from(other.v_loc_tot_);
         v_ps_.copy_from(other.v_ps_);
         v_h_.copy_from(other.v_h_);
@@ -457,8 +450,12 @@ void Hamiltonian::apply_local(Wavefunction& psi, Wavefunction& h_psi) {
 }
 
 void Hamiltonian::apply_nonlocal(Wavefunction& psi, Wavefunction& h_psi) {
-    if (nonlocal_) {
-        nonlocal_->apply(psi, h_psi);
+    // Apply all non-local pseudopotential operators (one per element type)
+    for (auto& nl_op : nonlocal_operators_) {
+        nl_op->apply(psi, h_psi);
+    }
+
+    if (!nonlocal_operators_.empty()) {
         h_psi.enforce_gamma_constraint_inplace();
         grid_.synchronize();
     }

@@ -790,14 +790,23 @@ PYBIND11_MODULE(_dftcu, m) {
              "Apply only local potential operator: V_loc|psi>")
         .def("apply_nonlocal", &dftcu::Hamiltonian::apply_nonlocal, py::arg("psi"),
              py::arg("h_psi"), "Apply only nonlocal potential operator: V_NL|psi>")
-        .def("set_nonlocal", &dftcu::Hamiltonian::set_nonlocal)
-        .def("has_nonlocal", &dftcu::Hamiltonian::has_nonlocal)
+        .def("add_nonlocal", &dftcu::Hamiltonian::add_nonlocal, py::arg("nl_pseudo"),
+             "Add a non-local pseudopotential operator (supports multi-element)")
+        .def("clear_nonlocal", &dftcu::Hamiltonian::clear_nonlocal,
+             "Clear all non-local pseudopotential operators")
+        .def("set_nonlocal", &dftcu::Hamiltonian::set_nonlocal, py::arg("nl_pseudo"),
+             "Set non-local pseudopotential operator (deprecated, use add_nonlocal)")
+        .def("has_nonlocal", &dftcu::Hamiltonian::has_nonlocal,
+             "Check if any non-local pseudopotential is present")
+        .def("num_nonlocal", &dftcu::Hamiltonian::num_nonlocal,
+             "Get number of non-local pseudopotential operators")
         .def(
             "get_nonlocal",
-            [](dftcu::Hamiltonian& self) -> dftcu::NonLocalPseudoOperator& {
-                return self.get_nonlocal();
+            [](dftcu::Hamiltonian& self, size_t idx) -> dftcu::NonLocalPseudoOperator& {
+                return self.get_nonlocal(idx);
             },
-            py::return_value_policy::reference)
+            py::arg("idx") = 0, py::return_value_policy::reference,
+            "Get non-local pseudopotential operator by index")
         .def("get_v_of_0", &dftcu::Hamiltonian::get_v_of_0)
         .def("set_v_of_0", &dftcu::Hamiltonian::set_v_of_0, py::arg("v0"))
         .def("v_loc", (dftcu::RealField & (dftcu::Hamiltonian::*)()) & dftcu::Hamiltonian::v_loc,
