@@ -102,14 +102,15 @@ class Hamiltonian {
     /** @brief Set the aggregate G=0 potential in Hartree. */
     void set_v_of_0(double v0) { v_of_0_ = v0; }
 
-    /** @brief Update the local potential from the density functional potential */
-    void update_potentials(const RealField& rho);
-
-    /**
-     * @brief Set the G-vector cutoff for all local potential components (matching QE's ecutrho).
+    /** @brief Set the G-vector cutoff for all local potential components (matching QE's ecutrho).
      * @param ecutrho Energy cutoff in Ry (internally uses Bohr^-2).
      */
     void set_ecutrho(double ecutrho);
+
+    /** @brief Update the local potential from the density functional potential
+     * [SIDE_EFFECT] Modifies internal potential fields (vrs_) in-place
+     */
+    void update_potentials_inplace(const RealField& rho);
 
     /** @brief Check if non-local pseudopotential is present */
     bool has_nonlocal() const { return nonlocal_ != nullptr; }

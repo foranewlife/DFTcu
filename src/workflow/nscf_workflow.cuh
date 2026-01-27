@@ -81,7 +81,7 @@ struct NSCFWorkflowConfig {
  *   1. 验证配置（nbands, nelec, ecutrho >= 4*ecutwfc）
  *   2. 创建 LocalPseudo 和 NonlocalPseudo
  *   3. 创建 Hamiltonian 并设置 DensityFunctionalPotential
- *   4. 加载密度并调用 potinit（ham.update_potentials）
+ *   4. 加载密度并调用 potinit（ham.update_potentials_inplace）
  *   5. 初始化波函数
  *
  * execute() 阶段：

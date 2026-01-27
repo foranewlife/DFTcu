@@ -778,7 +778,8 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("set_density_functional_potential",
              &dftcu::Hamiltonian::set_density_functional_potential)
         .def("copy_from", &dftcu::Hamiltonian::copy_from, py::arg("other"))
-        .def("update_potentials", &dftcu::Hamiltonian::update_potentials)
+        .def("update_potentials_inplace", &dftcu::Hamiltonian::update_potentials_inplace,
+             "Update local potential from density (modifies internal state in-place)")
         .def("apply", &dftcu::Hamiltonian::apply)
         .def("apply_kinetic", &dftcu::Hamiltonian::apply_kinetic, py::arg("psi"), py::arg("h_psi"),
              "Apply only kinetic energy operator: T|psi>")

@@ -283,10 +283,10 @@ void Hamiltonian::copy_from(const Hamiltonian& other) {
     }
 }
 
-void Hamiltonian::update_potentials(const RealField& rho) {
+void Hamiltonian::update_potentials_inplace(const RealField& rho) {
     if (!dfp_) {
         throw std::runtime_error(
-            "Hamiltonian::update_potentials: DensityFunctionalPotential not set");
+            "Hamiltonian::update_potentials_inplace: DensityFunctionalPotential not set");
     }
 
     // Clear all potential components

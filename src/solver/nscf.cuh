@@ -54,7 +54,7 @@ namespace dftcu {
  * // Step 3: 创建 Hamiltonian 并更新势能 (只调用一次!)
  * Hamiltonian ham(grid);
  * ham.set_density_functional_potential(dfp);
- * ham.update_potentials(rho_scf);  // vrs = V_ps + V_H[ρ] + V_xc[ρ]
+ * ham.update_potentials_inplace(rho_scf);  // vrs = V_ps + V_H[ρ] + V_xc[ρ]
  * ham.set_nonlocal(nl_pseudo);     // 设置非局域赝势
  *
  * // Step 4: 运行 NSCF 计算
@@ -77,7 +77,7 @@ class NonSCFSolver {
     /**
      * @brief Run NSCF calculation (equivalent to QE's non_scf + c_bands_nscf)
      *
-     * @param ham Hamiltonian with potentials already updated by ham.update_potentials(rho)
+     * @param ham Hamiltonian with potentials already updated by ham.update_potentials_inplace(rho)
      *            CRITICAL: vrs must be pre-computed and fixed before calling this function!
      * @param psi Initial wavefunctions (random or atomic orbitals), updated to converged
      * eigenstates

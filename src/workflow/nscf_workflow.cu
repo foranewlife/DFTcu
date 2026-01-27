@@ -234,7 +234,7 @@ void NSCFWorkflow::potinit() {
     // 计算势能：vrs = V_ps + V_H[ρ] + V_xc[ρ]
     // ════════════════════════════════════════════════════════════════════════
     // 注意：NSCF 中此函数只调用一次，之后 vrs 保持不变
-    ham_.update_potentials(rho_);
+    ham_.update_potentials_inplace(rho_);
 }
 
 void NSCFWorkflow::initialize_wavefunction(const std::vector<PseudopotentialData>& pseudo_data) {
