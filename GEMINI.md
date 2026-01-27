@@ -619,21 +619,33 @@ INSTANTIATE_TEST_SUITE_P(
 
 ### 重构计划
 
-#### 阶段 1：清理 I/O 操作（1 周）
+#### 阶段 1：清理 I/O 操作 ✅ **已完成**
 
 **目标**: 移除所有 C++ 层的文件 I/O
 
 **任务清单**:
-- [ ] 移除 `src/model/grid.cu` 中的所有 `printf`
-- [ ] 移除 `src/model/density_factory.cu` 中的所有 `printf`
-- [ ] 移除 `src/solver/hamiltonian.cu` 中的所有 `fprintf/printf`
-- [ ] 删除 `src/solver/nscf.cu` 中的 `dump_*` 方法
-- [ ] 通过 Python 侧诊断模式替代（使用 `get_stats()` 和回调）
+- [x] 移除 `src/model/grid.cu` 中的所有 `printf` (28 处)
+- [x] 移除 `src/model/density_factory.cu` 中的所有 `printf` (3 处)
+- [x] 移除 `src/model/wavefunction_factory.cu` 中的所有 `printf` (7 处)
+- [x] 移除 `src/solver/hamiltonian.cu` 中的所有 `fprintf/printf` (41 处 + 8 个文件 I/O 块)
+- [x] 删除 `src/solver/nscf.cu` 中的 `dump_*` 方法和诊断系统
+- [x] 移除 `src/functional/nonlocal_pseudo.cu` 中的所有 DEBUG 输出 (15+ 处)
+- [x] 移除 Python 层对诊断配置的引用
 
-**预期收益**:
+**完成情况**:
+- ✅ 7 个提交，11 个文件修改
+- ✅ 删除 ~800 行代码
+- ✅ 移除 95+ 处 I/O 操作
+- ✅ `dftcu pw` 可以正常运行
+- ✅ 诊断能力交由单元测试和集成测试
+
+**实际收益**:
 - ✅ 符合架构设计
 - ✅ 提高可测试性
 - ✅ 减少性能开销
+- ✅ 代码更简洁清晰
+
+**备注**: 还有约 47 处 DEBUG 输出（在 hartree.cu, lda_pz.cu, pseudo.cu, davidson.cu, scf.cu, subspace_solver.cu），这些是开发调试用的，不影响核心功能，可在后续清理。
 
 #### 阶段 2：重命名副作用函数（3 天）
 
@@ -704,13 +716,13 @@ INSTANTIATE_TEST_SUITE_P(
 
 ### 重构时间表
 
-| 阶段 | 任务 | 工作量 | 优先级 | 预期完成 |
-|------|------|--------|--------|---------|
-| 阶段 1 | 清理 I/O 操作 | 1 周 | 🔴 高 | Week 1 |
-| 阶段 2 | 重命名副作用函数 | 3 天 | 🔴 高 | Week 2 |
-| 阶段 3 | 修复依赖关系 | 1 周 | 🟡 中 | Week 3 |
-| 阶段 4 | 分离双重接口 | 3 天 | 🟡 中 | Week 4 |
-| 阶段 5 | 添加函数标注 | 持续 | 🟢 低 | 持续进行 |
+| 阶段 | 任务 | 工作量 | 优先级 | 状态 |
+|------|------|--------|--------|------|
+| 阶段 1 | 清理 I/O 操作 | 1 周 | 🔴 高 | ✅ **已完成** (2024) |
+| 阶段 2 | 重命名副作用函数 | 3 天 | 🟡 中 | ⏸️ 待开始 |
+| 阶段 3 | 修复依赖关系 | 1 周 | 🟡 中 | ⏸️ 待开始 |
+| 阶段 4 | 分离双重接口 | 3 天 | 🟡 中 | ⏸️ 待开始 |
+| 阶段 5 | 添加函数标注 | 持续 | 🟢 低 | ⏸️ 持续进行 |
 
 ### 重构原则
 

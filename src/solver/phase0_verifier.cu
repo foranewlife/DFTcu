@@ -149,11 +149,11 @@ bool Phase0Verifier::load_random_wavefunction(const std::string& wfc_file, Wavef
     psi.set_coefficients_miller(h_vec, k_vec, l_vec, values, true);
 
     // 5. 强制 G=0 约束
-    psi.force_gamma_constraint();
+    psi.enforce_gamma_constraint_inplace();
 
     // 6. 正交归一化（模拟 QE regterg Step 0）
     std::cout << "[Phase0Verifier] Orthonormalizing wavefunctions..." << std::endl;
-    psi.orthonormalize();
+    psi.orthonormalize_inplace();
 
     std::cout << "[Phase0Verifier] ✓ Loaded wavefunction using production code" << std::endl;
     return true;
@@ -210,7 +210,7 @@ VerificationResult Phase0Verifier::verify(const std::string& wfc_file,
         return result;
     }
 
-    psi.force_gamma_constraint();
+    psi.enforce_gamma_constraint_inplace();
 
     // 3. Compute S_sub
     std::cout << "\n[3] Computing S_sub matrix..." << std::endl;

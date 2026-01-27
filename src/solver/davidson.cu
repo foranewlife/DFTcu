@@ -97,8 +97,8 @@ std::vector<double> DavidsonSolver::solve(Hamiltonian& ham, Wavefunction& psi) {
 
     for (int iter = 0; iter < max_iter_; ++iter) {
         // Ensure psi is clean (mask + gamma constraint)
-        psi.apply_mask();
-        psi.force_gamma_constraint();
+        psi.apply_mask_inplace();
+        psi.enforce_gamma_constraint_inplace();
 
         ham.apply(psi, h_psi);
 
@@ -154,7 +154,7 @@ std::vector<double> DavidsonSolver::solve(Hamiltonian& ham, Wavefunction& psi) {
             GPU_CHECK_KERNEL;
 
             // IMPORTANT: Orthonormalize after preconditioned update
-            psi.orthonormalize();
+            psi.orthonormalize_inplace();
         }
     }
     return eigenvalues;

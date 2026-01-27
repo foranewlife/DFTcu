@@ -75,11 +75,15 @@ class Wavefunction {
     /** @brief Initialize with random coefficients and normalize */
     void randomize(unsigned int seed = 42);
 
-    /** @brief Project bands onto the valid plane-wave sphere (G^2/2 < ENCUT) */
-    void apply_mask();
+    /** @brief Project bands onto the valid plane-wave sphere (G^2/2 < ENCUT)
+     * [SIDE_EFFECT] Modifies wavefunction data in-place
+     */
+    void apply_mask_inplace();
 
-    /** @brief Orthonormalize bands using Gram-Schmidt process on GPU */
-    void orthonormalize();
+    /** @brief Orthonormalize bands using Gram-Schmidt process on GPU
+     * [SIDE_EFFECT] Modifies wavefunction data in-place
+     */
+    void orthonormalize_inplace();
 
     /**
      * @brief Compute real-space charge density: rho(r) = sum_n f_n |psi_n(r)|^2
@@ -101,7 +105,8 @@ class Wavefunction {
     std::vector<double> get_g2kin();
 
     /**
-     * @brief Force Gamma-point constraint: Im[ψ(G=0)] = 0
+     * @brief Enforce Gamma-point constraint: Im[ψ(G=0)] = 0
+     * [SIDE_EFFECT] Modifies wavefunction data in-place
      *
      * For Gamma-only calculations, wavefunctions must satisfy ψ(-G) = ψ*(G).
      * This implies that ψ(G=0) must be purely real.
@@ -109,7 +114,7 @@ class Wavefunction {
      *
      * This function sets Im[ψ(0,n)] = 0 for all bands n.
      */
-    void force_gamma_constraint();
+    void enforce_gamma_constraint_inplace();
 
     /**
      * @brief Check if G=0 is included in this process's G-vectors

@@ -206,7 +206,7 @@ VerificationResult Phase0Verifier::verify(const std::string& wfc_file,
         return result;
     }
 
-    psi.force_gamma_constraint();
+    psi.enforce_gamma_constraint_inplace();
 
     // 3. 计算 S_sub 子空间矩阵
     std::cout << "\n[3] 计算 S_sub 子空间矩阵..." << std::endl;

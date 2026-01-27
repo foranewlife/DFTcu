@@ -229,11 +229,11 @@ void Wavefunction::randomize(unsigned int seed) {
     randomize_wavefunction_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
         n, num_bands_, grid_.gg(), data_.data(), seed);
     GPU_CHECK_KERNEL;
-    apply_mask();
-    orthonormalize();
+    apply_mask_inplace();
+    orthonormalize_inplace();
 }
 
-void Wavefunction::apply_mask() {
+void Wavefunction::apply_mask_inplace() {
     size_t n = grid_.nnr();
     const int block_size = 256;
     const int grid_size = (n * num_bands_ + block_size - 1) / block_size;
@@ -323,7 +323,7 @@ void Wavefunction::compute_occupations(const std::vector<double>& eigenvalues, d
     }
 }
 
-void Wavefunction::orthonormalize() {
+void Wavefunction::orthonormalize_inplace() {
     for (int n = 0; n < num_bands_; ++n) {
         for (int m = 0; m < n; ++m) {
             std::complex<double> overlap = dot(m, n);
@@ -420,7 +420,7 @@ __global__ void force_gamma_constraint_kernel(gpufftComplex* data, int nbands, s
     }
 }
 
-void Wavefunction::force_gamma_constraint() {
+void Wavefunction::enforce_gamma_constraint_inplace() {
     /*
      * Enforce Gamma-point constraint: Im[ψ(G=0)] = 0
      *

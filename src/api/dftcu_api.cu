@@ -379,10 +379,12 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("randomize", &dftcu::Wavefunction::randomize, py::arg("seed") = 42U)
         .def("get_pw_indices", &dftcu::Wavefunction::get_pw_indices)
         .def("get_g2kin", &dftcu::Wavefunction::get_g2kin)
-        .def("orthonormalize", &dftcu::Wavefunction::orthonormalize)
+        .def("orthonormalize_inplace", &dftcu::Wavefunction::orthonormalize_inplace,
+             "Orthonormalize bands using Gram-Schmidt process (modifies in-place)")
         .def("dot", &dftcu::Wavefunction::dot, py::arg("band_a"), py::arg("band_b"))
-        .def("force_gamma_constraint", &dftcu::Wavefunction::force_gamma_constraint,
-             "Force Gamma-point constraint: Im[ψ(G=0)] = 0 for all bands")
+        .def("enforce_gamma_constraint_inplace",
+             &dftcu::Wavefunction::enforce_gamma_constraint_inplace,
+             "Enforce Gamma-point constraint: Im[ψ(G=0)] = 0 for all bands (modifies in-place)")
         .def(
             "data",
             [](dftcu::Wavefunction& self) { return reinterpret_cast<std::uintptr_t>(self.data()); },

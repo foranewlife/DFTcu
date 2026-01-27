@@ -355,7 +355,7 @@ void Hamiltonian::apply_kinetic(Wavefunction& psi, Wavefunction& h_psi) {
         npw, nbands, lda, grid_.nl_d(), grid_.g2kin(), psi.data(), h_psi.data());
     GPU_CHECK_KERNEL;
 
-    h_psi.force_gamma_constraint();
+    h_psi.enforce_gamma_constraint_inplace();
     grid_.synchronize();
 }
 
@@ -452,14 +452,14 @@ void Hamiltonian::apply_local(Wavefunction& psi, Wavefunction& h_psi) {
         // Removed to avoid potential segfault
     }
 
-    h_psi.force_gamma_constraint();
+    h_psi.enforce_gamma_constraint_inplace();
     grid_.synchronize();
 }
 
 void Hamiltonian::apply_nonlocal(Wavefunction& psi, Wavefunction& h_psi) {
     if (nonlocal_) {
         nonlocal_->apply(psi, h_psi);
-        h_psi.force_gamma_constraint();
+        h_psi.enforce_gamma_constraint_inplace();
         grid_.synchronize();
     }
 }
@@ -486,7 +486,7 @@ void Hamiltonian::apply(Wavefunction& psi, Wavefunction& h_psi) {
     // Apply V_NL|ψ> (accumulates)
     apply_nonlocal(psi, h_psi);
 
-    h_psi.force_gamma_constraint();
+    h_psi.enforce_gamma_constraint_inplace();
     grid_.synchronize();
 }
 
