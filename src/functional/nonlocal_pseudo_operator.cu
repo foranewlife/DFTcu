@@ -175,6 +175,9 @@ void NonLocalPseudoOperator::init_tab_beta(int type, const std::vector<double>& 
                                            const std::vector<double>& rab,
                                            const std::vector<int>& l_list,
                                            const std::vector<int>& kkbeta_list, double omega_bohr) {
+    // 记录此算符对应的原子类型
+    atom_type_ = type;
+
     if (type >= static_cast<int>(tab_beta_.size())) {
         tab_beta_.resize(type + 1);
         l_list_.resize(type + 1);
@@ -224,12 +227,33 @@ void NonLocalPseudoOperator::init_dij(int type, const std::vector<double>& dij) 
 }
 
 void NonLocalPseudoOperator::update_projectors_inplace(const Atoms& atoms) {
+    // 只处理属于此算符 atom_type_ 的原子
+    if (atom_type_ < 0) {
+        throw std::runtime_error(
+            "NonLocalPseudoOperator::update_projectors_inplace: atom_type_ not set. "
+            "Call init_tab_beta first.");
+    }
+
+    // 统计属于此类型的原子数量和投影仪数量
+    std::vector<int> atom_indices;  // 属于此类型的原子索引
     int total_projectors = 0;
+
+    // 检查此类型是否有非局域势（l_list_ 是否已初始化且非空）
+    if (atom_type_ >= static_cast<int>(l_list_.size()) || l_list_[atom_type_].empty()) {
+        // 此类型没有非局域势（nbeta=0），直接返回
+        num_projectors_ = 0;
+        return;
+    }
+
     for (size_t i = 0; i < atoms.nat(); ++i) {
         int type = atoms.h_type()[i];
-        for (int l : l_list_[type])
-            total_projectors += (2 * l + 1);
+        if (type == atom_type_) {
+            atom_indices.push_back(i);
+            for (int l : l_list_[type])
+                total_projectors += (2 * l + 1);
+        }
     }
+
     num_projectors_ = total_projectors;
     if (num_projectors_ == 0)
         return;
@@ -247,19 +271,32 @@ void NonLocalPseudoOperator::update_projectors_inplace(const Atoms& atoms) {
     d_projectors_.fill({0.0, 0.0});
     d_coupling_.fill(0.0);
 
-    CHECK(cudaMemcpyToSymbolAsync(c_nl_atom_x, atoms.h_pos_x().data(), atoms.nat() * sizeof(double),
-                                  0, cudaMemcpyHostToDevice, grid_.stream()));
-    CHECK(cudaMemcpyToSymbolAsync(c_nl_atom_y, atoms.h_pos_y().data(), atoms.nat() * sizeof(double),
-                                  0, cudaMemcpyHostToDevice, grid_.stream()));
-    CHECK(cudaMemcpyToSymbolAsync(c_nl_atom_z, atoms.h_pos_z().data(), atoms.nat() * sizeof(double),
-                                  0, cudaMemcpyHostToDevice, grid_.stream()));
-    CHECK(cudaMemcpyToSymbolAsync(c_nl_atom_type, atoms.h_type().data(), atoms.nat() * sizeof(int),
-                                  0, cudaMemcpyHostToDevice, grid_.stream()));
+    // 只复制属于此类型的原子坐标到常量内存
+    std::vector<double> atom_x, atom_y, atom_z;
+    std::vector<int> atom_type_list;
+    for (int idx : atom_indices) {
+        atom_x.push_back(atoms.h_pos_x()[idx]);
+        atom_y.push_back(atoms.h_pos_y()[idx]);
+        atom_z.push_back(atoms.h_pos_z()[idx]);
+        atom_type_list.push_back(atoms.h_type()[idx]);
+    }
+
+    CHECK(cudaMemcpyToSymbolAsync(c_nl_atom_x, atom_x.data(), atom_x.size() * sizeof(double), 0,
+                                  cudaMemcpyHostToDevice, grid_.stream()));
+    CHECK(cudaMemcpyToSymbolAsync(c_nl_atom_y, atom_y.data(), atom_y.size() * sizeof(double), 0,
+                                  cudaMemcpyHostToDevice, grid_.stream()));
+    CHECK(cudaMemcpyToSymbolAsync(c_nl_atom_z, atom_z.data(), atom_z.size() * sizeof(double), 0,
+                                  cudaMemcpyHostToDevice, grid_.stream()));
+    CHECK(cudaMemcpyToSymbolAsync(c_nl_atom_type, atom_type_list.data(),
+                                  atom_type_list.size() * sizeof(int), 0, cudaMemcpyHostToDevice,
+                                  grid_.stream()));
 
     std::vector<double> h_coupling(num_projectors_ * num_projectors_, 0.0);
     int proj_idx = 0;
-    for (size_t iat = 0; iat < atoms.nat(); ++iat) {
-        int type = atoms.h_type()[iat];
+    // 只循环处理属于此类型的原子
+    for (size_t local_idx = 0; local_idx < atom_indices.size(); ++local_idx) {
+        int iat = atom_indices[local_idx];  // 原始原子索引
+        int type = atoms.h_type()[iat];     // 应该等于 atom_type_
         int n_radial = tab_beta_[type].size();
         std::vector<std::vector<int>> radial_to_proj(n_radial);
         int current_p = proj_idx;
@@ -277,9 +314,10 @@ void NonLocalPseudoOperator::update_projectors_inplace(const Atoms& atoms) {
             for (int m_idx = 0; m_idx < (2 * l + 1); ++m_idx) {
                 int p_idx = radial_to_proj[nb][m_idx];
                 // FIX: Use new Smooth grid kernel with nl_d mapping
+                // 使用 local_idx 作为常量内存中的索引
                 interpolate_beta_smooth_kernel<<<(npw + 255) / 256, 256, 0, grid_.stream()>>>(
                     (int)npw, grid_.nl_d(), grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), l,
-                    m_idx, (int)iat, d_tab.data(), nqx_ + 1, dq_, omega_,
+                    m_idx, (int)local_idx, d_tab.data(), nqx_ + 1, dq_, omega_,
                     d_projectors_.data() + p_idx * nnr);
             }
             grid_.synchronize();

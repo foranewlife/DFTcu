@@ -86,6 +86,7 @@ class LocalPseudoOperator {
 
     Grid& grid_;
     std::shared_ptr<Atoms> atoms_;
+    int atom_type_ = -1;  // 添加：记录此算符对应的原子类型
     std::vector<std::vector<double>> tab_vloc_;
     std::vector<double> zp_;
     double omega_ = 0.0;

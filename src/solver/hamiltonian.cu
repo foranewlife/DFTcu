@@ -295,7 +295,7 @@ void Hamiltonian::update_potentials_inplace(const RealField& rho) {
     // Assumption based on run_nscf.py order:
     //   components[0] = Hartree
     //   components[1] = LDA_PZ (XC)
-    //   components[2] = LocalPseudoOperator (V_ps)
+    //   components[2+] = LocalPseudoOperator (V_ps) - one per element type
     for (size_t i = 0; i < components.size(); ++i) {
         if (i == 0) {
             // Hartree potential
@@ -303,14 +303,11 @@ void Hamiltonian::update_potentials_inplace(const RealField& rho) {
         } else if (i == 1) {
             // XC potential
             components[i].compute(rho, v_xc_);
-        } else if (i == 2) {
-            // Pseudopotential local component
-            components[i].compute(rho, v_ps_);
         } else {
-            // Fallback: add to v_loc_tot_ directly for unknown components
-            RealField v_tmp(grid_);
-            components[i].compute(rho, v_tmp);
-            v_loc_tot_ = v_loc_tot_ + v_tmp;
+            // Pseudopotential local component (可能有多个，每个元素一个)
+            RealField v_ps_tmp(grid_);
+            components[i].compute(rho, v_ps_tmp);
+            v_ps_ = v_ps_ + v_ps_tmp;  // 累加所有元素的局域势
         }
     }
 

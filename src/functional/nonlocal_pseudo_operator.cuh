@@ -61,6 +61,7 @@ class NonLocalPseudoOperator {
   private:
     Grid& grid_;
     int num_projectors_ = 0;
+    int atom_type_ = -1;  // 添加：记录此算符对应的原子类型
     std::vector<std::vector<std::vector<double>>> tab_beta_;
     std::vector<std::vector<int>> l_list_;
     double dq_ = 0.01;

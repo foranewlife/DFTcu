@@ -121,10 +121,11 @@ __global__ void vloc_gspace_kernel(int n, const double* gx, const double* gy, co
         sincos(phase, &s, &c);
 
         if (debug_this) {
-            printf("[KERNEL ig=%d, iat=%d] G=(%.6f,%.6f,%.6f), tau=(%.6f,%.6f,%.6f), phase=%.6f, "
-                   "vlocg=%.9e, exp(-iG.tau)=(%.9f, %.9f)\n",
-                   i, iat, gx[i], gy[i], gz[i], c_pseudo_atom_x[iat], c_pseudo_atom_y[iat],
-                   c_pseudo_atom_z[iat], phase, vlocg, c, s);
+            // printf("[KERNEL ig=%d, iat=%d] G=(%.6f,%.6f,%.6f), tau=(%.6f,%.6f,%.6f), phase=%.6f,
+            // "
+            //        "vlocg=%.9e, exp(-iG.tau)=(%.9f, %.9f)\n",
+            //        i, iat, gx[i], gy[i], gz[i], c_pseudo_atom_x[iat], c_pseudo_atom_y[iat],
+            //        c_pseudo_atom_z[iat], phase, vlocg, c, s);
         }
 
         sum_re += vlocg * c;
@@ -223,6 +224,9 @@ void LocalPseudoOperator::init_tab_vloc(int type, const std::vector<double>& r_g
                                         const std::vector<double>& vloc_r,
                                         const std::vector<double>& rab, double zp,
                                         double omega_bohr, int mesh_cutoff) {
+    // 记录此算符对应的原子类型
+    atom_type_ = type;
+
     // FIXME: This function still uses mixed units for historical reasons
     // omega_ is stored in Bohr³ internally, but gg[] from grid is in Angstrom⁻²
     // This will be fixed when Grid units are unified to pure atomic units
@@ -280,25 +284,43 @@ void LocalPseudoOperator::compute(RealField& v) {
 
     v_g_->fill({0, 0});
 
-    // DEBUG: Print atom positions
-    std::cout << "[DEBUG LocalPseudoOperator] Atom positions (Cartesian Bohr):" << std::endl;
-    for (size_t iat = 0; iat < atoms_->nat(); ++iat) {
-        std::cout << "  atom " << iat << " (type " << atoms_->h_type()[iat] << "): "
-                  << "(" << atoms_->h_pos_x()[iat] << ", " << atoms_->h_pos_y()[iat] << ", "
-                  << atoms_->h_pos_z()[iat] << ") Bohr" << std::endl;
+    // 检查此类型是否已初始化
+    if (atom_type_ < 0) {
+        throw std::runtime_error(
+            "LocalPseudoOperator::compute: atom_type_ not set. Call init_tab_vloc first.");
     }
 
-    CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_x, atoms_->h_pos_x().data(),
-                                  atoms_->nat() * sizeof(double), 0, cudaMemcpyHostToDevice,
+    // 只复制属于此类型的原子坐标到常量内存
+    std::vector<double> atom_x, atom_y, atom_z;
+    std::vector<int> atom_type_list;
+    for (size_t i = 0; i < atoms_->nat(); ++i) {
+        int type = atoms_->h_type()[i];
+        if (type == atom_type_) {
+            atom_x.push_back(atoms_->h_pos_x()[i]);
+            atom_y.push_back(atoms_->h_pos_y()[i]);
+            atom_z.push_back(atoms_->h_pos_z()[i]);
+            atom_type_list.push_back(type);
+        }
+    }
+
+    int num_atoms_this_type = atom_x.size();
+    if (num_atoms_this_type == 0) {
+        // 没有此类型的原子，直接返回零势
+        v.fill(0.0);
+        return;
+    }
+
+    CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_x, atom_x.data(),
+                                  num_atoms_this_type * sizeof(double), 0, cudaMemcpyHostToDevice,
                                   grid_.stream()));
-    CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_y, atoms_->h_pos_y().data(),
-                                  atoms_->nat() * sizeof(double), 0, cudaMemcpyHostToDevice,
+    CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_y, atom_y.data(),
+                                  num_atoms_this_type * sizeof(double), 0, cudaMemcpyHostToDevice,
                                   grid_.stream()));
-    CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_z, atoms_->h_pos_z().data(),
-                                  atoms_->nat() * sizeof(double), 0, cudaMemcpyHostToDevice,
+    CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_z, atom_z.data(),
+                                  num_atoms_this_type * sizeof(double), 0, cudaMemcpyHostToDevice,
                                   grid_.stream()));
-    CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_type, atoms_->h_type().data(),
-                                  atoms_->nat() * sizeof(int), 0, cudaMemcpyHostToDevice,
+    CHECK(cudaMemcpyToSymbolAsync(c_pseudo_atom_type, atom_type_list.data(),
+                                  num_atoms_this_type * sizeof(int), 0, cudaMemcpyHostToDevice,
                                   grid_.stream()));
 
     int stride = nqx_ + 1;
@@ -326,7 +348,7 @@ void LocalPseudoOperator::compute(RealField& v) {
     // Step 1: Compute V_loc(G) on Dense grid (730 G-vectors for Si Gamma)
     vloc_gspace_kernel<<<(ngm_dense + 255) / 256, 256, 0, grid_.stream()>>>(
         ngm_dense, grid_.gx_dense(), grid_.gy_dense(), grid_.gz_dense(), grid_.gg_dense(),
-        (int)atoms_->nat(), d_tab_.data(), d_zp_.data(), stride, dq_, omega_, gcut_,
+        num_atoms_this_type, d_tab_.data(), d_zp_.data(), stride, dq_, omega_, gcut_,
         v_g_dense.data());
 
     // Step 2: Scatter Dense grid to FFT grid (730 → 4096) with Hermitian symmetry
@@ -339,59 +361,64 @@ void LocalPseudoOperator::compute(RealField& v) {
                      cudaMemcpyDeviceToHost));
     CHECK(cudaMemcpy(nlm_test.data(), grid_.nlm_dense(), nlm_test.size() * sizeof(int),
                      cudaMemcpyDeviceToHost));
-    std::cout << "[DEBUG LocalPseudoOperator] nl_dense and nlm_dense mapping (first 10):"
-              << std::endl;
-    for (size_t ig = 0; ig < nl_test.size(); ++ig) {
-        std::cout << "  ig=" << ig << ": nl=" << nl_test[ig] << ", nlm=" << nlm_test[ig]
-                  << std::endl;
-    }
+    // std::cout << "[DEBUG LocalPseudoOperator] nl_dense and nlm_dense mapping (first 10):"
+    //           << std::endl;
+    // for (size_t ig = 0; ig < nl_test.size(); ++ig) {
+    //     std::cout << "  ig=" << ig << ": nl=" << nl_test[ig] << ", nlm=" << nlm_test[ig]
+    //               << std::endl;
+    // }
 
     scatter_dense_to_fft_kernel<<<(ngm_dense + 255) / 256, 256, 0, grid_.stream()>>>(
         ngm_dense, grid_.nl_dense(), grid_.nlm_dense(), v_g_dense.data(), v_g_->data());
     GPU_CHECK_KERNEL;
 
     // DEBUG: Export v_g_dense (Dense grid V_loc(G)) for comparison with QE
-    grid_.synchronize();
-    std::vector<gpufftComplex> v_dense_host(ngm_dense);
-    CHECK(cudaMemcpy(v_dense_host.data(), v_g_dense.data(), ngm_dense * sizeof(gpufftComplex),
-                     cudaMemcpyDeviceToHost));
-    std::ofstream v_dense_file("dftcu_vloc_dense_debug.txt");
-    v_dense_file << "# DFTcu V_loc(G) on Dense grid (Hartree units)\n";
-    v_dense_file << "# ngm_dense = " << ngm_dense << "\n";
-    v_dense_file << "# Format: ig (0-based), Re(V) (Ha), Im(V) (Ha), |V| (Ha)\n";
-    for (int ig = 0; ig < ngm_dense; ++ig) {
-        double re = v_dense_host[ig].x;
-        double im = v_dense_host[ig].y;
-        double mag = std::sqrt(re * re + im * im);
-        v_dense_file << ig << " " << std::scientific << std::setprecision(16) << re << " " << im
-                     << " " << mag << "\n";
-    }
-    v_dense_file.close();
-    std::cout << "[DEBUG LocalPseudoOperator] Exported v_dense to dftcu_vloc_dense_debug.txt"
-              << std::endl;
+    // grid_.synchronize();
+    // std::vector<gpufftComplex> v_dense_host(ngm_dense);
+    // CHECK(cudaMemcpy(v_dense_host.data(), v_g_dense.data(), ngm_dense * sizeof(gpufftComplex),
+    //                  cudaMemcpyDeviceToHost));
+    // std::ofstream v_dense_file("dftcu_vloc_dense_debug.txt");
+    // v_dense_file << "# DFTcu V_loc(G) on Dense grid (Hartree units)\n";
+    // v_dense_file << "# ngm_dense = " << ngm_dense << "\n";
+    // v_dense_file << "# Format: ig (0-based), Re(V) (Ha), Im(V) (Ha), |V| (Ha)\n";
+    // for (int ig = 0; ig < ngm_dense; ++ig) {
+    //     double re = v_dense_host[ig].x;
+    //     double im = v_dense_host[ig].y;
+    //     double mag = std::sqrt(re * re + im * im);
+    //     v_dense_file << ig << " " << std::scientific << std::setprecision(16) << re << " " << im
+    //                  << " " << mag << "\n";
+    // }
+    // v_dense_file.close();
+    // std::cout << "[DEBUG LocalPseudoOperator] Exported v_dense to dftcu_vloc_dense_debug.txt"
+    //           << std::endl;
 
     // DEBUG: Export v_g_ (FFT grid after scatter) for comparison with QE
-    std::vector<gpufftComplex> v_fft_host(grid_.nnr());
-    CHECK(cudaMemcpy(v_fft_host.data(), v_g_->data(), grid_.nnr() * sizeof(gpufftComplex),
-                     cudaMemcpyDeviceToHost));
-    std::ofstream v_fft_file("dftcu_vloc_fft_grid_debug.txt");
-    v_fft_file << "# DFTcu V_loc FFT grid (after scatter, before IFFT, Hartree units)\n";
-    v_fft_file << "# nnr = " << grid_.nnr() << "\n";
-    v_fft_file << "# Format: ifft (0-based), Re (Ha), Im (Ha)\n";
-    for (size_t ifft = 0; ifft < grid_.nnr(); ++ifft) {
-        v_fft_file << ifft << " " << std::scientific << std::setprecision(16) << v_fft_host[ifft].x
-                   << " " << v_fft_host[ifft].y << "\n";
-    }
-    v_fft_file.close();
-    std::cout << "[DEBUG LocalPseudoOperator] Exported v_fft_grid to dftcu_vloc_fft_grid_debug.txt"
-              << std::endl;
+    // std::vector<gpufftComplex> v_fft_host(grid_.nnr());
+    // CHECK(cudaMemcpy(v_fft_host.data(), v_g_->data(), grid_.nnr() * sizeof(gpufftComplex),
+    //                  cudaMemcpyDeviceToHost));
+    // std::ofstream v_fft_file("dftcu_vloc_fft_grid_debug.txt");
+    // v_fft_file << "# DFTcu V_loc FFT grid (after scatter, before IFFT, Hartree units)\n";
+    // v_fft_file << "# nnr = " << grid_.nnr() << "\n";
+    // v_fft_file << "# Format: ifft (0-based), Re (Ha), Im (Ha)\n";
+    // for (size_t ifft = 0; ifft < grid_.nnr(); ++ifft) {
+    //     v_fft_file << ifft << " " << std::scientific << std::setprecision(16) <<
+    //     v_fft_host[ifft].x
+    //                << " " << v_fft_host[ifft].y << "\n";
+    // }
+    // v_fft_file.close();
+    // std::cout << "[DEBUG LocalPseudoOperator] Exported v_fft_grid to
+    // dftcu_vloc_fft_grid_debug.txt"
+    //           << std::endl;
 
     // 1. Extract Alpha term (G=0 contribution) as a scalar in Hartree.
     // tab_vloc_[type][0] matches QE v_of_0 * 0.5 per atom.
+    // 只累加属于此类型的原子
     v_of_0_ = 0.0;
     for (size_t iat = 0; iat < atoms_->nat(); ++iat) {
         int type = atoms_->h_type()[iat];
-        v_of_0_ += tab_vloc_[type][0];
+        if (type == atom_type_) {
+            v_of_0_ += tab_vloc_[type][0];
+        }
     }
     // Note: tab_vloc[0] is already integrated and scaled by 4pi/Omega in init_tab_vloc.
     // So sum(tab_vloc[0]) is the total local potential shift.
@@ -403,14 +430,14 @@ void LocalPseudoOperator::compute(RealField& v) {
 
     // DEBUG: Check values before FFT
     grid_.synchronize();
-    std::vector<gpufftComplex> v_g_before(std::min(10, (int)grid_.nnr()));
-    CHECK(cudaMemcpy(v_g_before.data(), v_g_->data(), v_g_before.size() * sizeof(gpufftComplex),
-                     cudaMemcpyDeviceToHost));
-    std::cout << "[DEBUG LocalPseudoOperator] V_loc(G) before IFFT (first 10):" << std::endl;
-    for (size_t i = 0; i < v_g_before.size(); ++i) {
-        std::cout << "  [" << i << "] = (" << v_g_before[i].x << ", " << v_g_before[i].y << ")"
-                  << std::endl;
-    }
+    // std::vector<gpufftComplex> v_g_before(std::min(10, (int)grid_.nnr()));
+    // CHECK(cudaMemcpy(v_g_before.data(), v_g_->data(), v_g_before.size() * sizeof(gpufftComplex),
+    //                  cudaMemcpyDeviceToHost));
+    // std::cout << "[DEBUG LocalPseudoOperator] V_loc(G) before IFFT (first 10):" << std::endl;
+    // for (size_t i = 0; i < v_g_before.size(); ++i) {
+    //     std::cout << "  [" << i << "] = (" << v_g_before[i].x << ", " << v_g_before[i].y << ")"
+    //               << std::endl;
+    // }
 
     fft_solver_->backward(*v_g_);
 
