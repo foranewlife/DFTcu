@@ -69,9 +69,9 @@ NSCFWorkflow::NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms,
     initialize_density(pseudo_data);
 
     // ════════════════════════════════════════════════════════════════════════
-    // Step 5: potinit - 从密度计算势能（NSCF 只调用一次！）
+    // Step 5: initialize_potentials - 从密度计算势能（NSCF 只调用一次！）
     // ════════════════════════════════════════════════════════════════════════
-    potinit();
+    initialize_potentials();
 
     // ════════════════════════════════════════════════════════════════════════
     // Step 6: 初始化波函数（使用原子波函数叠加）
@@ -103,14 +103,14 @@ NSCFWorkflow::NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms, const Hamil
     psi_.copy_from(psi);
 
     // ════════════════════════════════════════════════════════════════════════
-    // Step 3: 加载密度并执行 potinit
+    // Step 3: 加载密度并执行 initialize_potentials
     // ════════════════════════════════════════════════════════════════════════
     if (rho_data.size() != grid_.nnr()) {
         throw ConfigurationError("rho_data 尺寸 (" + std::to_string(rho_data.size()) +
                                  ") 与 grid.nnr() (" + std::to_string(grid_.nnr()) + ") 不匹配");
     }
     rho_.copy_from_host(rho_data.data());
-    potinit();
+    initialize_potentials();
 }
 
 EnergyBreakdown NSCFWorkflow::execute() {
@@ -122,7 +122,7 @@ EnergyBreakdown NSCFWorkflow::execute() {
     // ════════════════════════════════════════════════════════════════════════
     // Step 2: 执行 NSCF 计算
     // ════════════════════════════════════════════════════════════════════════
-    // 注意：ham_ 的势能已经在构造函数中通过 potinit() 计算好了
+    // 注意：ham_ 的势能已经在构造函数中通过 initialize_potentials() 计算好了
     EnergyBreakdown result =
         solver.solve(ham_, psi_, config_.nelec, atoms_, grid_.ecutrho() * 2.0,  // Ha → Ry
                      &rho_);
@@ -229,7 +229,7 @@ void NSCFWorkflow::initialize_density(const std::vector<PseudopotentialData>& ps
     factory.build_density(rho_);
 }
 
-void NSCFWorkflow::potinit() {
+void NSCFWorkflow::initialize_potentials() {
     // ════════════════════════════════════════════════════════════════════════
     // 计算势能：vrs = V_ps + V_H[ρ] + V_xc[ρ]
     // ════════════════════════════════════════════════════════════════════════

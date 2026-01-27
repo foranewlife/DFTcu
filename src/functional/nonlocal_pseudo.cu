@@ -221,7 +221,7 @@ void NonLocalPseudo::init_dij(int type, const std::vector<double>& dij) {
             d_ij_[type][i][j] = dij[i * n_proj + j];
 }
 
-void NonLocalPseudo::update_projectors(const Atoms& atoms) {
+void NonLocalPseudo::update_projectors_inplace(const Atoms& atoms) {
     int total_projectors = 0;
     for (size_t i = 0; i < atoms.nat(); ++i) {
         int type = atoms.h_type()[i];

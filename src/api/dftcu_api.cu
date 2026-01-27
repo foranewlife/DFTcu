@@ -729,7 +729,9 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("set_tab_beta", &dftcu::NonLocalPseudo::set_tab_beta, py::arg("type"), py::arg("nb"),
              py::arg("tab"))
         .def("init_dij", &dftcu::NonLocalPseudo::init_dij, py::arg("type"), py::arg("dij"))
-        .def("update_projectors", &dftcu::NonLocalPseudo::update_projectors, py::arg("atoms"))
+        .def("update_projectors_inplace", &dftcu::NonLocalPseudo::update_projectors_inplace,
+             py::arg("atoms"),
+             "Update non-local projectors based on atomic positions (modifies in-place)")
         .def("set_projectors",
              [](dftcu::NonLocalPseudo& self, py::array_t<std::complex<double>> arr) {
                  py::buffer_info buf = arr.request();

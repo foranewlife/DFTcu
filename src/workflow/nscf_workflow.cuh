@@ -81,7 +81,7 @@ struct NSCFWorkflowConfig {
  *   1. 验证配置（nbands, nelec, ecutrho >= 4*ecutwfc）
  *   2. 创建 LocalPseudo 和 NonlocalPseudo
  *   3. 创建 Hamiltonian 并设置 DensityFunctionalPotential
- *   4. 加载密度并调用 potinit（ham.update_potentials_inplace）
+ *   4. 加载密度并调用 initialize_potentials（ham.update_potentials_inplace）
  *   5. 初始化波函数
  *
  * execute() 阶段：
@@ -108,7 +108,7 @@ class NSCFWorkflow {
      *       2. 创建赝势对象
      *       3. 创建哈密顿量
      *       4. 初始化密度（原子电荷叠加）
-     *       5. 执行 potinit（计算势能）
+     *       5. 执行 initialize_potentials（计算势能）
      *       6. 初始化波函数（原子波函数叠加）
      */
     NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms,
@@ -192,9 +192,13 @@ class NSCFWorkflow {
     void initialize_density(const std::vector<PseudopotentialData>& pseudo_data);
 
     /**
-     * @brief 执行 potinit（从密度计算势能）
+     * @brief 初始化势能（从密度计算势能）
+     * [SIDE_EFFECT] Modifies Hamiltonian's internal potential fields
+     *
+     * 在 NSCF 计算中，此方法只调用一次，之后势能保持不变。
+     * 等价于 QE 的 potinit 阶段。
      */
-    void potinit();
+    void initialize_potentials();
 
     /**
      * @brief 初始化波函数（使用原子波函数叠加）

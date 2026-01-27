@@ -32,7 +32,12 @@ class NonLocalPseudo {
 
     void set_tab_beta(int type, int nb, const std::vector<double>& tab);
     void init_dij(int type, const std::vector<double>& dij);
-    void update_projectors(const Atoms& atoms);
+
+    /** @brief Update non-local projectors based on atomic positions
+     * [SIDE_EFFECT] Modifies internal projector data in-place
+     */
+    void update_projectors_inplace(const Atoms& atoms);
+
     void set_projectors(const std::vector<std::complex<double>>& projectors);
 
     int num_projectors() const { return num_projectors_; }

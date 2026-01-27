@@ -48,8 +48,8 @@ std::shared_ptr<NonLocalPseudo> create_nonlocal_pseudo(Grid& grid, std::shared_p
     // ════════════════════════════════════════════════════════════════════════
     // 更新投影仪（基于原子位置）
     // ════════════════════════════════════════════════════════════════════════
-    // 注意：update_projectors 需要 const Atoms&
-    nl_pseudo->update_projectors(*atoms);
+    // 注意：update_projectors_inplace 需要 const Atoms&
+    nl_pseudo->update_projectors_inplace(*atoms);
 
     return nl_pseudo;
 }
