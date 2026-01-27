@@ -1,7 +1,7 @@
 #include <cmath>
 
 #include "fft/fft_solver.cuh"
-#include "model/density_factory.cuh"
+#include "model/density_builder.cuh"
 #include "utilities/constants.cuh"
 #include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
@@ -66,10 +66,10 @@ __global__ void density_sum_kernel(int nnr, const double* gx, const double* gy, 
 
 }  // namespace
 
-DensityFactory::DensityFactory(Grid& grid, std::shared_ptr<Atoms> atoms)
+DensityBuilder::DensityBuilder(Grid& grid, std::shared_ptr<Atoms> atoms)
     : grid_(grid), atoms_(atoms) {}
 
-void DensityFactory::set_atomic_rho_g(int type, const std::vector<double>& q,
+void DensityBuilder::set_atomic_rho_g(int type, const std::vector<double>& q,
                                       const std::vector<double>& rho_q) {
     if (type >= num_types_) {
         num_types_ = type + 1;
@@ -82,7 +82,7 @@ void DensityFactory::set_atomic_rho_g(int type, const std::vector<double>& q,
     nqx_ = static_cast<int>(tab_rho_g_[type].size());
 }
 
-void DensityFactory::set_atomic_rho_r(int type, const std::vector<double>& r,
+void DensityBuilder::set_atomic_rho_r(int type, const std::vector<double>& r,
                                       const std::vector<double>& rho_r,
                                       const std::vector<double>& rab) {
     // Massive range and precision
@@ -117,13 +117,13 @@ void DensityFactory::set_atomic_rho_r(int type, const std::vector<double>& r,
     }
 }
 
-void DensityFactory::build_density(RealField& rho) {
+void DensityBuilder::build_density(RealField& rho) {
     size_t nnr = grid_.nnr();
     FFTSolver solver(grid_);
     ComplexField rho_g(grid_);
 
     if (atoms_->nat() > constants::MAX_ATOMS_PSEUDO) {
-        throw std::runtime_error("Too many atoms for DensityFactory");
+        throw std::runtime_error("Too many atoms for DensityBuilder");
     }
 
     CHECK(cudaMemcpyToSymbolAsync(c_atom_x, atoms_->h_pos_x().data(),

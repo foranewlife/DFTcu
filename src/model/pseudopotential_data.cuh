@@ -119,7 +119,7 @@ struct AtomicWavefunctions {
  *
  * This class stores all data extracted from a UPF (Unified Pseudopotential Format) file.
  * It provides a structured interface for accessing pseudopotential information needed
- * by LocalPseudo and NonlocalPseudo classes.
+ * by LocalPseudoOperator and NonlocalPseudo classes.
  */
 class PseudopotentialData {
   public:

@@ -1,6 +1,6 @@
 #include <cmath>
 
-#include "pseudopotential_data.cuh"
+#include "model/pseudopotential_data.cuh"
 
 namespace dftcu {
 

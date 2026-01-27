@@ -7,24 +7,23 @@
 #include "functional/kedf/tf.cuh"
 #include "functional/kedf/vw.cuh"
 #include "functional/kedf/wt.cuh"
-#include "functional/local_pseudo_factory.cuh"
-#include "functional/nonlocal_pseudo.cuh"
-#include "functional/nonlocal_pseudo_factory.cuh"
-#include "functional/pseudo.cuh"
-#include "functional/pseudopotential_data.cuh"
-#include "functional/upf_parser.cuh"
+#include "functional/local_pseudo_builder.cuh"
+#include "functional/local_pseudo_operator.cuh"
+#include "functional/nonlocal_pseudo_builder.cuh"
+#include "functional/nonlocal_pseudo_operator.cuh"
 #include "functional/xc/lda_pz.cuh"
 #include "functional/xc/pbe.cuh"
 #include "math/bessel.cuh"
 #include "math/ylm.cuh"
 #include "model/atoms.cuh"
 #include "model/atoms_factory.cuh"
-#include "model/density_factory.cuh"
+#include "model/density_builder.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
 #include "model/grid_factory.cuh"
+#include "model/pseudopotential_data.cuh"
 #include "model/wavefunction.cuh"
-#include "model/wavefunction_factory.cuh"
+#include "model/wavefunction_builder.cuh"
 #include "solver/davidson.cuh"
 #include "solver/evaluator.cuh"  // Keep for backward compatibility
 #include "solver/gamma_utils.cuh"
@@ -430,22 +429,22 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("compute_kinetic_energy", &dftcu::Wavefunction::compute_kinetic_energy,
              py::arg("occupations"));
 
-    py::class_<dftcu::WavefunctionFactory>(m, "WavefunctionFactory")
+    py::class_<dftcu::WavefunctionBuilder>(m, "WavefunctionBuilder")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())
-        .def("add_atomic_orbital", &dftcu::WavefunctionFactory::add_atomic_orbital, py::arg("type"),
+        .def("add_atomic_orbital", &dftcu::WavefunctionBuilder::add_atomic_orbital, py::arg("type"),
              py::arg("l"), py::arg("r"), py::arg("chi"), py::arg("rab"), py::arg("msh") = 0,
              "Add atomic orbital for a given atom type")
-        .def("build_atomic_wavefunctions", &dftcu::WavefunctionFactory::build_atomic_wavefunctions,
+        .def("build_atomic_wavefunctions", &dftcu::WavefunctionBuilder::build_atomic_wavefunctions,
              py::arg("psi"), py::arg("randomize_phase") = false,
              "Build atomic wavefunctions (legacy interface, fills existing Wavefunction object)")
         .def(
             "build",
-            [](dftcu::WavefunctionFactory& self, bool randomize_phase) {
+            [](dftcu::WavefunctionBuilder& self, bool randomize_phase) {
                 return self.build(randomize_phase).release();
             },
             py::arg("randomize_phase") = false, py::return_value_policy::take_ownership,
             "Build and return atomic wavefunctions (recommended interface)")
-        .def("num_bands", &dftcu::WavefunctionFactory::num_bands,
+        .def("num_bands", &dftcu::WavefunctionBuilder::num_bands,
              "Get the number of bands that will be created");
 
     // Atoms factory functions
@@ -485,9 +484,8 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("add_functional", [](dftcu::DensityFunctionalPotential& self,
                                   std::shared_ptr<dftcu::Ewald> f) { self.add_functional(f); })
         .def("add_functional",
-             [](dftcu::DensityFunctionalPotential& self, std::shared_ptr<dftcu::LocalPseudo> f) {
-                 self.add_functional(f);
-             })
+             [](dftcu::DensityFunctionalPotential& self,
+                std::shared_ptr<dftcu::LocalPseudoOperator> f) { self.add_functional(f); })
         .def("compute", &dftcu::DensityFunctionalPotential::compute)
         .def("clear", &dftcu::DensityFunctionalPotential::clear);
 
@@ -637,15 +635,10 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("functional", &dftcu::PseudopotentialData::functional)
         .def("is_valid", &dftcu::PseudopotentialData::is_valid);
 
-    py::class_<dftcu::UPFParser>(m, "UPFParser")
-        .def(py::init<>())
-        .def("parse", &dftcu::UPFParser::parse, py::arg("filename"))
-        .def_static("detect_version", &dftcu::UPFParser::detect_version, py::arg("filename"));
-
     // ════════════════════════════════════════════════════════════════════════
     // Pseudopotential Factory Functions (工厂函数，独立于类)
     // ════════════════════════════════════════════════════════════════════════
-    m.def("create_local_pseudo", &dftcu::create_local_pseudo, py::arg("grid"), py::arg("atoms"),
+    m.def("build_local_pseudo", &dftcu::build_local_pseudo, py::arg("grid"), py::arg("atoms"),
           py::arg("pseudo_data"), py::arg("atom_type") = 0,
           R"pbdoc(
         从单原子赝势模型创建 3D 空间局域赝势
@@ -653,7 +646,7 @@ PYBIND11_MODULE(_dftcu, m) {
         三层赝势模型：
         1. UPF 文件格式 (*.UPF) - Python 层解析
         2. 单原子赝势模型 (PseudopotentialData) - 1D 径向函数
-        3. 3D 空间赝势分布 (LocalPseudo) - 基于 Dense grid
+        3. 3D 空间赝势分布 (LocalPseudoOperator) - 基于 Dense grid
 
         参数:
             grid: Grid 对象
@@ -662,23 +655,25 @@ PYBIND11_MODULE(_dftcu, m) {
             atom_type: 原子类型索引
 
         返回:
-            LocalPseudo 对象（3D 空间分布）
+            LocalPseudoOperator 对象（3D 空间分布）
 
         示例:
-            upf_parser = dftcu.UPFParser()
-            pseudo_data = upf_parser.parse("Si.pz-rrkj.UPF")
-            local_ps = dftcu.create_local_pseudo(grid, atoms, pseudo_data, 0)
+            # Python 层解析 UPF 文件
+            from dftcu.utils.upf import UPFParser
+            parser = UPFParser()
+            pseudo_data = parser.parse("Si.pz-rrkj.UPF")
+            local_ps = dftcu.build_local_pseudo(grid, atoms, pseudo_data, 0)
         )pbdoc");
 
-    m.def("create_nonlocal_pseudo", &dftcu::create_nonlocal_pseudo, py::arg("grid"),
-          py::arg("atoms"), py::arg("pseudo_data"), py::arg("atom_type") = 0,
+    m.def("build_nonlocal_pseudo", &dftcu::build_nonlocal_pseudo, py::arg("grid"), py::arg("atoms"),
+          py::arg("pseudo_data"), py::arg("atom_type") = 0,
           R"pbdoc(
         从单原子赝势模型创建 3D 空间非局域赝势
 
         三层赝势模型：
         1. UPF 文件格式 (*.UPF) - Python 层解析
         2. 单原子赝势模型 (PseudopotentialData) - 1D 径向函数
-        3. 3D 空间赝势分布 (NonLocalPseudo) - 基于 Smooth grid
+        3. 3D 空间赝势分布 (NonLocalPseudoOperator) - 基于 Smooth grid
 
         参数:
             grid: Grid 对象
@@ -687,70 +682,77 @@ PYBIND11_MODULE(_dftcu, m) {
             atom_type: 原子类型索引
 
         返回:
-            NonLocalPseudo 对象（3D 空间分布）
+            NonLocalPseudoOperator 对象（3D 空间分布）
 
         示例:
-            upf_parser = dftcu.UPFParser()
-            pseudo_data = upf_parser.parse("Si.pz-rrkj.UPF")
-            nonlocal_ps = dftcu.create_nonlocal_pseudo(grid, atoms, pseudo_data, 0)
+            # Python 层解析 UPF 文件
+            from dftcu.utils.upf import UPFParser
+            parser = UPFParser()
+            pseudo_data = parser.parse("Si.pz-rrkj.UPF")
+            nonlocal_ps = dftcu.build_nonlocal_pseudo(grid, atoms, pseudo_data, 0)
         )pbdoc");
 
-    py::class_<dftcu::LocalPseudo, std::shared_ptr<dftcu::LocalPseudo>>(m, "LocalPseudo")
+    py::class_<dftcu::LocalPseudoOperator, std::shared_ptr<dftcu::LocalPseudoOperator>>(
+        m, "LocalPseudoOperator")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>(), py::arg("grid"),
              py::arg("atoms"))
-        .def("init_tab_vloc", &dftcu::LocalPseudo::init_tab_vloc, py::arg("type"),
+        .def("init_tab_vloc", &dftcu::LocalPseudoOperator::init_tab_vloc, py::arg("type"),
              py::arg("r_grid"), py::arg("vloc_r"), py::arg("rab"), py::arg("zp"), py::arg("omega"),
              py::arg("mesh_cutoff") = -1)
-        .def("set_valence_charge", &dftcu::LocalPseudo::set_valence_charge, py::arg("type"),
+        .def("set_valence_charge", &dftcu::LocalPseudoOperator::set_valence_charge, py::arg("type"),
              py::arg("zp"))
-        .def("set_gcut", &dftcu::LocalPseudo::set_gcut, py::arg("gcut"))
+        .def("set_gcut", &dftcu::LocalPseudoOperator::set_gcut, py::arg("gcut"))
         .def("compute_potential",
-             [](dftcu::LocalPseudo& self, dftcu::RealField& vloc) { self.compute(vloc); })
-        .def("compute", [](dftcu::LocalPseudo& self, const dftcu::RealField& rho,
+             [](dftcu::LocalPseudoOperator& self, dftcu::RealField& vloc) { self.compute(vloc); })
+        .def("compute", [](dftcu::LocalPseudoOperator& self, const dftcu::RealField& rho,
                            dftcu::RealField& v_out) { return self.compute(rho, v_out); })
-        .def("get_tab_vloc", &dftcu::LocalPseudo::get_tab_vloc, py::arg("type"))
-        .def("set_tab_vloc", &dftcu::LocalPseudo::set_tab_vloc, py::arg("type"), py::arg("tab"))
-        .def("get_alpha", &dftcu::LocalPseudo::get_alpha, py::arg("type"))
-        .def("get_vloc_g_shells", &dftcu::LocalPseudo::get_vloc_g_shells, py::arg("type"),
+        .def("get_tab_vloc", &dftcu::LocalPseudoOperator::get_tab_vloc, py::arg("type"))
+        .def("set_tab_vloc", &dftcu::LocalPseudoOperator::set_tab_vloc, py::arg("type"),
+             py::arg("tab"))
+        .def("get_alpha", &dftcu::LocalPseudoOperator::get_alpha, py::arg("type"))
+        .def("get_vloc_g_shells", &dftcu::LocalPseudoOperator::get_vloc_g_shells, py::arg("type"),
              py::arg("g_shells"))
-        .def("get_dq", &dftcu::LocalPseudo::get_dq)
-        .def("set_dq", &dftcu::LocalPseudo::set_dq, py::arg("dq"))
-        .def("get_nqx", &dftcu::LocalPseudo::get_nqx)
-        .def("get_omega", &dftcu::LocalPseudo::get_omega);
+        .def("get_dq", &dftcu::LocalPseudoOperator::get_dq)
+        .def("set_dq", &dftcu::LocalPseudoOperator::set_dq, py::arg("dq"))
+        .def("get_nqx", &dftcu::LocalPseudoOperator::get_nqx)
+        .def("get_omega", &dftcu::LocalPseudoOperator::get_omega);
 
-    py::class_<dftcu::NonLocalPseudo, std::shared_ptr<dftcu::NonLocalPseudo>>(m, "NonLocalPseudo")
+    py::class_<dftcu::NonLocalPseudoOperator, std::shared_ptr<dftcu::NonLocalPseudoOperator>>(
+        m, "NonLocalPseudoOperator")
         .def(py::init<dftcu::Grid&>())
-        .def("apply", &dftcu::NonLocalPseudo::apply, py::arg("psi_in"), py::arg("h_psi_out"))
-        .def("add_projector", &dftcu::NonLocalPseudo::add_projector, py::arg("beta_g"),
+        .def("apply", &dftcu::NonLocalPseudoOperator::apply, py::arg("psi_in"),
+             py::arg("h_psi_out"))
+        .def("add_projector", &dftcu::NonLocalPseudoOperator::add_projector, py::arg("beta_g"),
              py::arg("coupling_constant"))
-        .def("init_tab_beta", &dftcu::NonLocalPseudo::init_tab_beta, py::arg("type"),
+        .def("init_tab_beta", &dftcu::NonLocalPseudoOperator::init_tab_beta, py::arg("type"),
              py::arg("r_grid"), py::arg("beta_r"), py::arg("rab"), py::arg("l_list"),
              py::arg("kkbeta_list"), py::arg("omega_angstrom"))
-        .def("set_tab_beta", &dftcu::NonLocalPseudo::set_tab_beta, py::arg("type"), py::arg("nb"),
-             py::arg("tab"))
-        .def("init_dij", &dftcu::NonLocalPseudo::init_dij, py::arg("type"), py::arg("dij"))
-        .def("update_projectors_inplace", &dftcu::NonLocalPseudo::update_projectors_inplace,
+        .def("set_tab_beta", &dftcu::NonLocalPseudoOperator::set_tab_beta, py::arg("type"),
+             py::arg("nb"), py::arg("tab"))
+        .def("init_dij", &dftcu::NonLocalPseudoOperator::init_dij, py::arg("type"), py::arg("dij"))
+        .def("update_projectors_inplace", &dftcu::NonLocalPseudoOperator::update_projectors_inplace,
              py::arg("atoms"),
              "Update non-local projectors based on atomic positions (modifies in-place)")
         .def("set_projectors",
-             [](dftcu::NonLocalPseudo& self, py::array_t<std::complex<double>> arr) {
+             [](dftcu::NonLocalPseudoOperator& self, py::array_t<std::complex<double>> arr) {
                  py::buffer_info buf = arr.request();
                  std::vector<std::complex<double>> host_vec(
                      static_cast<std::complex<double>*>(buf.ptr),
                      static_cast<std::complex<double>*>(buf.ptr) + buf.size);
                  self.set_projectors(host_vec);
              })
-        .def("calculate_energy", &dftcu::NonLocalPseudo::calculate_energy, py::arg("psi"),
+        .def("calculate_energy", &dftcu::NonLocalPseudoOperator::calculate_energy, py::arg("psi"),
              py::arg("occupations"))
-        .def("clear", &dftcu::NonLocalPseudo::clear)
-        .def("num_projectors", &dftcu::NonLocalPseudo::num_projectors)
-        .def("get_tab_beta", &dftcu::NonLocalPseudo::get_tab_beta, py::arg("type"), py::arg("nb"))
-        .def("get_projector", &dftcu::NonLocalPseudo::get_projector, py::arg("idx"))
-        .def("get_projections", &dftcu::NonLocalPseudo::get_projections)
-        .def("get_coupling", &dftcu::NonLocalPseudo::get_coupling)
-        .def("get_d_projections", &dftcu::NonLocalPseudo::get_d_projections)
+        .def("clear", &dftcu::NonLocalPseudoOperator::clear)
+        .def("num_projectors", &dftcu::NonLocalPseudoOperator::num_projectors)
+        .def("get_tab_beta", &dftcu::NonLocalPseudoOperator::get_tab_beta, py::arg("type"),
+             py::arg("nb"))
+        .def("get_projector", &dftcu::NonLocalPseudoOperator::get_projector, py::arg("idx"))
+        .def("get_projections", &dftcu::NonLocalPseudoOperator::get_projections)
+        .def("get_coupling", &dftcu::NonLocalPseudoOperator::get_coupling)
+        .def("get_d_projections", &dftcu::NonLocalPseudoOperator::get_d_projections)
         .def("debug_projections",
-             [](dftcu::NonLocalPseudo& self, const dftcu::Wavefunction& psi,
+             [](dftcu::NonLocalPseudoOperator& self, const dftcu::Wavefunction& psi,
                 py::array_t<double> qe_becp, py::array_t<std::complex<double>> qe_vkb,
                 py::array_t<std::complex<double>> qe_evc, std::vector<std::vector<int>> miller) {
                  py::buffer_info becp_buf = qe_becp.request();
@@ -775,7 +777,7 @@ PYBIND11_MODULE(_dftcu, m) {
         .def(py::init<dftcu::Grid&>())
         // Backward compatibility constructor
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::DensityFunctionalPotential>,
-                      std::shared_ptr<dftcu::NonLocalPseudo>>(),
+                      std::shared_ptr<dftcu::NonLocalPseudoOperator>>(),
              py::arg("grid"), py::arg("dfp"), py::arg("nl_pseudo") = nullptr)
         .def("set_density_functional_potential",
              &dftcu::Hamiltonian::set_density_functional_potential)
@@ -793,7 +795,9 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("has_nonlocal", &dftcu::Hamiltonian::has_nonlocal)
         .def(
             "get_nonlocal",
-            [](dftcu::Hamiltonian& self) -> dftcu::NonLocalPseudo& { return self.get_nonlocal(); },
+            [](dftcu::Hamiltonian& self) -> dftcu::NonLocalPseudoOperator& {
+                return self.get_nonlocal();
+            },
             py::return_value_policy::reference)
         .def("get_v_of_0", &dftcu::Hamiltonian::get_v_of_0)
         .def("set_v_of_0", &dftcu::Hamiltonian::set_v_of_0, py::arg("v0"))
@@ -1037,12 +1041,12 @@ PYBIND11_MODULE(_dftcu, m) {
              py::arg("eigenvalues"), py::arg("occupations"), py::arg("ham"), py::arg("psi"),
              py::arg("rho_val"), py::arg("rho_core") = nullptr);
 
-    py::class_<dftcu::DensityFactory>(m, "DensityFactory")
+    py::class_<dftcu::DensityBuilder>(m, "DensityBuilder")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())
-        .def("set_atomic_rho_g", &dftcu::DensityFactory::set_atomic_rho_g)
-        .def("set_atomic_rho_r", &dftcu::DensityFactory::set_atomic_rho_r)
-        .def("build_density", &dftcu::DensityFactory::build_density)
-        .def("set_gcut", &dftcu::DensityFactory::set_gcut, py::arg("gcut"));
+        .def("set_atomic_rho_g", &dftcu::DensityBuilder::set_atomic_rho_g)
+        .def("set_atomic_rho_r", &dftcu::DensityBuilder::set_atomic_rho_r)
+        .def("build_density", &dftcu::DensityBuilder::build_density)
+        .def("set_gcut", &dftcu::DensityBuilder::set_gcut, py::arg("gcut"));
 
     // Phase 0 Verifier
     py::class_<dftcu::VerificationResult>(m, "VerificationResult")

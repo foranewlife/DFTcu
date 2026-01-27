@@ -254,7 +254,7 @@ Hamiltonian::Hamiltonian(Grid& grid)
 
 // Backward compatibility constructor
 Hamiltonian::Hamiltonian(Grid& grid, std::shared_ptr<DensityFunctionalPotential> dfp,
-                         std::shared_ptr<NonLocalPseudo> nl_pseudo)
+                         std::shared_ptr<NonLocalPseudoOperator> nl_pseudo)
     : grid_(grid),
       dfp_(dfp),
       nonlocal_(nl_pseudo),
@@ -302,7 +302,7 @@ void Hamiltonian::update_potentials_inplace(const RealField& rho) {
     // Assumption based on run_nscf.py order:
     //   components[0] = Hartree
     //   components[1] = LDA_PZ (XC)
-    //   components[2] = LocalPseudo (V_ps)
+    //   components[2] = LocalPseudoOperator (V_ps)
     for (size_t i = 0; i < components.size(); ++i) {
         if (i == 0) {
             // Hartree potential

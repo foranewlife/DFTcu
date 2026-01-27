@@ -5,9 +5,8 @@
 #include <iostream>
 
 #include "fft/fft_solver.cuh"
+#include "local_pseudo_operator.cuh"
 #include "math/bessel.cuh"
-#include "pseudo.cuh"
-#include "upf_parser.cuh"
 #include "utilities/constants.cuh"
 #include "utilities/error.cuh"
 #include "utilities/kernels.cuh"
@@ -16,7 +15,7 @@
 namespace dftcu {
 
 // ============================================================================
-// Existing LocalPseudo implementation
+// Existing LocalPseudoOperator implementation
 // ============================================================================
 
 namespace {
@@ -207,9 +206,10 @@ __global__ void apply_hermitian_symmetry_kernel(int nx, int ny, int nz, gpufftCo
 }
 }  // namespace
 
-LocalPseudo::LocalPseudo(Grid& grid, std::shared_ptr<Atoms> atoms) : grid_(grid), atoms_(atoms) {}
+LocalPseudoOperator::LocalPseudoOperator(Grid& grid, std::shared_ptr<Atoms> atoms)
+    : grid_(grid), atoms_(atoms) {}
 
-void LocalPseudo::initialize_buffers(Grid& grid) {
+void LocalPseudoOperator::initialize_buffers(Grid& grid) {
     if (grid_ptr_ == &grid)
         return;
     grid_ptr_ = &grid;
@@ -219,9 +219,10 @@ void LocalPseudo::initialize_buffers(Grid& grid) {
         v_g_ = std::make_unique<ComplexField>(grid);
 }
 
-void LocalPseudo::init_tab_vloc(int type, const std::vector<double>& r_grid,
-                                const std::vector<double>& vloc_r, const std::vector<double>& rab,
-                                double zp, double omega_bohr, int mesh_cutoff) {
+void LocalPseudoOperator::init_tab_vloc(int type, const std::vector<double>& r_grid,
+                                        const std::vector<double>& vloc_r,
+                                        const std::vector<double>& rab, double zp,
+                                        double omega_bohr, int mesh_cutoff) {
     // FIXME: This function still uses mixed units for historical reasons
     // omega_ is stored in Bohr³ internally, but gg[] from grid is in Angstrom⁻²
     // This will be fixed when Grid units are unified to pure atomic units
@@ -272,7 +273,7 @@ void LocalPseudo::init_tab_vloc(int type, const std::vector<double>& r_grid,
     }
 }
 
-void LocalPseudo::compute(RealField& v) {
+void LocalPseudoOperator::compute(RealField& v) {
     Grid& grid_ = v.grid();
     initialize_buffers(grid_);
     size_t nnr = grid_.nnr();
@@ -280,7 +281,7 @@ void LocalPseudo::compute(RealField& v) {
     v_g_->fill({0, 0});
 
     // DEBUG: Print atom positions
-    std::cout << "[DEBUG LocalPseudo] Atom positions (Cartesian Bohr):" << std::endl;
+    std::cout << "[DEBUG LocalPseudoOperator] Atom positions (Cartesian Bohr):" << std::endl;
     for (size_t iat = 0; iat < atoms_->nat(); ++iat) {
         std::cout << "  atom " << iat << " (type " << atoms_->h_type()[iat] << "): "
                   << "(" << atoms_->h_pos_x()[iat] << ", " << atoms_->h_pos_y()[iat] << ", "
@@ -338,7 +339,8 @@ void LocalPseudo::compute(RealField& v) {
                      cudaMemcpyDeviceToHost));
     CHECK(cudaMemcpy(nlm_test.data(), grid_.nlm_dense(), nlm_test.size() * sizeof(int),
                      cudaMemcpyDeviceToHost));
-    std::cout << "[DEBUG LocalPseudo] nl_dense and nlm_dense mapping (first 10):" << std::endl;
+    std::cout << "[DEBUG LocalPseudoOperator] nl_dense and nlm_dense mapping (first 10):"
+              << std::endl;
     for (size_t ig = 0; ig < nl_test.size(); ++ig) {
         std::cout << "  ig=" << ig << ": nl=" << nl_test[ig] << ", nlm=" << nlm_test[ig]
                   << std::endl;
@@ -365,7 +367,8 @@ void LocalPseudo::compute(RealField& v) {
                      << " " << mag << "\n";
     }
     v_dense_file.close();
-    std::cout << "[DEBUG LocalPseudo] Exported v_dense to dftcu_vloc_dense_debug.txt" << std::endl;
+    std::cout << "[DEBUG LocalPseudoOperator] Exported v_dense to dftcu_vloc_dense_debug.txt"
+              << std::endl;
 
     // DEBUG: Export v_g_ (FFT grid after scatter) for comparison with QE
     std::vector<gpufftComplex> v_fft_host(grid_.nnr());
@@ -380,7 +383,7 @@ void LocalPseudo::compute(RealField& v) {
                    << " " << v_fft_host[ifft].y << "\n";
     }
     v_fft_file.close();
-    std::cout << "[DEBUG LocalPseudo] Exported v_fft_grid to dftcu_vloc_fft_grid_debug.txt"
+    std::cout << "[DEBUG LocalPseudoOperator] Exported v_fft_grid to dftcu_vloc_fft_grid_debug.txt"
               << std::endl;
 
     // 1. Extract Alpha term (G=0 contribution) as a scalar in Hartree.
@@ -403,7 +406,7 @@ void LocalPseudo::compute(RealField& v) {
     std::vector<gpufftComplex> v_g_before(std::min(10, (int)grid_.nnr()));
     CHECK(cudaMemcpy(v_g_before.data(), v_g_->data(), v_g_before.size() * sizeof(gpufftComplex),
                      cudaMemcpyDeviceToHost));
-    std::cout << "[DEBUG LocalPseudo] V_loc(G) before IFFT (first 10):" << std::endl;
+    std::cout << "[DEBUG LocalPseudoOperator] V_loc(G) before IFFT (first 10):" << std::endl;
     for (size_t i = 0; i < v_g_before.size(); ++i) {
         std::cout << "  [" << i << "] = (" << v_g_before[i].x << ", " << v_g_before[i].y << ")"
                   << std::endl;
@@ -430,7 +433,7 @@ void LocalPseudo::compute(RealField& v) {
     grid_.synchronize();
 }
 
-double LocalPseudo::compute(const RealField& rho, RealField& v_out) {
+double LocalPseudoOperator::compute(const RealField& rho, RealField& v_out) {
     RealField v_ps(grid_);
     compute(v_ps);
     double energy = rho.dot(v_ps) * grid_.dv_bohr();
@@ -438,8 +441,8 @@ double LocalPseudo::compute(const RealField& rho, RealField& v_out) {
     return energy;
 }
 
-std::vector<double> LocalPseudo::get_vloc_g_shells(int type,
-                                                   const std::vector<double>& g_shells) const {
+std::vector<double> LocalPseudoOperator::get_vloc_g_shells(
+    int type, const std::vector<double>& g_shells) const {
     if (type >= static_cast<int>(tab_vloc_.size()) || tab_vloc_[type].empty())
         return {};
     const double fpi = 4.0 * constants::D_PI;
@@ -466,7 +469,7 @@ std::vector<double> LocalPseudo::get_vloc_g_shells(int type,
     return results;
 }
 
-void LocalPseudo::set_valence_charge(int t, double z) {
+void LocalPseudoOperator::set_valence_charge(int t, double z) {
     if (t >= static_cast<int>(zp_.size()))
         zp_.resize(t + 1);
     zp_[t] = z;

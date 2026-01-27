@@ -3,7 +3,7 @@
 
 #include "math/bessel.cuh"
 #include "math/ylm.cuh"
-#include "model/wavefunction_factory.cuh"
+#include "model/wavefunction_builder.cuh"
 #include "utilities/constants.cuh"
 #include "utilities/error.cuh"
 #include "utilities/math_utils.cuh"
@@ -89,10 +89,10 @@ __global__ void apply_random_phase_kernel(int nnr, gpufftComplex* band, unsigned
 
 }  // namespace
 
-WavefunctionFactory::WavefunctionFactory(Grid& grid, std::shared_ptr<Atoms> atoms)
+WavefunctionBuilder::WavefunctionBuilder(Grid& grid, std::shared_ptr<Atoms> atoms)
     : grid_(grid), atoms_(atoms) {}
 
-void WavefunctionFactory::add_atomic_orbital(int type, int l, const std::vector<double>& r,
+void WavefunctionBuilder::add_atomic_orbital(int type, int l, const std::vector<double>& r,
                                              const std::vector<double>& chi,
                                              const std::vector<double>& rab, int msh) {
     if (type >= (int)orbital_tables_.size())
@@ -131,7 +131,7 @@ void WavefunctionFactory::add_atomic_orbital(int type, int l, const std::vector<
     orbital_tables_[type].push_back({l, chi_q});
 }
 
-void WavefunctionFactory::build_atomic_wavefunctions(Wavefunction& psi, bool randomize_phase) {
+void WavefunctionBuilder::build_atomic_wavefunctions(Wavefunction& psi, bool randomize_phase) {
     int n_bands = psi.num_bands();
     int nnr = grid_.nnr();
     double omega_bohr = grid_.volume_bohr();
@@ -191,7 +191,7 @@ void WavefunctionFactory::build_atomic_wavefunctions(Wavefunction& psi, bool ran
             for (int m = 0; m < 2 * orb.l + 1; ++m) {
                 if (current_band >= n_bands) {
                     throw std::runtime_error(
-                        "WavefunctionFactory: band count exceeds limit (current_band=" +
+                        "WavefunctionBuilder: band count exceeds limit (current_band=" +
                         std::to_string(current_band) + ", n_bands=" + std::to_string(n_bands) +
                         ")");
                 }
@@ -220,7 +220,7 @@ done:
     grid_.synchronize();
 }
 
-int WavefunctionFactory::calculate_num_bands() const {
+int WavefunctionBuilder::calculate_num_bands() const {
     int total = 0;
     for (int iat = 0; iat < (int)atoms_->nat(); ++iat) {
         int type = atoms_->h_type()[iat];
@@ -234,15 +234,15 @@ int WavefunctionFactory::calculate_num_bands() const {
     return total;
 }
 
-int WavefunctionFactory::num_bands() const {
+int WavefunctionBuilder::num_bands() const {
     return calculate_num_bands();
 }
 
-std::unique_ptr<Wavefunction> WavefunctionFactory::build(bool randomize_phase) {
+std::unique_ptr<Wavefunction> WavefunctionBuilder::build(bool randomize_phase) {
     int n_bands = calculate_num_bands();
 
     if (n_bands == 0) {
-        throw std::runtime_error("WavefunctionFactory::build: No atomic orbitals added. "
+        throw std::runtime_error("WavefunctionBuilder::build: No atomic orbitals added. "
                                  "Call add_atomic_orbital() before build().");
     }
 
@@ -255,7 +255,7 @@ std::unique_ptr<Wavefunction> WavefunctionFactory::build(bool randomize_phase) {
     return psi;
 }
 
-void WavefunctionFactory::build_atomic_wavefunctions_internal(Wavefunction& psi,
+void WavefunctionBuilder::build_atomic_wavefunctions_internal(Wavefunction& psi,
                                                               bool randomize_phase) {
     // This is the same as the old build_atomic_wavefunctions, just renamed
     int n_bands = psi.num_bands();
@@ -297,7 +297,7 @@ void WavefunctionFactory::build_atomic_wavefunctions_internal(Wavefunction& psi,
             for (int m = 0; m < 2 * orb.l + 1; ++m) {
                 if (current_band >= n_bands) {
                     throw std::runtime_error(
-                        "WavefunctionFactory: band count exceeds limit (current_band=" +
+                        "WavefunctionBuilder: band count exceeds limit (current_band=" +
                         std::to_string(current_band) + ", n_bands=" + std::to_string(n_bands) +
                         ")");
                 }

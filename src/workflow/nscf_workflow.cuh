@@ -4,12 +4,12 @@
 #include <vector>
 
 #include "functional/density_functional_potential.cuh"
-#include "functional/local_pseudo_factory.cuh"
-#include "functional/nonlocal_pseudo_factory.cuh"
-#include "functional/pseudopotential_data.cuh"
+#include "functional/local_pseudo_builder.cuh"
+#include "functional/nonlocal_pseudo_builder.cuh"
 #include "model/atoms.cuh"
 #include "model/field.cuh"
 #include "model/grid.cuh"
+#include "model/pseudopotential_data.cuh"
 #include "model/wavefunction.cuh"
 #include "solver/hamiltonian.cuh"
 #include "solver/nscf.cuh"
@@ -79,7 +79,7 @@ struct NSCFWorkflowConfig {
  * ─────────────────────────────────────────────────────────────────────
  * 构造阶段：
  *   1. 验证配置（nbands, nelec, ecutrho >= 4*ecutwfc）
- *   2. 创建 LocalPseudo 和 NonlocalPseudo
+ *   2. 创建 LocalPseudoOperator 和 NonlocalPseudo
  *   3. 创建 Hamiltonian 并设置 DensityFunctionalPotential
  *   4. 加载密度并调用 initialize_potentials（ham.update_potentials_inplace）
  *   5. 初始化波函数
@@ -163,12 +163,12 @@ class NSCFWorkflow {
     // ════════════════════════════════════════════════════════════════════════
     // 内部管理的对象（生命周期由 Workflow 管理）
     // ════════════════════════════════════════════════════════════════════════
-    std::vector<std::shared_ptr<LocalPseudo>> local_pseudos_;        ///< 局域赝势
-    std::vector<std::shared_ptr<NonLocalPseudo>> nonlocal_pseudos_;  ///< 非局域赝势
-    std::shared_ptr<DensityFunctionalPotential> dfp_;                ///< 密度泛函势
-    Hamiltonian ham_;                                                ///< 哈密顿量
-    RealField rho_;                                                  ///< 输入密度
-    Wavefunction psi_;                                               ///< 波函数
+    std::vector<std::shared_ptr<LocalPseudoOperator>> local_pseudos_;        ///< 局域赝势
+    std::vector<std::shared_ptr<NonLocalPseudoOperator>> nonlocal_pseudos_;  ///< 非局域赝势
+    std::shared_ptr<DensityFunctionalPotential> dfp_;                        ///< 密度泛函势
+    Hamiltonian ham_;                                                        ///< 哈密顿量
+    RealField rho_;                                                          ///< 输入密度
+    Wavefunction psi_;                                                       ///< 波函数
 
     // ════════════════════════════════════════════════════════════════════════
     // 私有辅助方法

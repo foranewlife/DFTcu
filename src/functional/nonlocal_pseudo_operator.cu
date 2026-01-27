@@ -1,7 +1,7 @@
 #include "math/bessel.cuh"
 #include "math/ylm.cuh"
-#include "nonlocal_pseudo.cuh"
-#include "pseudopotential_data.cuh"
+#include "model/pseudopotential_data.cuh"
+#include "nonlocal_pseudo_operator.cuh"
 #include "utilities/constants.cuh"
 #include "utilities/cublas_manager.cuh"
 #include "utilities/error.cuh"
@@ -167,12 +167,14 @@ __global__ void interpolate_beta_kernel(int n, const double* gx, const double* g
 
 }  // namespace
 
-NonLocalPseudo::NonLocalPseudo(Grid& grid) : grid_(grid), omega_(grid.volume_bohr()) {}
+NonLocalPseudoOperator::NonLocalPseudoOperator(Grid& grid)
+    : grid_(grid), omega_(grid.volume_bohr()) {}
 
-void NonLocalPseudo::init_tab_beta(int type, const std::vector<double>& r,
-                                   const std::vector<std::vector<double>>& betas,
-                                   const std::vector<double>& rab, const std::vector<int>& l_list,
-                                   const std::vector<int>& kkbeta_list, double omega_bohr) {
+void NonLocalPseudoOperator::init_tab_beta(int type, const std::vector<double>& r,
+                                           const std::vector<std::vector<double>>& betas,
+                                           const std::vector<double>& rab,
+                                           const std::vector<int>& l_list,
+                                           const std::vector<int>& kkbeta_list, double omega_bohr) {
     if (type >= static_cast<int>(tab_beta_.size())) {
         tab_beta_.resize(type + 1);
         l_list_.resize(type + 1);
@@ -211,7 +213,7 @@ void NonLocalPseudo::init_tab_beta(int type, const std::vector<double>& r,
     }
 }
 
-void NonLocalPseudo::init_dij(int type, const std::vector<double>& dij) {
+void NonLocalPseudoOperator::init_dij(int type, const std::vector<double>& dij) {
     if (type >= static_cast<int>(d_ij_.size()))
         d_ij_.resize(type + 1);
     int n_proj = static_cast<int>(sqrt(dij.size()));
@@ -221,7 +223,7 @@ void NonLocalPseudo::init_dij(int type, const std::vector<double>& dij) {
             d_ij_[type][i][j] = dij[i * n_proj + j];
 }
 
-void NonLocalPseudo::update_projectors_inplace(const Atoms& atoms) {
+void NonLocalPseudoOperator::update_projectors_inplace(const Atoms& atoms) {
     int total_projectors = 0;
     for (size_t i = 0; i < atoms.nat(); ++i) {
         int type = atoms.h_type()[i];
@@ -303,7 +305,7 @@ void NonLocalPseudo::update_projectors_inplace(const Atoms& atoms) {
     grid_.synchronize();
 }
 
-void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
+void NonLocalPseudoOperator::apply(Wavefunction& psi, Wavefunction& h_psi) {
     if (num_projectors_ == 0)
         return;
 
@@ -466,8 +468,8 @@ void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
     grid_.synchronize();
 }
 
-double NonLocalPseudo::calculate_energy(const Wavefunction& psi,
-                                        const std::vector<double>& occupations) {
+double NonLocalPseudoOperator::calculate_energy(const Wavefunction& psi,
+                                                const std::vector<double>& occupations) {
     if (num_projectors_ == 0)
         return 0.0;
     size_t n = grid_.nnr();
@@ -505,14 +507,14 @@ double NonLocalPseudo::calculate_energy(const Wavefunction& psi,
     return energy;
 }
 
-void NonLocalPseudo::set_tab_beta(int type, int nb, const std::vector<double>& tab) {
+void NonLocalPseudoOperator::set_tab_beta(int type, int nb, const std::vector<double>& tab) {
     if (type < (int)tab_beta_.size() && nb < (int)tab_beta_[type].size()) {
         tab_beta_[type][nb] = tab;
         nqx_ = (int)tab.size() - 1;
     }
 }
 
-std::vector<std::complex<double>> NonLocalPseudo::get_projector(int idx) const {
+std::vector<std::complex<double>> NonLocalPseudoOperator::get_projector(int idx) const {
     size_t nnr = grid_.nnr();
     std::vector<std::complex<double>> host(nnr);
     CHECK(cudaMemcpy(host.data(), d_projectors_.data() + idx * nnr, nnr * sizeof(gpufftComplex),
@@ -520,34 +522,35 @@ std::vector<std::complex<double>> NonLocalPseudo::get_projector(int idx) const {
     return host;
 }
 
-std::vector<std::complex<double>> NonLocalPseudo::get_projections() const {
+std::vector<std::complex<double>> NonLocalPseudoOperator::get_projections() const {
     std::vector<std::complex<double>> host(d_projections_.size());
     CHECK(cudaMemcpy(host.data(), d_projections_.data(),
                      d_projections_.size() * sizeof(gpufftComplex), cudaMemcpyDeviceToHost));
     return host;
 }
 
-std::vector<double> NonLocalPseudo::get_coupling() const {
+std::vector<double> NonLocalPseudoOperator::get_coupling() const {
     std::vector<double> host(d_coupling_.size());
     d_coupling_.copy_to_host(host.data());
     return host;
 }
 
-std::vector<std::complex<double>> NonLocalPseudo::get_d_projections() const {
+std::vector<std::complex<double>> NonLocalPseudoOperator::get_d_projections() const {
     std::vector<std::complex<double>> host(d_dps_.size());
     d_dps_.copy_to_host(reinterpret_cast<gpufftComplex*>(host.data()));
     return host;
 }
 
-void NonLocalPseudo::debug_projections(const Wavefunction& psi, const std::vector<double>& qe_becp,
-                                       const std::vector<std::complex<double>>& qe_vkb,
-                                       const std::vector<std::complex<double>>& qe_evc,
-                                       const std::vector<std::vector<int>>& miller) {}
+void NonLocalPseudoOperator::debug_projections(const Wavefunction& psi,
+                                               const std::vector<double>& qe_becp,
+                                               const std::vector<std::complex<double>>& qe_vkb,
+                                               const std::vector<std::complex<double>>& qe_evc,
+                                               const std::vector<std::vector<int>>& miller) {}
 
-void NonLocalPseudo::add_projector(const std::vector<std::complex<double>>& beta_g,
-                                   double coupling_constant) {}
+void NonLocalPseudoOperator::add_projector(const std::vector<std::complex<double>>& beta_g,
+                                           double coupling_constant) {}
 
-void NonLocalPseudo::set_projectors(const std::vector<std::complex<double>>& projectors) {
+void NonLocalPseudoOperator::set_projectors(const std::vector<std::complex<double>>& projectors) {
     if (projectors.size() != d_projectors_.size()) {
         throw std::runtime_error("set_projectors size mismatch");
     }
@@ -556,7 +559,7 @@ void NonLocalPseudo::set_projectors(const std::vector<std::complex<double>>& pro
     grid_.synchronize();
 }
 
-void NonLocalPseudo::clear() {
+void NonLocalPseudoOperator::clear() {
     tab_beta_.clear();
     l_list_.clear();
     d_ij_.clear();

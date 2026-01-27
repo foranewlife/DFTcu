@@ -1,17 +1,17 @@
 #include "fft/fft_solver.cuh"
-#include "functional/local_pseudo_factory.cuh"
-#include "functional/pseudo.cuh"
+#include "functional/local_pseudo_builder.cuh"
+#include "functional/local_pseudo_operator.cuh"
 #include "utilities/constants.cuh"
 
 namespace dftcu {
 
-std::shared_ptr<LocalPseudo> create_local_pseudo(Grid& grid, std::shared_ptr<Atoms> atoms,
-                                                 const PseudopotentialData& pseudo_data,
-                                                 int atom_type) {
+std::shared_ptr<LocalPseudoOperator> build_local_pseudo(Grid& grid, std::shared_ptr<Atoms> atoms,
+                                                        const PseudopotentialData& pseudo_data,
+                                                        int atom_type) {
     // ════════════════════════════════════════════════════════════════════════
-    // 创建 LocalPseudo 对象
+    // 创建 LocalPseudoOperator 对象
     // ════════════════════════════════════════════════════════════════════════
-    auto local_pseudo = std::make_shared<LocalPseudo>(grid, atoms);
+    auto local_pseudo = std::make_shared<LocalPseudoOperator>(grid, atoms);
 
     // ════════════════════════════════════════════════════════════════════════
     // 从单原子赝势模型提取 1D 径向数据

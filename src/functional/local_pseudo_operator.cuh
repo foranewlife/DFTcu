@@ -15,10 +15,10 @@ class PseudopotentialData;  // Forward declaration
 /**
  * @brief Local pseudopotential implementation following Quantum ESPRESSO's interpolation scheme.
  */
-class LocalPseudo {
+class LocalPseudoOperator {
   public:
-    LocalPseudo(Grid& grid, std::shared_ptr<Atoms> atoms);
-    ~LocalPseudo() = default;
+    LocalPseudoOperator(Grid& grid, std::shared_ptr<Atoms> atoms);
+    ~LocalPseudoOperator() = default;
 
     /**
      * @brief Initialize V_loc interpolation table from UPF radial data.

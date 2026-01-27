@@ -345,7 +345,7 @@ void Grid::generate_gvectors() {
     // ========================================================================
     // Dense Grid Allocation and Copy
     // ========================================================================
-    // NOTE: Functional components (Hartree, LocalPseudo) expect crystallographic
+    // NOTE: Functional components (Hartree, LocalPseudoOperator) expect crystallographic
     // units for gg_dense/gl, as their formulas handle the (2π)² scaling.
     gg_dense_.resize(ngm_dense_);
     CHECK(cudaMemcpy(gg_dense_.data(), g2_dense.data(), ngm_dense_ * sizeof(double),

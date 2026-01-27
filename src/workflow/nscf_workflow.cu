@@ -1,7 +1,7 @@
 #include "functional/hartree.cuh"
 #include "functional/xc/lda_pz.cuh"
-#include "model/density_factory.cuh"
-#include "model/wavefunction_factory.cuh"
+#include "model/density_builder.cuh"
+#include "model/wavefunction_builder.cuh"
 #include "utilities/error.cuh"
 #include "workflow/nscf_workflow.cuh"
 
@@ -168,11 +168,11 @@ void NSCFWorkflow::initialize_pseudopotentials(
         }
 
         // 创建局域赝势（使用工厂函数）
-        auto local_ps = create_local_pseudo(grid_, atoms_, pseudo, itype);
+        auto local_ps = build_local_pseudo(grid_, atoms_, pseudo, itype);
         local_pseudos_.push_back(local_ps);
 
         // 创建非局域赝势（使用工厂函数）
-        auto nonlocal_ps = create_nonlocal_pseudo(grid_, atoms_, pseudo, itype);
+        auto nonlocal_ps = build_nonlocal_pseudo(grid_, atoms_, pseudo, itype);
         nonlocal_pseudos_.push_back(nonlocal_ps);
     }
 }
@@ -210,9 +210,9 @@ void NSCFWorkflow::initialize_hamiltonian() {
 
 void NSCFWorkflow::initialize_density(const std::vector<PseudopotentialData>& pseudo_data) {
     // ════════════════════════════════════════════════════════════════════════
-    // 使用 DensityFactory 从原子电荷叠加构建初始密度
+    // 使用 DensityBuilder 从原子电荷叠加构建初始密度
     // ════════════════════════════════════════════════════════════════════════
-    DensityFactory factory(grid_, atoms_);
+    DensityBuilder factory(grid_, atoms_);
 
     // 添加所有原子类型的原子密度
     for (size_t itype = 0; itype < pseudo_data.size(); ++itype) {
@@ -239,9 +239,9 @@ void NSCFWorkflow::initialize_potentials() {
 
 void NSCFWorkflow::initialize_wavefunction(const std::vector<PseudopotentialData>& pseudo_data) {
     // ════════════════════════════════════════════════════════════════════════
-    // 使用 WavefunctionFactory 从原子波函数构建初始波函数
+    // 使用 WavefunctionBuilder 从原子波函数构建初始波函数
     // ════════════════════════════════════════════════════════════════════════
-    WavefunctionFactory factory(grid_, atoms_);
+    WavefunctionBuilder factory(grid_, atoms_);
 
     // 添加所有原子轨道
     for (size_t itype = 0; itype < pseudo_data.size(); ++itype) {

@@ -256,7 +256,7 @@ class Grid {
 
     /**
      * @brief Squared G-vector magnitudes for Dense grid (GPU).
-     * @note Crystallographic units: 1/Bohr² - used by Hartree, LocalPseudo
+     * @note Crystallographic units: 1/Bohr² - used by Hartree, LocalPseudoOperator
      */
     const double* gg_dense() const { return gg_dense_.data(); }
 

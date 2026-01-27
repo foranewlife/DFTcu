@@ -3,7 +3,7 @@
 #include <vector>
 
 #include "functional/density_functional_potential.cuh"
-#include "functional/nonlocal_pseudo.cuh"
+#include "functional/nonlocal_pseudo_operator.cuh"
 #include "model/wavefunction.cuh"
 
 namespace dftcu {
@@ -30,7 +30,7 @@ class Hamiltonian {
      * @param nl_pseudo Optional non-local pseudopotential handler
      */
     Hamiltonian(Grid& grid, std::shared_ptr<DensityFunctionalPotential> dfp,
-                std::shared_ptr<NonLocalPseudo> nl_pseudo = nullptr);
+                std::shared_ptr<NonLocalPseudoOperator> nl_pseudo = nullptr);
     ~Hamiltonian() = default;
 
     /** @brief Copy data from another Hamiltonian (device to device copy of potentials) */
@@ -77,7 +77,7 @@ class Hamiltonian {
     void apply_nonlocal(Wavefunction& psi, Wavefunction& h_psi);
 
     /** @brief Set or update the non-local potential handler */
-    void set_nonlocal(std::shared_ptr<NonLocalPseudo> nl_pseudo) { nonlocal_ = nl_pseudo; }
+    void set_nonlocal(std::shared_ptr<NonLocalPseudoOperator> nl_pseudo) { nonlocal_ = nl_pseudo; }
 
     /** @brief Set or update the density functional potential handler */
     void set_density_functional_potential(std::shared_ptr<DensityFunctionalPotential> dfp) {
@@ -120,13 +120,13 @@ class Hamiltonian {
     const DensityFunctionalPotential& get_density_functional_potential() const { return *dfp_; }
 
     /** @brief Get reference to non-local pseudopotential */
-    NonLocalPseudo& get_nonlocal() { return *nonlocal_; }
-    const NonLocalPseudo& get_nonlocal() const { return *nonlocal_; }
+    NonLocalPseudoOperator& get_nonlocal() { return *nonlocal_; }
+    const NonLocalPseudoOperator& get_nonlocal() const { return *nonlocal_; }
 
   private:
     Grid& grid_;
     std::shared_ptr<DensityFunctionalPotential> dfp_;
-    std::shared_ptr<NonLocalPseudo> nonlocal_;
+    std::shared_ptr<NonLocalPseudoOperator> nonlocal_;
 
     // Persistent buffers for potentials in real space
     RealField v_loc_tot_;  // Total V_loc = V_ps + V_H + V_xc

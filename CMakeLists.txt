@@ -104,17 +104,16 @@ if(BUILD_WITH_CUDA)
         src/model/grid.cu
         src/model/grid_factory.cu
         src/model/atoms_factory.cu
-        src/model/density_factory.cu
+        src/model/density_builder.cu
         src/model/wavefunction.cu
-        src/model/wavefunction_factory.cu
+        src/model/wavefunction_builder.cu
         src/functional/hartree.cu
         src/functional/ewald.cu
-        src/functional/pseudo.cu
-        src/functional/local_pseudo_factory.cu
-        src/functional/nonlocal_pseudo.cu
-        src/functional/nonlocal_pseudo_factory.cu
-        src/functional/pseudopotential_data.cu
-        src/functional/upf_parser.cu
+        src/functional/local_pseudo_operator.cu
+        src/functional/local_pseudo_builder.cu
+        src/functional/nonlocal_pseudo_operator.cu
+        src/functional/nonlocal_pseudo_builder.cu
+        src/model/pseudopotential_data.cu
         src/functional/density_functional_potential.cu
         src/functional/kedf/tf.cu
         src/functional/kedf/vw.cu
@@ -130,7 +129,6 @@ if(BUILD_WITH_CUDA)
         src/solver/davidson.cu
         src/solver/subspace_solver.cu
         src/solver/gamma_utils.cu
-        src/solver/phase0_verifier.cu
         src/solver/mixer.cu
         src/solver/nscf.cu
         src/solver/optimizer.cu

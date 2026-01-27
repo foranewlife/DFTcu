@@ -49,7 +49,7 @@ namespace dftcu {
  * auto dfp = std::make_shared<DensityFunctionalPotential>(grid);
  * dfp->add_functional(std::make_shared<HartreeFunctional>(grid));
  * dfp->add_functional(std::make_shared<LDA_PZ>(grid));
- * dfp->add_functional(std::make_shared<LocalPseudo>(grid, atoms));
+ * dfp->add_functional(std::make_shared<LocalPseudoOperator>(grid, atoms));
  *
  * // Step 3: 创建 Hamiltonian 并更新势能 (只调用一次!)
  * Hamiltonian ham(grid);

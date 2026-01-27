@@ -1,17 +1,16 @@
 #include "fft/fft_solver.cuh"
-#include "functional/nonlocal_pseudo.cuh"
-#include "functional/nonlocal_pseudo_factory.cuh"
+#include "functional/nonlocal_pseudo_builder.cuh"
+#include "functional/nonlocal_pseudo_operator.cuh"
 #include "utilities/constants.cuh"
 
 namespace dftcu {
 
-std::shared_ptr<NonLocalPseudo> create_nonlocal_pseudo(Grid& grid, std::shared_ptr<Atoms> atoms,
-                                                       const PseudopotentialData& pseudo_data,
-                                                       int atom_type) {
+std::shared_ptr<NonLocalPseudoOperator> build_nonlocal_pseudo(
+    Grid& grid, std::shared_ptr<Atoms> atoms, const PseudopotentialData& pseudo_data,
+    int atom_type) {  // ════════════════════════════════════════════════════════════════════════
+    // 创建 NonLocalPseudoOperator 对象
     // ════════════════════════════════════════════════════════════════════════
-    // 创建 NonLocalPseudo 对象
-    // ════════════════════════════════════════════════════════════════════════
-    auto nl_pseudo = std::make_shared<NonLocalPseudo>(grid);
+    auto nl_pseudo = std::make_shared<NonLocalPseudoOperator>(grid);
 
     // ════════════════════════════════════════════════════════════════════════
     // 从单原子赝势模型提取 1D 径向数据

@@ -14,10 +14,10 @@ namespace dftcu {
  *
  * Supports atomic wavefunction superposition matching Quantum ESPRESSO's starting_wfc='atomic'.
  */
-class WavefunctionFactory {
+class WavefunctionBuilder {
   public:
-    WavefunctionFactory(Grid& grid, std::shared_ptr<Atoms> atoms);
-    ~WavefunctionFactory() = default;
+    WavefunctionBuilder(Grid& grid, std::shared_ptr<Atoms> atoms);
+    ~WavefunctionBuilder() = default;
 
     /**
      * @brief Set atomic radial orbital for an atom type.
@@ -54,7 +54,7 @@ class WavefunctionFactory {
      * @return unique_ptr to Wavefunction object with atomic orbitals (non-orthogonal)
      *
      * Example:
-     *   WavefunctionFactory factory(grid, atoms);
+     *   WavefunctionBuilder factory(grid, atoms);
      *   factory.add_atomic_orbital(0, 0, r, chi_s, rab, msh);  // Si s orbital
      *   factory.add_atomic_orbital(0, 1, r, chi_p, rab, msh);  // Si p orbital
      *   auto psi = factory.build();  // Returns unique_ptr<Wavefunction>

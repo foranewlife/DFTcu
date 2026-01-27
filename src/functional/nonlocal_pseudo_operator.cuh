@@ -15,10 +15,10 @@ class PseudopotentialData;
 /**
  * @brief Non-local pseudopotential using Kleinman-Bylander (KB) projectors.
  */
-class NonLocalPseudo {
+class NonLocalPseudoOperator {
   public:
-    NonLocalPseudo(Grid& grid);
-    ~NonLocalPseudo() = default;
+    NonLocalPseudoOperator(Grid& grid);
+    ~NonLocalPseudoOperator() = default;
 
     void apply(Wavefunction& psi_in, Wavefunction& h_psi_out);
     void add_projector(const std::vector<std::complex<double>>& beta_g, double coupling_constant);
