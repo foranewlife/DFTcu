@@ -49,18 +49,10 @@ void Grid::compute_reciprocal_lattice() {
     double a21 = lattice_[1][0], a22 = lattice_[1][1], a23 = lattice_[1][2];
     double a31 = lattice_[2][0], a32 = lattice_[2][1], a33 = lattice_[2][2];
 
-    printf("DEBUG compute_reciprocal: a11=%.2f, a12=%.2f, a13=%.2f\n", a11, a12, a13);
-    printf("DEBUG compute_reciprocal: a21=%.2f, a22=%.2f, a23=%.2f\n", a21, a22, a23);
-    printf("DEBUG compute_reciprocal: a31=%.2f, a32=%.2f, a33=%.2f\n", a31, a32, a33);
-
     double det = a11 * (a22 * a33 - a23 * a32) - a12 * (a21 * a33 - a23 * a31) +
                  a13 * (a21 * a32 - a22 * a31);
 
-    printf("DEBUG compute_reciprocal: det = %.6f\n", det);
-
     volume_ = std::abs(det);  // Bohr³
-
-    printf("DEBUG compute_reciprocal: volume_ set to %.6f Bohr³\n", volume_);
 
     double inv[3][3];
     inv[0][0] = (a22 * a33 - a23 * a32) / det;
@@ -149,11 +141,6 @@ void Grid::generate_gvectors() {
     double gcut2_dense = 2.0 * ecutrho_ / TWO_PI_SQ;   // Dense grid [1/Bohr²]
     double gcut2_max = std::max(gcut2_smooth, gcut2_dense);
 
-    printf("DEBUG generate_gvectors: ecutwfc_ = %.6f Ha, ecutrho_ = %.6f Ha\n", ecutwfc_, ecutrho_);
-    printf("DEBUG generate_gvectors: (2π)² = %.6f\n", TWO_PI_SQ);
-    printf("DEBUG generate_gvectors: gcut2_smooth = %.6f [1/Bohr²]\n", gcut2_smooth);
-    printf("DEBUG generate_gvectors: gcut2_dense = %.6f [1/Bohr²]\n", gcut2_dense);
-
     // QE ALIGNMENT: Use FFT grid dimensions to constrain Miller indices
     // QE uses: ni = (nr[0]-1)/2, nj = (nr[1]-1)/2, nk = (nr[2]-1)/2
     // This ensures G-vectors can be mapped to FFT grid without aliasing
@@ -215,20 +202,6 @@ void Grid::generate_gvectors() {
     ngw_ = h_smooth.size();
     ngm_dense_ = h_dense.size();
 
-    printf("DEBUG generate_gvectors: ngw_ = %d, ngm_dense_ = %d\n", ngw_, ngm_dense_);
-    if (!g2_smooth.empty()) {
-        double g2_max_smooth = *std::max_element(g2_smooth.begin(), g2_smooth.end());
-        double g2_min_smooth = *std::min_element(g2_smooth.begin(), g2_smooth.end());
-        printf("DEBUG generate_gvectors: Smooth g2 range: [%.6f, %.6f]\n", g2_min_smooth,
-               g2_max_smooth);
-    }
-    if (!g2_dense.empty()) {
-        double g2_max_dense = *std::max_element(g2_dense.begin(), g2_dense.end());
-        double g2_min_dense = *std::min_element(g2_dense.begin(), g2_dense.end());
-        printf("DEBUG generate_gvectors: Dense g2 range: [%.6f, %.6f]\n", g2_min_dense,
-               g2_max_dense);
-    }
-
     if (ngw_ == 0) {
         throw std::runtime_error("generate_gvectors: No Smooth grid G-vectors generated.");
     }
@@ -243,8 +216,6 @@ void Grid::generate_gvectors() {
     // 1. |G|² ascending
     // 2. For same |G|², by (h, k, l) lexicographically
     // Reference: external/qe/PW/src/ggen.f90
-
-    printf("DEBUG generate_gvectors: Sorting Smooth grid G-vectors by |G|²...\n");
 
     // Create index array for sorting
     std::vector<int> indices_smooth(ngw_);
@@ -281,16 +252,9 @@ void Grid::generate_gvectors() {
     l_smooth = std::move(l_sorted);
     g2_smooth = std::move(g2_sorted);
 
-    printf("DEBUG generate_gvectors: Smooth grid sorted. First 5 Miller indices:\n");
-    for (int i = 0; i < std::min(5, ngw_); ++i) {
-        printf("  ig=%d: (%d, %d, %d), g²=%.6f\n", i, h_smooth[i], k_smooth[i], l_smooth[i],
-               g2_smooth[i]);
-    }
-
     // ========================================================================
     // Sort Dense grid G-vectors (same algorithm)
     // ========================================================================
-    printf("DEBUG generate_gvectors: Sorting Dense grid G-vectors by |G|²...\n");
 
     std::vector<int> indices_dense(ngm_dense_);
     std::iota(indices_dense.begin(), indices_dense.end(), 0);
@@ -322,12 +286,6 @@ void Grid::generate_gvectors() {
     k_dense = std::move(k_dense_sorted);
     l_dense = std::move(l_dense_sorted);
     g2_dense = std::move(g2_dense_sorted);
-
-    printf("DEBUG generate_gvectors: Dense grid sorted. First 5 Miller indices:\n");
-    for (int i = 0; i < std::min(5, ngm_dense_); ++i) {
-        printf("  ig=%d: (%d, %d, %d), g²=%.6f\n", i, h_dense[i], k_dense[i], l_dense[i],
-               g2_dense[i]);
-    }
 
     // ========================================================================
     // Smooth Grid Allocation and Copy
@@ -422,40 +380,6 @@ void Grid::generate_gvectors() {
     CHECK(cudaMemcpy(gz_dense_.data(), gz_dense_h.data(), ngm_dense_ * sizeof(double),
                      cudaMemcpyHostToDevice));
 
-    // DEBUG: Verify gx_dense matches sorted Miller indices
-    printf("DEBUG generate_gvectors: Verifying gx_dense calculation (first 10):\n");
-    printf("  ig  (h, k, l)       gx_host         gy_host         gz_host\n");
-    for (int ig = 0; ig < std::min(10, ngm_dense_); ++ig) {
-        printf("  %2d  (%2d,%2d,%2d)  %14.6f  %14.6f  %14.6f\n", ig, h_dense[ig], k_dense[ig],
-               l_dense[ig], gx_dense_h[ig], gy_dense_h[ig], gz_dense_h[ig]);
-    }
-
-    // Verify GPU copy by reading back
-    std::vector<double> gx_verify(std::min(10, ngm_dense_));
-    std::vector<double> gy_verify(std::min(10, ngm_dense_));
-    std::vector<double> gz_verify(std::min(10, ngm_dense_));
-    CHECK(cudaMemcpy(gx_verify.data(), gx_dense_.data(), gx_verify.size() * sizeof(double),
-                     cudaMemcpyDeviceToHost));
-    CHECK(cudaMemcpy(gy_verify.data(), gy_dense_.data(), gy_verify.size() * sizeof(double),
-                     cudaMemcpyDeviceToHost));
-    CHECK(cudaMemcpy(gz_verify.data(), gz_dense_.data(), gz_verify.size() * sizeof(double),
-                     cudaMemcpyDeviceToHost));
-
-    printf("DEBUG generate_gvectors: Verifying GPU copy (first 10):\n");
-    printf("  ig  gx_GPU          gy_GPU          gz_GPU          Match?\n");
-    bool all_match = true;
-    for (int ig = 0; ig < std::min(10, ngm_dense_); ++ig) {
-        bool match = (std::abs(gx_verify[ig] - gx_dense_h[ig]) < 1e-10 &&
-                      std::abs(gy_verify[ig] - gy_dense_h[ig]) < 1e-10 &&
-                      std::abs(gz_verify[ig] - gz_dense_h[ig]) < 1e-10);
-        all_match = all_match && match;
-        printf("  %2d  %14.6f  %14.6f  %14.6f  %s\n", ig, gx_verify[ig], gy_verify[ig],
-               gz_verify[ig], match ? "✅" : "❌");
-    }
-    if (!all_match) {
-        printf("⚠️  WARNING: gx/gy/gz GPU arrays do not match host arrays!\n");
-    }
-
     // Copy Dense grid Miller indices to GPU (for debugging/verification)
     miller_h_dense_.resize(ngm_dense_);
     miller_k_dense_.resize(ngm_dense_);
@@ -514,7 +438,6 @@ void Grid::generate_gvectors() {
     nl_d_.copy_to_host(h_nl.data());
     std::vector<double> h_gg_full(nnr_);
     gg_.copy_to_host(h_gg_full.data());
-    printf("DEBUG Grid: G=0 is at nl_d[0]=%d, gg[nl_d[0]]=%f\n", h_nl[0], h_gg_full[h_nl[0]]);
 
     // ========================================================================
     // Compute g2kin and gg_wfc arrays
@@ -604,10 +527,9 @@ void Grid::load_miller_indices_from_file(const std::string& filename) {
     file.close();
 
     if (h_host.size() != (size_t)ngw_) {
-        printf("WARN: load_miller_indices_from_file: size mismatch (file=%zu, ngw_=%d). Updating "
-               "ngw_.\n",
-               h_host.size(), ngw_);
-        ngw_ = (int)h_host.size();
+        throw std::runtime_error(
+            "load_miller_indices_from_file: size mismatch (file=" + std::to_string(h_host.size()) +
+            ", ngw_=" + std::to_string(ngw_) + ")");
     }
 
     miller_h_.resize(ngw_);
@@ -895,15 +817,6 @@ void Grid::compute_g2kin_gpu() {
                                                                 tpiba2_half, g2kin_.data(), ngw_);
 
     GPU_CHECK_KERNEL;
-
-    // DEBUG: Print first 10 g2kin values
-    std::vector<double> g2kin_host(std::min(10, ngw_));
-    CHECK(cudaMemcpy(g2kin_host.data(), g2kin_.data(), g2kin_host.size() * sizeof(double),
-                     cudaMemcpyDeviceToHost));
-    printf("DEBUG compute_g2kin: g2kin (first 10, Ha):\n");
-    for (int i = 0; i < g2kin_host.size(); ++i) {
-        printf("  g2kin[%d] = %.10f\n", i, g2kin_host[i]);
-    }
 
     // Compute gg_wfc = |G|²_physical [(1/Bohr)²]
     // This is used for kinetic energy cutoff checks: ½|G|²_physical ≤ ecutwfc
