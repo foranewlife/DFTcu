@@ -81,9 +81,12 @@ class NonSCFSolver {
      *            CRITICAL: vrs must be pre-computed and fixed before calling this function!
      * @param psi Initial wavefunctions (random or atomic orbitals), updated to converged
      * eigenstates
+     *            - If psi.num_bands() == 0: will be initialized from pseudo_data (atomic orbitals)
+     *            - If psi.num_bands() > 0: use provided wavefunctions
      * @param nelec Total number of electrons (for occupation and alpha energy)
      * @param atoms Atomic positions (needed for Ewald energy calculation)
      * @param ecutrho Dense grid energy cutoff in Rydberg (e.g., 400.0 Ry = 200.0 Ha)
+     * @param pseudo_data Pseudopotential data (for wavefunction initialization if needed)
      * @param rho_scf Input density used to construct vrs (optional, for energy calculation)
      *                - If provided: use SCF density for energy (standard DFT: LDA, GGA)
      *                - If nullptr: compute density from NSCF wavefunctions (hybrid functionals)
@@ -103,9 +106,11 @@ class NonSCFSolver {
      * @note 整个 NSCF 过程中 vrs 保持不变 (与 SCF 的关键区别)
      * @note 本函数只执行对角化和能量计算, 不更新密度或势能
      * @note 如果启用了诊断模式，会在计算过程中导出中间变量
+     * @note 对齐 QE: 波函数初始化在 solve() 内部完成 (c_bands_nscf -> init_wfc)
      */
     EnergyBreakdown solve(Hamiltonian& ham, Wavefunction& psi, double nelec,
                           std::shared_ptr<Atoms> atoms, double ecutrho,
+                          const std::vector<PseudopotentialData>* pseudo_data = nullptr,
                           const RealField* rho_scf = nullptr, const RealField* rho_core = nullptr,
                           double alpha_energy = 0.0);
 

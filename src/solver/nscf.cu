@@ -3,6 +3,8 @@
 #include <iomanip>
 #include <iostream>
 
+#include "model/pseudopotential_data.cuh"
+#include "model/wavefunction_builder.cuh"
 #include "solver/nscf.cuh"
 #include "utilities/cublas_manager.cuh"
 #include "utilities/error.cuh"
@@ -16,6 +18,7 @@ NonSCFSolver::NonSCFSolver(Grid& grid) : grid_(grid), subspace_solver_(grid) {}
 
 EnergyBreakdown NonSCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, double nelec,
                                     std::shared_ptr<Atoms> atoms, double ecutrho,
+                                    const std::vector<PseudopotentialData>* pseudo_data,
                                     const RealField* rho_scf, const RealField* rho_core,
                                     double alpha_energy) {
     std::cout << "     TRACE: entering NonSCFSolver::solve" << std::endl;
@@ -38,6 +41,66 @@ EnergyBreakdown NonSCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, double 
     //   - 计算权重和能量
     //
     // ════════════════════════════════════════════════════════════════════════════════
+
+    // ────────────────────────────────────────────────────────────────────────────────
+    // Phase 0: 波函数初始化 (对齐 QE: c_bands_nscf -> init_wfc)
+    // ────────────────────────────────────────────────────────────────────────────────
+    //
+    // 对应 QE:
+    //   c_bands_nscf() [PW/src/c_bands.f90]
+    //     └─> init_wfc(ik) [PW/src/wfcinit.f90]
+    //           └─> atomic_wfc() [PW/src/atomic_wfc.f90]
+    //
+    // DFTcu:
+    //   如果 psi.num_bands() == 0，从 pseudo_data 构建原子波函数
+    //   否则使用已提供的波函数
+    //
+    // ────────────────────────────────────────────────────────────────────────────────
+
+    if (psi.num_bands() == 0) {
+        // 需要初始化波函数
+        if (pseudo_data == nullptr || pseudo_data->empty()) {
+            throw std::invalid_argument(
+                "NonSCFSolver::solve: psi is empty but pseudo_data is not provided. "
+                "Cannot initialize wavefunctions.");
+        }
+
+        std::cout << "     TRACE: initializing wavefunctions from atomic orbitals (QE: init_wfc)"
+                  << std::endl;
+
+        // 使用 WavefunctionBuilder 从原子轨道构建初始波函数
+        WavefunctionBuilder wfc_builder(grid_, atoms);
+
+        // 添加所有原子轨道
+        for (size_t itype = 0; itype < pseudo_data->size(); ++itype) {
+            const auto& pseudo = (*pseudo_data)[itype];
+            const auto& mesh = pseudo.mesh();
+            const auto& wfcs = pseudo.atomic_wfc().wavefunctions;
+
+            for (const auto& wfc : wfcs) {
+                wfc_builder.add_atomic_orbital(itype, wfc.l, mesh.r, wfc.chi, mesh.rab, mesh.msh);
+            }
+        }
+
+        // 构建原子波函数（n_starting_wfc 个非正交波函数）
+        auto psi_atomic = wfc_builder.build(false);  // randomize_phase = false
+
+        // 重新构造 psi 为正确的大小并复制数据
+        int n_starting_wfc = psi_atomic->num_bands();
+        std::cout << "     TRACE: built " << n_starting_wfc << " atomic wavefunctions" << std::endl;
+
+        // 销毁旧的 psi 并重新构造
+        psi.~Wavefunction();
+        new (&psi) Wavefunction(grid_, n_starting_wfc, grid_.ecutwfc());
+
+        // 复制数据
+        psi.copy_from(*psi_atomic);
+
+        std::cout << "     TRACE: wavefunction initialization complete" << std::endl;
+    } else {
+        std::cout << "     TRACE: using provided wavefunctions (" << psi.num_bands() << " bands)"
+                  << std::endl;
+    }
 
     // ────────────────────────────────────────────────────────────────────────────────
     // Phase 1: c_bands_nscf - 对角化

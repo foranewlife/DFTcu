@@ -109,7 +109,7 @@ class NSCFWorkflow {
      *       3. 创建哈密顿量
      *       4. 初始化密度（原子电荷叠加）
      *       5. 执行 initialize_potentials（计算势能）
-     *       6. 初始化波函数（原子波函数叠加）
+     *       6. 保存 pseudo_data 供 Solver 使用（波函数初始化在 Solver 层完成）
      */
     NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms,
                  const std::vector<PseudopotentialData>& pseudo_data,
@@ -169,6 +169,7 @@ class NSCFWorkflow {
     Hamiltonian ham_;                                                        ///< 哈密顿量
     RealField rho_;                                                          ///< 输入密度
     Wavefunction psi_;                                                       ///< 波函数
+    std::vector<PseudopotentialData> pseudo_data_;  ///< 赝势数据（供 Solver 使用）
 
     // ════════════════════════════════════════════════════════════════════════
     // 私有辅助方法
@@ -199,12 +200,6 @@ class NSCFWorkflow {
      * 等价于 QE 的 potinit 阶段。
      */
     void initialize_potentials();
-
-    /**
-     * @brief 初始化波函数（使用原子波函数叠加）
-     * @param pseudo_data 赝势数据（包含原子波函数）
-     */
-    void initialize_wavefunction(const std::vector<PseudopotentialData>& pseudo_data);
 };
 
 }  // namespace dftcu

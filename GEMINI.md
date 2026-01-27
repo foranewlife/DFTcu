@@ -239,9 +239,10 @@ python run_nscf.py && python compare_qe.py
 |------|------|------|
 | 1 | 清理 I/O 操作 | ✅ 已完成 |
 | 2 | 重命名副作用函数 (`*_inplace`) | ✅ 已完成 |
-| 3 | 统一命名约定 (`*Operator`, `*Builder`) | 🔄 进行中 |
-| 4 | 修复依赖关系 | ⏸️ 待开始 |
-| 5 | 分离双重接口 | ⏸️ 待开
+| 3 | 统一命名约定 (`*Operator`, `*Builder`) | ✅ 已完成 |
+| 4 | 移除格式依赖后缀 (`*_from_upf`) | ✅ 已完成 |
+| 5 | 修复依赖关系（PseudopotentialData 移到 model 层，UPFParser 移到 Python 层） | ✅ 已完成 |
+| 6 | 分离双重接口（构造函数私有化） | 🔵 可选优化 |
 
 ---
 

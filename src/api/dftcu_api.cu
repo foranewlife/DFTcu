@@ -29,7 +29,6 @@
 #include "solver/gamma_utils.cuh"
 #include "solver/hamiltonian.cuh"
 #include "solver/nscf.cuh"
-#include "solver/phase0_verifier.cuh"
 #include "solver/scf.cuh"
 #include "solver/subspace_solver.cuh"
 #include "utilities/error.cuh"
@@ -968,8 +967,9 @@ PYBIND11_MODULE(_dftcu, m) {
     py::class_<dftcu::NonSCFSolver>(m, "NonSCFSolver")
         .def(py::init<dftcu::Grid&>())
         .def("solve", &dftcu::NonSCFSolver::solve, py::arg("ham"), py::arg("psi"), py::arg("nelec"),
-             py::arg("atoms"), py::arg("ecutrho"), py::arg("rho_scf") = nullptr,
-             py::arg("rho_core") = nullptr, py::arg("alpha_energy") = 0.0);
+             py::arg("atoms"), py::arg("ecutrho"), py::arg("pseudo_data") = nullptr,
+             py::arg("rho_scf") = nullptr, py::arg("rho_core") = nullptr,
+             py::arg("alpha_energy") = 0.0);
 
     py::class_<dftcu::DavidsonSolver>(m, "DavidsonSolver")
         .def(py::init<dftcu::Grid&, int, double>(), py::arg("grid"), py::arg("max_iter") = 50,
@@ -1047,18 +1047,6 @@ PYBIND11_MODULE(_dftcu, m) {
         .def("set_atomic_rho_r", &dftcu::DensityBuilder::set_atomic_rho_r)
         .def("build_density", &dftcu::DensityBuilder::build_density)
         .def("set_gcut", &dftcu::DensityBuilder::set_gcut, py::arg("gcut"));
-
-    // Phase 0 Verifier
-    py::class_<dftcu::VerificationResult>(m, "VerificationResult")
-        .def(py::init<>())
-        .def_readwrite("success", &dftcu::VerificationResult::success)
-        .def_readwrite("h_sub_error", &dftcu::VerificationResult::h_sub_error)
-        .def_readwrite("s_sub_error", &dftcu::VerificationResult::s_sub_error);
-
-    py::class_<dftcu::Phase0Verifier>(m, "Phase0Verifier")
-        .def(py::init<dftcu::Grid&>())
-        .def("verify", &dftcu::Phase0Verifier::verify, py::arg("wfc_file"), py::arg("s_ref_file"),
-             py::arg("nbands"), py::arg("ecutwfc"));
 
     // ════════════════════════════════════════════════════════════════════════
     // Workflow Layer - 高级业务流程封装

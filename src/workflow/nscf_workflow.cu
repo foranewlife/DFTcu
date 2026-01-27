@@ -47,7 +47,8 @@ NSCFWorkflow::NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms,
       config_(config),
       ham_(grid),
       rho_(grid, 1),
-      psi_(grid, 1, grid.ecutwfc()) {  // ← 临时初始化为 1 band，稍后会重新赋值
+      psi_(grid, 0, grid.ecutwfc()),  // ← 初始化为 0 bands，在 Solver 层初始化
+      pseudo_data_(pseudo_data) {     // ← 保存 pseudo_data
     // ════════════════════════════════════════════════════════════════════════
     // Step 1: 验证配置
     // ════════════════════════════════════════════════════════════════════════
@@ -74,9 +75,9 @@ NSCFWorkflow::NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms,
     initialize_potentials();
 
     // ════════════════════════════════════════════════════════════════════════
-    // Step 6: 初始化波函数（使用原子波函数叠加）
+    // Step 6: 波函数初始化移到 NonSCFSolver::solve() 中完成（对齐 QE）
     // ════════════════════════════════════════════════════════════════════════
-    initialize_wavefunction(pseudo_data);
+    // 注意：psi_ 保持为 0 bands，在 execute() 调用 solver.solve() 时初始化
 }
 
 NSCFWorkflow::NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms, const Hamiltonian& ham,
@@ -122,9 +123,13 @@ EnergyBreakdown NSCFWorkflow::execute() {
     // ════════════════════════════════════════════════════════════════════════
     // Step 2: 执行 NSCF 计算
     // ════════════════════════════════════════════════════════════════════════
-    // 注意：ham_ 的势能已经在构造函数中通过 initialize_potentials() 计算好了
+    // 注意：
+    // 1. ham_ 的势能已经在构造函数中通过 initialize_potentials() 计算好了
+    // 2. psi_ 为空（0 bands），会在 solver.solve() 内部从 pseudo_data_ 初始化
+    // 3. 传递 &pseudo_data_ 给 Solver，让其负责波函数初始化（对齐 QE）
     EnergyBreakdown result =
         solver.solve(ham_, psi_, config_.nelec, atoms_, grid_.ecutrho() * 2.0,  // Ha → Ry
+                     &pseudo_data_,  // ← 传递赝势数据给 Solver
                      &rho_);
 
     return result;
@@ -235,40 +240,6 @@ void NSCFWorkflow::initialize_potentials() {
     // ════════════════════════════════════════════════════════════════════════
     // 注意：NSCF 中此函数只调用一次，之后 vrs 保持不变
     ham_.update_potentials_inplace(rho_);
-}
-
-void NSCFWorkflow::initialize_wavefunction(const std::vector<PseudopotentialData>& pseudo_data) {
-    // ════════════════════════════════════════════════════════════════════════
-    // 使用 WavefunctionBuilder 从原子波函数构建初始波函数
-    // ════════════════════════════════════════════════════════════════════════
-    WavefunctionBuilder factory(grid_, atoms_);
-
-    // 添加所有原子轨道
-    for (size_t itype = 0; itype < pseudo_data.size(); ++itype) {
-        const auto& pseudo = pseudo_data[itype];
-        const auto& mesh = pseudo.mesh();
-        const auto& wfcs = pseudo.atomic_wfc().wavefunctions;
-
-        for (const auto& wfc : wfcs) {
-            factory.add_atomic_orbital(itype, wfc.l, mesh.r, wfc.chi, mesh.rab, mesh.msh);
-        }
-    }
-
-    // 构建原子波函数（n_starting_wfc 个非正交波函数）
-    auto psi_atomic = factory.build(false);  // randomize_phase = false
-
-    // ════════════════════════════════════════════════════════════════════════
-    // 重新构造 psi_ 为正确的大小并复制数据
-    // ════════════════════════════════════════════════════════════════════════
-    // 注意：psi_atomic 有 n_starting_wfc 个 band（例如 8 个）
-    //       子空间对角化会在 NonSCFSolver::solve 中将其降维到 config_.nbands 个本征态
-
-    // 销毁旧的 psi_ 并重新构造
-    psi_.~Wavefunction();
-    new (&psi_) Wavefunction(grid_, psi_atomic->num_bands(), grid_.ecutwfc());
-
-    // 复制数据
-    psi_.copy_from(*psi_atomic);
 }
 
 }  // namespace dftcu
