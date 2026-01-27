@@ -11,62 +11,6 @@
 namespace dftcu {
 
 /**
- * @brief Diagnostic options for NonSCFSolver
- *
- * 诊断模式可以导出 NSCF 计算过程中的中间变量，用于与 QE 对比验证。
- * 所有导出数据格式与 QE 的 dftcu_debug_*.txt 文件兼容。
- */
-struct NonSCFDiagnostics {
-    bool enabled = false;          ///< 是否启用诊断模式
-    std::string output_dir = ".";  ///< 输出目录
-
-    // Phase 1: Davidson 对角化
-    bool dump_psi_initial = false;  ///< 导出初始波函数 ψ(G)
-    bool dump_hpsi = false;         ///< 导出 H|ψ> (完整哈密顿量)
-    bool dump_h_subspace = false;   ///< 导出 H_sub 矩阵
-    bool dump_s_subspace = false;   ///< 导出 S_sub 矩阵
-    bool dump_eigenvalues = false;  ///< 导出本征值
-
-    // Phase 2: 占据数
-    bool dump_occupations = false;  ///< 导出占据数
-
-    // Phase 3: 密度
-    bool dump_density = false;  ///< 导出密度 ρ(r)
-
-    // Phase 4: 能量
-    bool dump_energy_breakdown = false;  ///< 导出能量分解
-
-    // Phase 5: 势能
-    bool dump_v_eff = false;  ///< 导出有效势能 V_eff(r)
-
-    /**
-     * @brief 启用所有诊断输出（用于完整验证）
-     */
-    void enable_all() {
-        enabled = true;
-        dump_psi_initial = true;
-        dump_hpsi = true;
-        dump_h_subspace = true;
-        dump_s_subspace = true;
-        dump_eigenvalues = true;
-        dump_occupations = true;
-        dump_density = true;
-        dump_energy_breakdown = true;
-        dump_v_eff = true;
-    }
-
-    /**
-     * @brief 启用关键诊断输出（用于快速验证）
-     */
-    void enable_essential() {
-        enabled = true;
-        dump_psi_initial = true;
-        dump_eigenvalues = true;
-        dump_energy_breakdown = true;
-    }
-};
-
-/**
  * @brief Non-Self-Consistent Field (NSCF) solver for Kohn-Sham DFT
  *
  * NSCF 计算流程 (基于 QE non_scf.f90):
@@ -113,13 +57,8 @@ struct NonSCFDiagnostics {
  * ham.update_potentials(rho_scf);  // vrs = V_ps + V_H[ρ] + V_xc[ρ]
  * ham.set_nonlocal(nl_pseudo);     // 设置非局域赝势
  *
- * // Step 4: 运行 NSCF 计算 (启用诊断模式)
+ * // Step 4: 运行 NSCF 计算
  * NonSCFSolver nscf(grid);
- * NonSCFDiagnostics diag;
- * diag.enable_all();  // 导出所有中间变量
- * diag.output_dir = "nscf_diagnostics";
- * nscf.enable_diagnostics(diag);
- *
  * EnergyBreakdown result = nscf.solve(ham, psi, nelec, atoms, ecutrho, &rho_scf);
  *
  * // Step 5: 输出结果
@@ -134,16 +73,6 @@ class NonSCFSolver {
   public:
     NonSCFSolver(Grid& grid);
     ~NonSCFSolver() = default;
-
-    /**
-     * @brief Enable diagnostic mode for NSCF calculation
-     *
-     * 启用诊断模式后，solve() 会在关键点导出中间变量到文件，
-     * 格式与 QE 的 dftcu_debug_*.txt 兼容，用于逐步验证。
-     *
-     * @param diagnostics Diagnostic options
-     */
-    void enable_diagnostics(const NonSCFDiagnostics& diagnostics);
 
     /**
      * @brief Run NSCF calculation (equivalent to QE's non_scf + c_bands_nscf)
@@ -183,7 +112,6 @@ class NonSCFSolver {
   private:
     Grid& grid_;
     SubspaceSolver subspace_solver_;
-    NonSCFDiagnostics diagnostics_;  ///< Diagnostic options
 
     /**
      * @brief Compute occupation numbers for insulator (equivalent to QE weights.f90)
@@ -201,46 +129,6 @@ class NonSCFSolver {
      */
     void compute_weights_insulator(int nbands, double nelec, const std::vector<double>& eigenvalues,
                                    std::vector<double>& occupations, double& ef);
-
-    // ════════════════════════════════════════════════════════════════════════
-    // Diagnostic helper functions (导出中间变量到文件)
-    // ════════════════════════════════════════════════════════════════════════
-
-    /**
-     * @brief Dump wavefunction to file (QE format)
-     * 格式: 每行一个 G-vector，实部和虚部，所有能带
-     */
-    void dump_wavefunction(const std::string& filename, const Wavefunction& psi);
-
-    /**
-     * @brief Dump eigenvalues to file (QE format)
-     * 格式: 每行一个本征值 (Hartree)
-     */
-    void dump_eigenvalues_to_file(const std::string& filename, const std::vector<double>& evals);
-
-    /**
-     * @brief Dump real matrix to file (QE format)
-     * 格式: 行优先，每行所有列
-     */
-    void dump_real_matrix(const std::string& filename, int n, const double* matrix);
-
-    /**
-     * @brief Dump occupations to file
-     * 格式: 每行一个占据数
-     */
-    void dump_occupations_to_file(const std::string& filename, const std::vector<double>& occs);
-
-    /**
-     * @brief Dump energy breakdown to file
-     * 格式: 键值对
-     */
-    void dump_energy(const std::string& filename, const EnergyBreakdown& energy);
-
-    /**
-     * @brief Dump effective potential to file (QE format)
-     * 格式: 第一行是点数，后面每行一个值 (Hartree)
-     */
-    void dump_v_eff(const std::string& filename, const RealField& v_eff);
 };
 
 }  // namespace dftcu

@@ -14,17 +14,6 @@ namespace dftcu {
 
 NonSCFSolver::NonSCFSolver(Grid& grid) : grid_(grid), subspace_solver_(grid) {}
 
-void NonSCFSolver::enable_diagnostics(const NonSCFDiagnostics& diagnostics) {
-    diagnostics_ = diagnostics;
-
-    // 创建输出目录（如果不存在）
-    if (diagnostics_.enabled && !diagnostics_.output_dir.empty()) {
-        mkdir(diagnostics_.output_dir.c_str(), 0755);
-        std::cout << "     [Diagnostics] Output directory: " << diagnostics_.output_dir
-                  << std::endl;
-    }
-}
-
 EnergyBreakdown NonSCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, double nelec,
                                     std::shared_ptr<Atoms> atoms, double ecutrho,
                                     const RealField* rho_scf, const RealField* rho_core,
@@ -69,15 +58,6 @@ EnergyBreakdown NonSCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, double 
     //
     // ────────────────────────────────────────────────────────────────────────────────
 
-    // ────────────────────────────────────────────────────────────────────────────────
-    // Diagnostic: 导出初始波函数 (Phase 0)
-    // ────────────────────────────────────────────────────────────────────────────────
-    if (diagnostics_.enabled && diagnostics_.dump_psi_initial) {
-        std::string filename = diagnostics_.output_dir + "/dftcu_psi_initial.txt";
-        dump_wavefunction(filename, psi);
-        std::cout << "     [Diagnostics] Dumped initial wavefunction to " << filename << std::endl;
-    }
-
     std::cout << "     TRACE: calling subspace_solver_.solve_direct (Davidson iteration)"
               << std::endl;
     std::vector<double> eigenvalues_all = subspace_solver_.solve_direct(ham, psi);
@@ -103,15 +83,6 @@ EnergyBreakdown NonSCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, double 
     }
 
     // ────────────────────────────────────────────────────────────────────────────────
-    // Diagnostic: 导出本征值 (Phase 1 结果)
-    // ────────────────────────────────────────────────────────────────────────────────
-    if (diagnostics_.enabled && diagnostics_.dump_eigenvalues) {
-        std::string filename = diagnostics_.output_dir + "/dftcu_eigenvalues.txt";
-        dump_eigenvalues_to_file(filename, eigenvalues);
-        std::cout << "     [Diagnostics] Dumped eigenvalues to " << filename << std::endl;
-    }
-
-    // ────────────────────────────────────────────────────────────────────────────────
     // Phase 2: weights - 计算占据数和费米能级
     // ────────────────────────────────────────────────────────────────────────────────
     //
@@ -131,15 +102,6 @@ EnergyBreakdown NonSCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, double 
 
     std::cout << "     TRACE: calling compute_weights_insulator" << std::endl;
     compute_weights_insulator(nbands, nelec, eigenvalues, occupations, ef);
-
-    // ────────────────────────────────────────────────────────────────────────────────
-    // Diagnostic: 导出占据数 (Phase 2 结果)
-    // ────────────────────────────────────────────────────────────────────────────────
-    if (diagnostics_.enabled && diagnostics_.dump_occupations) {
-        std::string filename = diagnostics_.output_dir + "/dftcu_occupations.txt";
-        dump_occupations_to_file(filename, occupations);
-        std::cout << "     [Diagnostics] Dumped occupations to " << filename << std::endl;
-    }
 
     // ────────────────────────────────────────────────────────────────────────────────
     // Phase 3: 选择用于能量计算的密度
@@ -225,20 +187,6 @@ EnergyBreakdown NonSCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, double 
     // ────────────────────────────────────────────────────────────────────────────────
     // Diagnostic: 导出能量分解 (Phase 4 结果)
     // ────────────────────────────────────────────────────────────────────────────────
-    if (diagnostics_.enabled && diagnostics_.dump_energy_breakdown) {
-        std::string filename = diagnostics_.output_dir + "/dftcu_energy_breakdown.txt";
-        dump_energy(filename, breakdown);
-        std::cout << "     [Diagnostics] Dumped energy breakdown to " << filename << std::endl;
-    }
-
-    // ────────────────────────────────────────────────────────────────────────────────
-    // Diagnostic: 导出有效势能 (Phase 5)
-    // ────────────────────────────────────────────────────────────────────────────────
-    if (diagnostics_.enabled && diagnostics_.dump_v_eff) {
-        std::string filename = diagnostics_.output_dir + "/dftcu_v_eff.txt";
-        dump_v_eff(filename, ham.v_loc());
-        std::cout << "     [Diagnostics] Dumped v_eff to " << filename << std::endl;
-    }
 
     return breakdown;
 }
@@ -262,157 +210,6 @@ void NonSCFSolver::compute_weights_insulator(int nbands, double nelec,
     } else {
         ef = -1e10;
     }
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// Diagnostic Helper Functions - 导出中间变量到文件（QE 格式兼容）
-// ════════════════════════════════════════════════════════════════════════════════
-
-void NonSCFSolver::dump_wavefunction(const std::string& filename, const Wavefunction& psi) {
-    std::ofstream ofs(filename);
-    if (!ofs.is_open()) {
-        std::cerr << "     [Diagnostics] WARNING: Failed to open " << filename << std::endl;
-        return;
-    }
-
-    ofs << std::scientific << std::setprecision(16);
-
-    int npw = psi.num_pw();
-    int nbands = psi.num_bands();
-    int nnr = grid_.nnr();  // Internal storage size (FFT grid)
-
-    // QE 格式: 每行一个 G-vector，所有能带的系数
-    // Format: ig  Re[ψ(G,band1)]  Im[ψ(G,band1)]  Re[ψ(G,band2)]  Im[ψ(G,band2)]  ...
-    ofs << "# Wavefunction: npw=" << npw << " nbands=" << nbands << "\n";
-    ofs << "# Format: ig  Re[psi(:,1)]  Im[psi(:,1)]  Re[psi(:,2)]  Im[psi(:,2)]  ...\n";
-
-    // 从 GPU 复制数据到 CPU（完整 FFT grid 大小）
-    std::vector<std::complex<double>> psi_host(nnr * nbands);
-    psi.copy_to_host(psi_host.data());
-
-    // 获取 nl_d 映射（G-vector 到 FFT grid 的索引）
-    std::vector<int> nl_d_host(npw);
-    CHECK(cudaMemcpy(nl_d_host.data(), grid_.nl_d(), npw * sizeof(int), cudaMemcpyDeviceToHost));
-
-    for (int ig = 0; ig < npw; ++ig) {
-        ofs << std::setw(8) << ig + 1;  // Fortran 1-based indexing
-        for (int ib = 0; ib < nbands; ++ib) {
-            int ifft = nl_d_host[ig];   // Map G-vector to FFT grid index
-            int idx = ib * nnr + ifft;  // Use nnr as leading dimension
-            ofs << "  " << std::setw(24) << psi_host[idx].real() << "  " << std::setw(24)
-                << psi_host[idx].imag();
-        }
-        ofs << "\n";
-    }
-
-    ofs.close();
-}
-
-void NonSCFSolver::dump_eigenvalues_to_file(const std::string& filename,
-                                            const std::vector<double>& evals) {
-    std::ofstream ofs(filename);
-    if (!ofs.is_open()) {
-        std::cerr << "     [Diagnostics] WARNING: Failed to open " << filename << std::endl;
-        return;
-    }
-
-    ofs << std::scientific << std::setprecision(16);
-    ofs << "# Eigenvalues (Hartree)\n";
-    ofs << "# nbands = " << evals.size() << "\n";
-
-    for (size_t i = 0; i < evals.size(); ++i) {
-        ofs << std::setw(5) << i + 1 << "  " << std::setw(24) << evals[i] << "\n";
-    }
-
-    ofs.close();
-}
-
-void NonSCFSolver::dump_real_matrix(const std::string& filename, int n, const double* matrix) {
-    std::ofstream ofs(filename);
-    if (!ofs.is_open()) {
-        std::cerr << "     [Diagnostics] WARNING: Failed to open " << filename << std::endl;
-        return;
-    }
-
-    ofs << std::scientific << std::setprecision(16);
-    ofs << "# Real symmetric matrix: n = " << n << "\n";
-
-    // 行优先输出（每行所有列）
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            ofs << std::setw(24) << matrix[i * n + j];
-            if (j < n - 1)
-                ofs << "  ";
-        }
-        ofs << "\n";
-    }
-
-    ofs.close();
-}
-
-void NonSCFSolver::dump_occupations_to_file(const std::string& filename,
-                                            const std::vector<double>& occs) {
-    std::ofstream ofs(filename);
-    if (!ofs.is_open()) {
-        std::cerr << "     [Diagnostics] WARNING: Failed to open " << filename << std::endl;
-        return;
-    }
-
-    ofs << std::scientific << std::setprecision(16);
-    ofs << "# Occupation numbers\n";
-    ofs << "# nbands = " << occs.size() << "\n";
-
-    for (size_t i = 0; i < occs.size(); ++i) {
-        ofs << std::setw(5) << i + 1 << "  " << std::setw(24) << occs[i] << "\n";
-    }
-
-    ofs.close();
-}
-
-void NonSCFSolver::dump_energy(const std::string& filename, const EnergyBreakdown& energy) {
-    std::ofstream ofs(filename);
-    if (!ofs.is_open()) {
-        std::cerr << "     [Diagnostics] WARNING: Failed to open " << filename << std::endl;
-        return;
-    }
-
-    ofs << std::scientific << std::setprecision(16);
-    ofs << "# Energy Breakdown (Hartree)\n";
-    ofs << "eband   " << std::setw(24) << energy.eband << "\n";
-    ofs << "deband  " << std::setw(24) << energy.deband << "\n";
-    ofs << "ehart   " << std::setw(24) << energy.ehart << "\n";
-    ofs << "etxc    " << std::setw(24) << energy.etxc << "\n";
-    ofs << "eewld   " << std::setw(24) << energy.eewld << "\n";
-    ofs << "alpha   " << std::setw(24) << energy.alpha << "\n";
-    ofs << "etot    " << std::setw(24) << energy.etot << "\n";
-
-    ofs.close();
-}
-
-void NonSCFSolver::dump_v_eff(const std::string& filename, const RealField& v_eff) {
-    std::ofstream ofs(filename);
-    if (!ofs.is_open()) {
-        std::cerr << "     [Diagnostics] WARNING: Failed to open " << filename << std::endl;
-        return;
-    }
-
-    ofs << std::scientific << std::setprecision(16);
-
-    // 获取实空间网格点数
-    size_t nnr = v_eff.size();
-
-    // 复制数据到 host
-    std::vector<double> v_eff_host(nnr);
-    CHECK(
-        cudaMemcpy(v_eff_host.data(), v_eff.data(), nnr * sizeof(double), cudaMemcpyDeviceToHost));
-
-    // QE 格式：第一行是点数，后面每行一个值
-    ofs << nnr << "\n";
-    for (size_t i = 0; i < nnr; ++i) {
-        ofs << "  " << v_eff_host[i] << "\n";
-    }
-
-    ofs.close();
 }
 
 }  // namespace dftcu

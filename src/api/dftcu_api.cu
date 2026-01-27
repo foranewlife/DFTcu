@@ -955,26 +955,9 @@ PYBIND11_MODULE(_dftcu, m) {
         },
         "Pure logic test for S_sub projection using packed plane-wave coefficients");
 
-    // NonSCF Diagnostics
-    py::class_<dftcu::NonSCFDiagnostics>(m, "NonSCFDiagnostics")
-        .def(py::init<>())
-        .def_readwrite("enabled", &dftcu::NonSCFDiagnostics::enabled)
-        .def_readwrite("output_dir", &dftcu::NonSCFDiagnostics::output_dir)
-        .def_readwrite("dump_psi_initial", &dftcu::NonSCFDiagnostics::dump_psi_initial)
-        .def_readwrite("dump_hpsi", &dftcu::NonSCFDiagnostics::dump_hpsi)
-        .def_readwrite("dump_h_subspace", &dftcu::NonSCFDiagnostics::dump_h_subspace)
-        .def_readwrite("dump_s_subspace", &dftcu::NonSCFDiagnostics::dump_s_subspace)
-        .def_readwrite("dump_eigenvalues", &dftcu::NonSCFDiagnostics::dump_eigenvalues)
-        .def_readwrite("dump_occupations", &dftcu::NonSCFDiagnostics::dump_occupations)
-        .def_readwrite("dump_density", &dftcu::NonSCFDiagnostics::dump_density)
-        .def_readwrite("dump_energy_breakdown", &dftcu::NonSCFDiagnostics::dump_energy_breakdown)
-        .def("enable_all", &dftcu::NonSCFDiagnostics::enable_all)
-        .def("enable_essential", &dftcu::NonSCFDiagnostics::enable_essential);
-
     // NonSCF Solver
     py::class_<dftcu::NonSCFSolver>(m, "NonSCFSolver")
         .def(py::init<dftcu::Grid&>())
-        .def("enable_diagnostics", &dftcu::NonSCFSolver::enable_diagnostics, py::arg("diagnostics"))
         .def("solve", &dftcu::NonSCFSolver::solve, py::arg("ham"), py::arg("psi"), py::arg("nelec"),
              py::arg("atoms"), py::arg("ecutrho"), py::arg("rho_scf") = nullptr,
              py::arg("rho_core") = nullptr, py::arg("alpha_energy") = 0.0);
@@ -1077,9 +1060,6 @@ PYBIND11_MODULE(_dftcu, m) {
         .def(py::init<>())
         .def_readwrite("nbands", &dftcu::NSCFWorkflowConfig::nbands, "能带数量")
         .def_readwrite("nelec", &dftcu::NSCFWorkflowConfig::nelec, "电子数")
-        .def_readwrite("enable_diagnostics", &dftcu::NSCFWorkflowConfig::enable_diagnostics,
-                       "启用诊断模式")
-        .def_readwrite("output_dir", &dftcu::NSCFWorkflowConfig::output_dir, "输出目录（诊断模式）")
         .def("validate", &dftcu::NSCFWorkflowConfig::validate, py::arg("grid"),
              "验证配置的物理合理性");
 
@@ -1098,8 +1078,6 @@ PYBIND11_MODULE(_dftcu, m) {
             config = dftcu.NSCFWorkflowConfig()
             config.nbands = 4
             config.nelec = 8.0
-            config.enable_diagnostics = True
-            config.output_dir = "nscf_output"
 
             workflow = dftcu.NSCFWorkflow(
                 grid, atoms, pseudo_data, config

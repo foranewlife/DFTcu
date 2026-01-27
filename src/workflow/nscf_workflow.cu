@@ -33,11 +33,6 @@ void NSCFWorkflowConfig::validate(const Grid& grid) const {
         throw ConfigurationError("nelec (" + std::to_string(nelec) + ") 超过最大容纳电子数 (" +
                                  std::to_string(max_electrons) + " = nbands * 2)");
     }
-
-    // 4. 检查输出目录（如果启用诊断模式）
-    if (enable_diagnostics && output_dir.empty()) {
-        throw ConfigurationError("启用诊断模式时，output_dir 不能为空");
-    }
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -125,17 +120,7 @@ EnergyBreakdown NSCFWorkflow::execute() {
     NonSCFSolver solver(grid_);
 
     // ════════════════════════════════════════════════════════════════════════
-    // Step 2: 配置诊断模式（如果启用）
-    // ════════════════════════════════════════════════════════════════════════
-    if (config_.enable_diagnostics) {
-        NonSCFDiagnostics diag;
-        diag.enable_all();
-        diag.output_dir = config_.output_dir;
-        solver.enable_diagnostics(diag);
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // Step 3: 执行 NSCF 计算
+    // Step 2: 执行 NSCF 计算
     // ════════════════════════════════════════════════════════════════════════
     // 注意：ham_ 的势能已经在构造函数中通过 potinit() 计算好了
     EnergyBreakdown result =
