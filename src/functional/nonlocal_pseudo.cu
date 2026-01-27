@@ -283,17 +283,6 @@ void NonLocalPseudo::update_projectors(const Atoms& atoms) {
             grid_.synchronize();
         }
 
-        // DEBUG: Print D_ij matrix for first atom type
-        if (type == 0) {
-            printf("[DEBUG D_ij] D_ij matrix (type=%d, size=%dx%d, in Hartree after ×0.5):\n", type,
-                   n_radial, n_radial);
-            for (int i = 0; i < std::min(4, n_radial); ++i) {
-                for (int j = 0; j < std::min(4, n_radial); ++j) {
-                    printf("  D[%d,%d] = %.10e\n", i, j, d_ij_[type][i][j] * 0.5);
-                }
-            }
-        }
-
         for (int nb = 0; nb < n_radial; ++nb) {
             int l1 = l_list_[type][nb];
             for (int mb = 0; mb < n_radial; ++mb) {
@@ -346,28 +335,6 @@ void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
     }
     grid_.synchronize();
 
-    // DEBUG: Export beta_packed for comparison with QE vkb
-    static bool beta_exported = false;
-    if (!beta_exported) {
-        std::vector<gpufftComplex> h_beta(npw * num_projectors_);
-        beta_packed.copy_to_host(h_beta.data());
-
-        FILE* fp = fopen("dftcu_beta_packed.txt", "w");
-        if (fp) {
-            fprintf(fp, "# DFTcu: beta_packed(npw, num_projectors)\n");
-            fprintf(fp, "# Format: ig iproj Re Im\n");
-            for (int ip = 0; ip < num_projectors_; ++ip) {
-                for (int ig = 0; ig < npw; ++ig) {
-                    fprintf(fp, "%5d %5d %25.16e %25.16e\n", ig + 1, ip + 1,
-                            h_beta[ip * npw + ig].x, h_beta[ip * npw + ig].y);
-                }
-            }
-            fclose(fp);
-            printf("[DEBUG] Exported beta_packed to dftcu_beta_packed.txt\n");
-        }
-        beta_exported = true;
-    }
-
     // Step 2: Pack wavefunctions from FFT grid (nnr) to compact array (npw)
     GPU_Vector<gpufftComplex> psi_packed(npw * nb);
 
@@ -404,19 +371,6 @@ void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
                     &beta_zero_d, becp_real.data(),
                     num_projectors_));  // C: (num_projectors, nb), ldc=num_projectors
 
-    // DEBUG: Print becp after DGEMM, before G=0 correction (first band only)
-    int debug_count = std::min(8, num_projectors_);
-    if (debug_count > 0) {
-        std::vector<double> h_becp_all(num_projectors_ * nb);
-        becp_real.copy_to_host(h_becp_all.data(), grid_.stream());
-        grid_.synchronize();
-        printf("[DEBUG becp] After DGEMM (before G=0 correction, first %d projectors, band 0):\n",
-               debug_count);
-        for (int i = 0; i < debug_count; ++i) {
-            printf("  becp[%d,0] = %.10e\n", i, h_becp_all[i]);
-        }
-    }
-
     // Step 4: Subtract G=0 overcounting (gstart=2 means G=0 exists)
     // becp -= beta(G=0) * psi(G=0)
     int gstart = grid_.gstart();  // 2 if G=0 exists (Gamma-only), 1 otherwise
@@ -432,18 +386,6 @@ void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
                        2 * npw,            // x: beta_real[0::2*npw] (stride 2*npw, starting at 0)
                        psi_real, 2 * npw,  // y: psi_real[0::2*npw] (stride 2*npw, starting at 0)
                        becp_real.data(), num_projectors_));
-
-        // DEBUG: Print becp after G=0 correction
-        if (debug_count > 0) {
-            std::vector<double> h_becp_all_after(num_projectors_ * nb);
-            becp_real.copy_to_host(h_becp_all_after.data(), grid_.stream());
-            grid_.synchronize();
-            printf("[DEBUG becp] After G=0 correction (first %d projectors, band 0):\n",
-                   debug_count);
-            for (int i = 0; i < debug_count; ++i) {
-                printf("  becp[%d,0] = %.10e\n", i, h_becp_all_after[i]);
-            }
-        }
     }
 
     // Step 5: Convert becp from real to complex (imaginary part = 0 for Gamma-only)
@@ -506,54 +448,12 @@ void NonLocalPseudo::apply(Wavefunction& psi, Wavefunction& h_psi) {
     double alpha_vnl = 1.0;
     double beta_vnl = 0.0;
 
-    // DEBUG: Check beta_packed values (all 8 projectors, G=0 only)
-    std::vector<cuDoubleComplex> h_beta_g0(num_projectors_);
-    for (int iproj = 0; iproj < num_projectors_; ++iproj) {
-        CHECK(cudaMemcpy(&h_beta_g0[iproj], beta_packed.data() + iproj * npw,
-                         sizeof(cuDoubleComplex), cudaMemcpyDeviceToHost));
-    }
-    printf("[DEBUG V_NL] beta_packed at G=0 (all 8 projectors):\n");
-    for (int i = 0; i < num_projectors_; ++i) {
-        printf("  beta[0,proj=%d] = (%.10e, %.10e)\n", i, h_beta_g0[i].x, h_beta_g0[i].y);
-    }
-
-    // DEBUG: Check dps_real values (all 8 projectors, band 0)
-    std::vector<double> h_dps_all(num_projectors_ * nb);
-    dps_real.copy_to_host(h_dps_all.data(), grid_.stream());
-    grid_.synchronize();
-    printf("[DEBUG V_NL] dps_real (all 8 projectors, band 0):\n");
-    for (int i = 0; i < num_projectors_; ++i) {
-        // dps_real is (num_projectors, nb) in column-major
-        printf("  dps[proj=%d,band=0] = %.10e\n", i, h_dps_all[i]);
-    }
-
-    // Manual check: compute vnl[0,0] = Σ_i beta[0,i] * dps[i,0]
-    double vnl_g0_manual = 0.0;
-    for (int i = 0; i < num_projectors_; ++i) {
-        vnl_g0_manual += h_beta_g0[i].x * h_dps_all[i];  // Real part only for G=0
-    }
-    printf("[DEBUG V_NL] Manual vnl[G=0,band=0] = %.10e\n", vnl_g0_manual);
-
-    printf("[DEBUG V_NL] Final DGEMM:\n");
-    printf("  beta_real: (%d, %d), lda=%d\n", 2 * npw, num_projectors_, 2 * npw);
-    printf("  dps_real: (%d, %d), ldb=%d\n", num_projectors_, nb, num_projectors_);
-    printf("  vnl_real: (%d, %d), ldc=%d\n", 2 * npw, nb, 2 * npw);
-
     CUBLAS_SAFE_CALL(cublasDgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, 2 * npw, nb,
                                  num_projectors_,  // m, n, k (treating complex as real)
                                  &alpha_vnl, beta_real_final,
                                  2 * npw,                           // A: (2*npw, num_projectors)
                                  dps_real.data(), num_projectors_,  // B: (num_projectors, nb)
                                  &beta_vnl, vnl_real, 2 * npw));    // C: (2*npw, nb)
-
-    // DEBUG: Check vnl_packed values
-    std::vector<cuDoubleComplex> h_vnl_check(std::min(10, npw));
-    CHECK(cudaMemcpy(h_vnl_check.data(), vnl_packed.data(),
-                     h_vnl_check.size() * sizeof(cuDoubleComplex), cudaMemcpyDeviceToHost));
-    printf("[DEBUG V_NL] vnl_packed after DGEMM (band 0, first 10):\n");
-    for (size_t i = 0; i < h_vnl_check.size(); ++i) {
-        printf("  [%zu] = (%.6e, %.6e)\n", i, h_vnl_check[i].x, h_vnl_check[i].y);
-    }
 
     // Scatter V_NL|ψ> from compact (npw) to FFT grid (nnr) and accumulate to h_psi
     for (int ib = 0; ib < nb; ++ib) {
