@@ -35,5 +35,5 @@ task:
   nscf:
     diagonalization: davidson
     diago_thr: 1.0e-10
-  outdir: ./output
+  outdir: ./nscf_output
   verbosity: high

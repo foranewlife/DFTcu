@@ -98,7 +98,6 @@ class NSCFWorkflow {
      * @param grid Grid 对象（引用，外部管理生命周期）
      * @param atoms Atoms 对象（共享指针）
      * @param pseudo_data 赝势数据（所有原子类型）
-     * @param rho_data 输入密度数据（e/Bohr³，flat array）
      * @param config NSCF 配置
      *
      * @throws ConfigurationError 如果配置不合理
@@ -108,12 +107,13 @@ class NSCFWorkflow {
      *       1. 验证配置
      *       2. 创建赝势对象
      *       3. 创建哈密顿量
-     *       4. 执行 potinit（计算势能）
-     *       5. 初始化波函数
+     *       4. 初始化密度（原子电荷叠加）
+     *       5. 执行 potinit（计算势能）
+     *       6. 初始化波函数（原子波函数叠加）
      */
     NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms,
                  const std::vector<PseudopotentialData>& pseudo_data,
-                 const std::vector<double>& rho_data, const NSCFWorkflowConfig& config);
+                 const NSCFWorkflowConfig& config);
 
     /**
      * @brief 构造 NSCF Workflow (接收已组装好的哈密顿量和波函数)
@@ -186,15 +186,21 @@ class NSCFWorkflow {
     void initialize_hamiltonian();
 
     /**
-     * @brief 执行 potinit（从密度计算势能）
-     * @param rho_data 输入密度数据（e/Bohr³）
+     * @brief 初始化密度（原子电荷叠加）
+     * @param pseudo_data 赝势数据（包含原子密度）
      */
-    void potinit(const std::vector<double>& rho_data);
+    void initialize_density(const std::vector<PseudopotentialData>& pseudo_data);
 
     /**
-     * @brief 初始化波函数（随机初始化）
+     * @brief 执行 potinit（从密度计算势能）
      */
-    void initialize_wavefunction();
+    void potinit();
+
+    /**
+     * @brief 初始化波函数（使用原子波函数叠加）
+     * @param pseudo_data 赝势数据（包含原子波函数）
+     */
+    void initialize_wavefunction(const std::vector<PseudopotentialData>& pseudo_data);
 };
 
 }  // namespace dftcu

@@ -1,5 +1,7 @@
 #include "functional/hartree.cuh"
 #include "functional/xc/lda_pz.cuh"
+#include "model/density_factory.cuh"
+#include "model/wavefunction_factory.cuh"
 #include "utilities/error.cuh"
 #include "workflow/nscf_workflow.cuh"
 
@@ -44,13 +46,13 @@ void NSCFWorkflowConfig::validate(const Grid& grid) const {
 
 NSCFWorkflow::NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms,
                            const std::vector<PseudopotentialData>& pseudo_data,
-                           const std::vector<double>& rho_data, const NSCFWorkflowConfig& config)
+                           const NSCFWorkflowConfig& config)
     : grid_(grid),
       atoms_(atoms),
       config_(config),
       ham_(grid),
       rho_(grid, 1),
-      psi_(grid, config.nbands, grid.ecutwfc()) {
+      psi_(grid, 1, grid.ecutwfc()) {  // ← 临时初始化为 1 band，稍后会重新赋值
     // ════════════════════════════════════════════════════════════════════════
     // Step 1: 验证配置
     // ════════════════════════════════════════════════════════════════════════
@@ -67,14 +69,19 @@ NSCFWorkflow::NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms,
     initialize_hamiltonian();
 
     // ════════════════════════════════════════════════════════════════════════
-    // Step 4: potinit - 从密度计算势能（NSCF 只调用一次！）
+    // Step 4: 初始化密度（原子电荷叠加）
     // ════════════════════════════════════════════════════════════════════════
-    potinit(rho_data);
+    initialize_density(pseudo_data);
 
     // ════════════════════════════════════════════════════════════════════════
-    // Step 5: 初始化波函数
+    // Step 5: potinit - 从密度计算势能（NSCF 只调用一次！）
     // ════════════════════════════════════════════════════════════════════════
-    initialize_wavefunction();
+    potinit();
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Step 6: 初始化波函数（使用原子波函数叠加）
+    // ════════════════════════════════════════════════════════════════════════
+    initialize_wavefunction(pseudo_data);
 }
 
 NSCFWorkflow::NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms, const Hamiltonian& ham,
@@ -85,7 +92,7 @@ NSCFWorkflow::NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms, const Hamil
       config_(config),
       ham_(grid),
       rho_(grid, 1),
-      psi_(grid, config.nbands, grid.ecutwfc()) {
+      psi_(grid, psi.num_bands(), grid.ecutwfc()) {  // ✅ 使用输入 psi 的 band 数量
     // ════════════════════════════════════════════════════════════════════════
     // Step 1: 验证配置
     // ════════════════════════════════════════════════════════════════════════
@@ -94,13 +101,21 @@ NSCFWorkflow::NSCFWorkflow(Grid& grid, std::shared_ptr<Atoms> atoms, const Hamil
     // ════════════════════════════════════════════════════════════════════════
     // Step 2: 复制已组装好的哈密顿量和波函数
     // ════════════════════════════════════════════════════════════════════════
+    // 注意：psi 可能包含 n_starting_wfc 个原子波函数（例如 8 个）
+    //       而 config.nbands 是最终需要的本征态数量（例如 4 个）
+    //       子空间对角化会在 NonSCFSolver::solve 中完成
     ham_.copy_from(ham);
     psi_.copy_from(psi);
 
     // ════════════════════════════════════════════════════════════════════════
-    // Step 3: potinit - 从密度计算势能（确保 Hamiltonian 同步）
+    // Step 3: 加载密度并执行 potinit
     // ════════════════════════════════════════════════════════════════════════
-    potinit(rho_data);
+    if (rho_data.size() != grid_.nnr()) {
+        throw ConfigurationError("rho_data 尺寸 (" + std::to_string(rho_data.size()) +
+                                 ") 与 grid.nnr() (" + std::to_string(grid_.nnr()) + ") 不匹配");
+    }
+    rho_.copy_from_host(rho_data.data());
+    potinit();
 }
 
 EnergyBreakdown NSCFWorkflow::execute() {
@@ -144,9 +159,27 @@ void NSCFWorkflow::initialize_pseudopotentials(
     for (size_t itype = 0; itype < pseudo_data.size(); ++itype) {
         const auto& pseudo = pseudo_data[itype];
 
-        // 验证赝势数据
-        if (!pseudo.is_valid()) {
-            throw FileIOError("赝势数据无效 (atom type " + std::to_string(itype) + ")");
+        // 验证赝势数据（基本字段）
+        // 注意：暂时不强制要求 beta 函数完整性，因为 Python UPF 解析器可能未完全实现
+        if (pseudo.header().element.empty()) {
+            throw FileIOError("赝势数据无效 (atom type " + std::to_string(itype) +
+                              "): element 为空");
+        }
+        if (pseudo.header().z_valence <= 0.0) {
+            throw FileIOError("赝势数据无效 (atom type " + std::to_string(itype) +
+                              "): z_valence <= 0");
+        }
+        if (pseudo.header().mesh_size <= 0) {
+            throw FileIOError("赝势数据无效 (atom type " + std::to_string(itype) +
+                              "): mesh_size <= 0");
+        }
+        if (pseudo.mesh().r.empty() || pseudo.mesh().rab.empty()) {
+            throw FileIOError("赝势数据无效 (atom type " + std::to_string(itype) +
+                              "): mesh.r 或 mesh.rab 为空");
+        }
+        if (pseudo.local().vloc_r.empty()) {
+            throw FileIOError("赝势数据无效 (atom type " + std::to_string(itype) +
+                              "): vloc_r 为空");
         }
 
         // 创建局域赝势（使用工厂函数）
@@ -190,20 +223,28 @@ void NSCFWorkflow::initialize_hamiltonian() {
     }
 }
 
-void NSCFWorkflow::potinit(const std::vector<double>& rho_data) {
+void NSCFWorkflow::initialize_density(const std::vector<PseudopotentialData>& pseudo_data) {
     // ════════════════════════════════════════════════════════════════════════
-    // 验证密度数据尺寸
+    // 使用 DensityFactory 从原子电荷叠加构建初始密度
     // ════════════════════════════════════════════════════════════════════════
-    if (rho_data.size() != grid_.nnr()) {
-        throw ConfigurationError("rho_data 尺寸 (" + std::to_string(rho_data.size()) +
-                                 ") 与 grid.nnr() (" + std::to_string(grid_.nnr()) + ") 不匹配");
+    DensityFactory factory(grid_, atoms_);
+
+    // 添加所有原子类型的原子密度
+    for (size_t itype = 0; itype < pseudo_data.size(); ++itype) {
+        const auto& pseudo = pseudo_data[itype];
+        const auto& mesh = pseudo.mesh();
+        const auto& rho_at = pseudo.atomic_density().rho_at;
+
+        if (!rho_at.empty()) {
+            factory.set_atomic_rho_r(itype, mesh.r, rho_at, mesh.rab);
+        }
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // 加载密度到 GPU
-    // ════════════════════════════════════════════════════════════════════════
-    rho_.copy_from_host(rho_data.data());
+    // 构建密度场
+    factory.build_density(rho_);
+}
 
+void NSCFWorkflow::potinit() {
     // ════════════════════════════════════════════════════════════════════════
     // 计算势能：vrs = V_ps + V_H[ρ] + V_xc[ρ]
     // ════════════════════════════════════════════════════════════════════════
@@ -211,16 +252,38 @@ void NSCFWorkflow::potinit(const std::vector<double>& rho_data) {
     ham_.update_potentials(rho_);
 }
 
-void NSCFWorkflow::initialize_wavefunction() {
+void NSCFWorkflow::initialize_wavefunction(const std::vector<PseudopotentialData>& pseudo_data) {
     // ════════════════════════════════════════════════════════════════════════
-    // 随机初始化波函数
+    // 使用 WavefunctionFactory 从原子波函数构建初始波函数
     // ════════════════════════════════════════════════════════════════════════
-    psi_.randomize();
+    WavefunctionFactory factory(grid_, atoms_);
+
+    // 添加所有原子轨道
+    for (size_t itype = 0; itype < pseudo_data.size(); ++itype) {
+        const auto& pseudo = pseudo_data[itype];
+        const auto& mesh = pseudo.mesh();
+        const auto& wfcs = pseudo.atomic_wfc().wavefunctions;
+
+        for (const auto& wfc : wfcs) {
+            factory.add_atomic_orbital(itype, wfc.l, mesh.r, wfc.chi, mesh.rab, mesh.msh);
+        }
+    }
+
+    // 构建原子波函数（n_starting_wfc 个非正交波函数）
+    auto psi_atomic = factory.build(false);  // randomize_phase = false
 
     // ════════════════════════════════════════════════════════════════════════
-    // 正交归一化
+    // 重新构造 psi_ 为正确的大小并复制数据
     // ════════════════════════════════════════════════════════════════════════
-    psi_.orthonormalize();
+    // 注意：psi_atomic 有 n_starting_wfc 个 band（例如 8 个）
+    //       子空间对角化会在 NonSCFSolver::solve 中将其降维到 config_.nbands 个本征态
+
+    // 销毁旧的 psi_ 并重新构造
+    psi_.~Wavefunction();
+    new (&psi_) Wavefunction(grid_, psi_atomic->num_bands(), grid_.ecutwfc());
+
+    // 复制数据
+    psi_.copy_from(*psi_atomic);
 }
 
 }  // namespace dftcu

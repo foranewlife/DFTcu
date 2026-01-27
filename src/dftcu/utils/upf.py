@@ -108,6 +108,18 @@ class UPFParser:
         m.mesh = int(attrs.get("mesh", 0))
         m.zmesh = float(attrs.get("zmesh", 0.0))
 
+        # 计算 msh: QE 约定为 r < 10 Bohr 的最后一个点
+        # 这用于积分时截断，避免数值噪声
+        if m.r:
+            import numpy as np
+
+            r_array = np.array(m.r)
+            rcut = 10.0  # Bohr
+            msh = np.searchsorted(r_array, rcut, side="right")
+            m.msh = int(msh)
+        else:
+            m.msh = m.mesh
+
         return m
 
     def _parse_local(self, node) -> dftcu.LocalPotential:

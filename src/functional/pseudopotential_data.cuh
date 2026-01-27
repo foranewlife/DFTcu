@@ -46,8 +46,9 @@ struct RadialMesh {
     double rmax;              ///< Maximum radius (Bohr)
     int mesh;                 ///< Number of mesh points
     double zmesh;             ///< Nuclear charge for mesh generation
+    int msh;                  ///< Last grid point with r < rcut (QE convention: rcut = 10 Bohr)
 
-    RadialMesh() : dx(0.0), xmin(0.0), rmax(0.0), mesh(0), zmesh(0.0) {}
+    RadialMesh() : dx(0.0), xmin(0.0), rmax(0.0), mesh(0), zmesh(0.0), msh(0) {}
 };
 
 /**

@@ -142,15 +142,13 @@ def _run_nscf(config: DFTcuConfig, verbose: int):
     click.echo("⚡ NSCF 计算流程 (Factory Mode)")
 
     try:
-        import numpy as np
-
         import dftcu
         from dftcu.utils.upf import UPFParser as PythonUPFParser
     except ImportError as e:
         click.secho(f"❌ 无法导入模块: {e}", fg="red", err=True)
         sys.exit(1)
 
-    # 1. 工厂生产基础模型 (Grid, Atoms)
+    # 1. 创建 Grid 和 Atoms
     click.echo("  🏗️  正在初始化数值格点和原子结构...")
     lattice_bohr = config.grid.get_lattice_bohr(config.structure_file)
     grid = dftcu.create_grid_from_atomic_units(
@@ -162,20 +160,21 @@ def _run_nscf(config: DFTcuConfig, verbose: int):
     )
 
     ase_atoms = config.physics.get_ase_atoms(config.structure_file)
-    symbols = ase_atoms.get_chemical_symbols()
-    positions = ase_atoms.get_positions()
     unique_elements = list(config.pseudopotentials.keys())
 
-    atoms_list = []
-    for sym, pos in zip(symbols, positions):
-        atom_type = unique_elements.index(sym)
-        mass = config.get_mass(sym)
-        atoms_list.append(dftcu.Atom(pos[0], pos[1], pos[2], mass, atom_type))
+    atoms = dftcu.create_atoms_from_structure(
+        elements=ase_atoms.get_chemical_symbols(),
+        positions=ase_atoms.get_positions().tolist(),
+        lattice_vectors=ase_atoms.get_cell().tolist(),
+        cartesian=True,
+        unique_elements=unique_elements,
+        valence_electrons={
+            elem: config.physics.nelec / len(unique_elements) for elem in unique_elements
+        },
+    )
+    click.echo(f"  ✅ Grid & Atoms 已就绪: {grid.nr()} 网格, {atoms.nat()} 个原子")
 
-    atoms = dftcu.create_atoms_from_angstrom(atoms_list)
-    click.echo(f"  ✅ Grid & Atoms 已就绪: {grid.nr()} 网格, {len(atoms_list)} 个原子")
-
-    # 2. Python 解析并组装赝势数据
+    # 2. 解析赝势（Python 唯一的工作）
     click.echo("  📝 正在解析 UPF 赝势 (Python Parser)...")
     upf_parser = PythonUPFParser()
     pseudo_data_list = []
@@ -185,69 +184,12 @@ def _run_nscf(config: DFTcuConfig, verbose: int):
         data = upf_parser.parse(pseudo_path)
         pseudo_data_list.append(data)
 
-    # 3. 组装 Hamiltonian (Python 侧)
-    click.echo("  🛠️  正在组装哈密顿量对象...")
-    dfp = dftcu.DensityFunctionalPotential(grid)
-    dfp.add_functional(dftcu.Hartree())
-
-    if config.physics.xc_functional.lower() == "lda":
-        dfp.add_functional(dftcu.LDA_PZ())
-    else:
-        dfp.add_functional(dftcu.LDA_PZ())  # Fallback
-
-    local_pseudos = []
-    nonlocal_pseudos = []
-    for i, data in enumerate(pseudo_data_list):
-        lp = dftcu.create_local_pseudo(grid, atoms, data, i)
-        dfp.add_functional(lp)
-        local_pseudos.append(lp)
-
-        nlp = dftcu.create_nonlocal_pseudo(grid, atoms, data, i)
-        nonlocal_pseudos.append(nlp)
-
-    ham = dftcu.Hamiltonian(grid)
-    ham.set_density_functional_potential(dfp)
-    if nonlocal_pseudos:
-        ham.set_nonlocal(nonlocal_pseudos[0])
-
-    # 4. 初始化密度 (原子电荷叠加)
-    click.echo("  ⚛️  正在通过原子电荷叠加初始化电荷密度 (DensityFactory)...")
-    density_factory = dftcu.DensityFactory(grid, atoms)
-    for i, data in enumerate(pseudo_data_list):
-        mesh = data.mesh()
-        rho_at = data.atomic_density().rho_at
-        if rho_at:
-            density_factory.set_atomic_rho_r(i, mesh.r, rho_at, mesh.rab)
-
-    rho = dftcu.RealField(grid)
-    density_factory.build_density(rho)
-
-    rho_data_host = np.zeros(grid.nnr())
-    rho.copy_to_host(rho_data_host)
-    click.echo(
-        f"    - 初始密度积分: {np.sum(rho_data_host) * grid.dv():.4f} e (期望: {config.physics.nelec})"
-    )
-
-    # 5. 初始化波函数 (原子波函数叠加)
-    click.echo("  🌊 正在通过原子波函数叠加初始化波函数 (WavefunctionFactory)...")
-    wfc_factory = dftcu.WavefunctionFactory(grid, atoms)
-    for i, data in enumerate(pseudo_data_list):
-        mesh = data.mesh()
-        for wfc in data.atomic_wfc().wavefunctions:
-            wfc_factory.add_atomic_orbital(i, wfc.l, mesh.r, wfc.chi, mesh.rab)
-
-    psi = dftcu.Wavefunction(grid, config.physics.nbands, config.grid.get_ecutwfc_hartree())
-    wfc_factory.build_atomic_wavefunctions(psi, randomize_phase=False)
-    psi.orthonormalize()
-    click.echo(f"    - 波函数已初始化并归一化 ({config.physics.nbands} bands)")
-
-    # 6. 调用 Workflow 运行流程
+    # 3. 创建并执行 Workflow（C++ 完成所有组装）
     click.echo("  🚀 正在启动 NSCF 工作流...")
 
-    # 确保输出目录存在 (支持 C++ 端的 debug 导出)
+    # 确保输出目录存在
     output_path = Path(config.task.outdir)
     output_path.mkdir(parents=True, exist_ok=True)
-    # 特别是 nscf_output (一些 C++ debug 硬编码了此路径)
     Path("nscf_output").mkdir(parents=True, exist_ok=True)
 
     wf_config = dftcu.NSCFWorkflowConfig()
@@ -256,10 +198,11 @@ def _run_nscf(config: DFTcuConfig, verbose: int):
     wf_config.enable_diagnostics = config.task.verbosity == "high"
     wf_config.output_dir = config.task.outdir
 
-    workflow = dftcu.NSCFWorkflow(grid, atoms, ham, psi, rho_data_host.tolist(), wf_config)
+    # ✅ 新接口：不需要手动组装 Hamiltonian、Density、Wavefunction
+    workflow = dftcu.NSCFWorkflow(grid, atoms, pseudo_data_list, wf_config)
     result = workflow.execute()
 
-    # 7. 汇报结果
+    # 4. 汇报结果
     click.echo()
     click.secho("🏁 NSCF 计算完成!", fg="green", bold=True)
     click.echo(f"  总能量: {result.etot:16.10f} Ha")

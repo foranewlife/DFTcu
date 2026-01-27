@@ -492,8 +492,22 @@ void Hamiltonian::apply_local(Wavefunction& psi, Wavefunction& h_psi) {
                                                                             psi_r_packed.data());
         GPU_CHECK_KERNEL;
 
-        // 🔍 Diagnostic: V*psi(r) (simplified)
-        // Removed to avoid potential segfault
+        // 🔍 DEBUG: 导出 V·ψ(r) (第一次调用，乘法后、FFT 前)
+        if (ibnd == 0) {
+            std::vector<gpufftComplex> vpsi_r_host(nnr);  // 导出全部数据
+            CHECK(cudaMemcpy(vpsi_r_host.data(), psi_r_packed.data(), nnr * sizeof(gpufftComplex),
+                             cudaMemcpyDeviceToHost));
+            FILE* f = fopen("nscf_output/dftcu_vpsi_r_full.txt", "w");
+            if (f) {
+                fprintf(f, "# DFTcu V·ψ(r) (band 1, after V(r) multiplication, before FFT)\n");
+                fprintf(f, "# Format: ir Re Im\n");
+                for (size_t i = 0; i < vpsi_r_host.size(); i++) {
+                    fprintf(f, "%6zu %25.16e %25.16e\n", i + 1, vpsi_r_host[i].x, vpsi_r_host[i].y);
+                }
+                fclose(f);
+                printf("[DEBUG] Exported V·ψ(r) to nscf_output/dftcu_vpsi_r_full.txt\n");
+            }
+        }
 
         // R -> G (解包: 从 psi_packed 恢复 psi1 和 psi2)
         ComplexField vpsi1_g(grid_);
@@ -516,7 +530,7 @@ void Hamiltonian::apply_local(Wavefunction& psi, Wavefunction& h_psi) {
                 fprintf(f, "# DFTcu: V*psi after wave_r2g_pair (before fac scaling)\n");
                 fprintf(f, "# Format: ig Re Im (Hartree)\n");
                 fprintf(f, "# fac = %.4f, brange = %d\n", fac, brange);
-                for (int ig = 0; ig < std::min(10, npw); ig++) {
+                for (int ig = 0; ig < npw; ig++) {  // 导出全部 npw 个点
                     fprintf(f, "%5d %25.16e %25.16e\n", ig + 1, vpsi1_host[ig].x, vpsi1_host[ig].y);
                 }
                 fclose(f);
@@ -566,15 +580,117 @@ void Hamiltonian::apply_nonlocal(Wavefunction& psi, Wavefunction& h_psi) {
 void Hamiltonian::apply(Wavefunction& psi, Wavefunction& h_psi) {
     size_t nnr = grid_.nnr();
     int nbands = psi.num_bands();
+    int npw = psi.num_pw();
 
     // Zero output
     cudaMemsetAsync(h_psi.data(), 0, nnr * nbands * sizeof(gpufftComplex), grid_.stream());
 
+    // 🔍 DEBUG: 导出完整 G-vector 信息（包含 Miller indices 和 nl_d）
+    {
+        FILE* f = fopen("nscf_output/dftcu_gvectors_full.txt", "w");
+        if (f) {
+            fprintf(f, "# DFTcu G-vectors (Smooth Grid)\n");
+            fprintf(f, "# Format: ig h k l nl_d\n");
+
+            // 使用 Grid 的公开方法获取 Miller indices
+            std::vector<int> h_miller = grid_.get_miller_h();
+            std::vector<int> k_miller = grid_.get_miller_k();
+            std::vector<int> l_miller = grid_.get_miller_l();
+
+            std::vector<int> nl_host(npw);
+            const int* nl_d = grid_.nl_d();
+            CHECK(cudaMemcpy(nl_host.data(), nl_d, npw * sizeof(int), cudaMemcpyDeviceToHost));
+
+            for (int ig = 0; ig < npw; ig++) {
+                fprintf(f, "%5d %4d %4d %4d %6d\n", ig + 1, h_miller[ig], k_miller[ig],
+                        l_miller[ig], nl_host[ig]);
+            }
+            fclose(f);
+            printf("[DEBUG] Exported G-vectors to nscf_output/dftcu_gvectors_full.txt\n");
+        }
+    }
+
     // Apply T|ψ>
     apply_kinetic(psi, h_psi);
 
+    // 🔍 DEBUG: 导出 T|ψ> (第一个 band)
+    {
+        std::vector<gpufftComplex> tpsi_host(npw);
+        const int* nl_d = grid_.nl_d();
+        std::vector<int> nl_host(npw);
+        CHECK(cudaMemcpy(nl_host.data(), nl_d, npw * sizeof(int), cudaMemcpyDeviceToHost));
+
+        std::vector<gpufftComplex> tpsi_fft(nnr);
+        CHECK(cudaMemcpy(tpsi_fft.data(), h_psi.data(), nnr * sizeof(gpufftComplex),
+                         cudaMemcpyDeviceToHost));
+
+        // 从 FFT grid 提取 Smooth grid
+        for (int ig = 0; ig < npw; ig++) {
+            tpsi_host[ig] = tpsi_fft[nl_host[ig]];
+        }
+
+        FILE* f = fopen("nscf_output/dftcu_tpsi_iter0.txt", "w");
+        if (f) {
+            fprintf(f, "# DFTcu T|ψ> (band 1, Hartree)\n");
+            fprintf(f, "# Format: ig Re Im\n");
+            for (int ig = 0; ig < npw; ig++) {
+                fprintf(f, "%5d %25.16e %25.16e\n", ig + 1, tpsi_host[ig].x, tpsi_host[ig].y);
+            }
+            fclose(f);
+            printf("[DEBUG] Exported T|ψ> to nscf_output/dftcu_tpsi_iter0.txt\n");
+        }
+    }
+
+    // 保存 T|ψ> 用于后续计算 V_loc|ψ>
+    Wavefunction tpsi_copy(grid_, nbands, psi.encut());
+    CHECK(cudaMemcpy(tpsi_copy.data(), h_psi.data(), nnr * nbands * sizeof(gpufftComplex),
+                     cudaMemcpyDeviceToDevice));
+
     // Apply V_loc|ψ> (accumulates)
     apply_local(psi, h_psi);
+
+    // 🔍 DEBUG: 导出 (T+V_loc)|ψ> 和 V_loc|ψ>
+    {
+        std::vector<gpufftComplex> tvlocpsi_host(npw);
+        std::vector<gpufftComplex> vlocpsi_host(npw);
+        const int* nl_d = grid_.nl_d();
+        std::vector<int> nl_host(npw);
+        CHECK(cudaMemcpy(nl_host.data(), nl_d, npw * sizeof(int), cudaMemcpyDeviceToHost));
+
+        std::vector<gpufftComplex> tvlocpsi_fft(nnr);
+        std::vector<gpufftComplex> tpsi_fft(nnr);
+        CHECK(cudaMemcpy(tvlocpsi_fft.data(), h_psi.data(), nnr * sizeof(gpufftComplex),
+                         cudaMemcpyDeviceToHost));
+        CHECK(cudaMemcpy(tpsi_fft.data(), tpsi_copy.data(), nnr * sizeof(gpufftComplex),
+                         cudaMemcpyDeviceToHost));
+
+        for (int ig = 0; ig < npw; ig++) {
+            tvlocpsi_host[ig] = tvlocpsi_fft[nl_host[ig]];
+            vlocpsi_host[ig].x = tvlocpsi_host[ig].x - tpsi_fft[nl_host[ig]].x;
+            vlocpsi_host[ig].y = tvlocpsi_host[ig].y - tpsi_fft[nl_host[ig]].y;
+        }
+
+        FILE* f1 = fopen("nscf_output/dftcu_tvlocpsi_iter0.txt", "w");
+        if (f1) {
+            fprintf(f1, "# DFTcu (T+V_loc)|ψ> (band 1, Hartree)\n");
+            for (int ig = 0; ig < npw; ig++) {
+                fprintf(f1, "%5d %25.16e %25.16e\n", ig + 1, tvlocpsi_host[ig].x,
+                        tvlocpsi_host[ig].y);
+            }
+            fclose(f1);
+        }
+
+        FILE* f2 = fopen("nscf_output/dftcu_vlocpsi_iter0.txt", "w");
+        if (f2) {
+            fprintf(f2, "# DFTcu V_loc|ψ> (band 1, Hartree)\n");
+            for (int ig = 0; ig < npw; ig++) {
+                fprintf(f2, "%5d %25.16e %25.16e\n", ig + 1, vlocpsi_host[ig].x,
+                        vlocpsi_host[ig].y);
+            }
+            fclose(f2);
+            printf("[DEBUG] Exported V_loc|ψ> to nscf_output/dftcu_vlocpsi_iter0.txt\n");
+        }
+    }
 
     // Apply V_NL|ψ> (accumulates)
     apply_nonlocal(psi, h_psi);

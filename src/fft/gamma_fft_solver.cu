@@ -282,6 +282,7 @@ void GammaFFTSolver::wave_g2r_single(const ComplexField& psi_g_half,
     GPU_CHECK_KERNEL;
 
     // 4. Normalize by 1/N (QE convention: invfft includes 1/N normalization)
+    // 注意: cuFFT 的 CUFFT_INVERSE 不包含归一化，需要手动除以 N
     const int bs_norm = 256;
     const int gs_norm = (nnr + bs_norm - 1) / bs_norm;
     scale_complex_kernel<<<gs_norm, bs_norm, 0, grid_.stream()>>>(nnr, psi_r.data(),
@@ -368,6 +369,7 @@ void GammaFFTSolver::wave_g2r_pair(const ComplexField& psi1_g, const ComplexFiel
     GPU_CHECK_KERNEL;
 
     // 4. Normalize by 1/N (QE convention: invfft includes 1/N normalization)
+    // 注意: cuFFT 的 CUFFT_INVERSE 不包含归一化，需要手动除以 N
     const int bs_norm = 256;
     const int gs_norm = (nnr + bs_norm - 1) / bs_norm;
     scale_complex_kernel<<<gs_norm, bs_norm, 0, grid_.stream()>>>(nnr, psi_r_packed.data(),

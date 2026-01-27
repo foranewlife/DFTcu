@@ -49,19 +49,24 @@ __global__ void build_atomic_band_kernel(int nnr, const double* atom_x, const do
         double s, c;
         sincos(phase, &s, &c);
 
+        // ✅ FIX (2026-01-26): 使用 i^l 而不是 (-i)^l
+        // QE 约定: lphase = i^l，确保 Gamma-only 波函数在实空间是实数
+        // 参考: QE Modules/wavefunctions.f90:100-102
         double re_pre = 0, im_pre = 0;
         if (l == 0) {
-            re_pre = 1.0;
+            re_pre = 1.0;  // i^0 = 1
         } else if (l == 1) {
-            im_pre = -1.0;  // (-i)^1 = -i
+            im_pre = 1.0;  // i^1 = i
         } else if (l == 2) {
-            re_pre = -1.0;  // (-i)^2 = -1
+            re_pre = -1.0;  // i^2 = -1
         } else if (l == 3) {
-            im_pre = 1.0;  // (-i)^3 = i
+            im_pre = -1.0;  // i^3 = -i
         }
 
-        // Normalization: (1/sqrt(Omega)) * integral * Ylm * (-i)^l
+        // Normalization: (1/sqrt(Omega)) * integral * Ylm * i^l
         double norm = chi_g * ylm / sqrt(omega_bohr);
+        // ✅ FIX (2026-01-26): 直接写入，不累加（每个 band 对应一个原子）
+        // QE 方式：为每个原子的每个轨道创建独立的 band
         band_out[i].x = norm * (re_pre * c - im_pre * s);
         band_out[i].y = norm * (re_pre * s + im_pre * c);
     }
@@ -89,37 +94,43 @@ WavefunctionFactory::WavefunctionFactory(Grid& grid, std::shared_ptr<Atoms> atom
 
 void WavefunctionFactory::add_atomic_orbital(int type, int l, const std::vector<double>& r,
                                              const std::vector<double>& chi,
-                                             const std::vector<double>& rab) {
+                                             const std::vector<double>& rab, int msh) {
     if (type >= (int)orbital_tables_.size())
         orbital_tables_.resize(type + 1);
+
+    // 确定积分范围: 如果 msh > 0，使用 msh 截断；否则使用全部点
+    int mesh_size = (msh > 0 && msh < (int)r.size()) ? msh : (int)r.size();
 
     // qmax should be in physical units (Bohr^-1)
     double qmax = sqrt(grid_.g2max()) * 2.0 * constants::D_PI * 1.1;
     int nqx = static_cast<int>(qmax / dq_) + 10;
 
     std::vector<double> chi_q(nqx + 1, 0.0);
-    std::vector<double> aux(r.size());
+    std::vector<double> aux(mesh_size);  // 使用截断后的大小
     const double fpi = 4.0 * constants::D_PI;
 
     for (int iq = 1; iq <= nqx; ++iq) {
         double q = (iq - 1) * dq_;
         if (q < 1e-12) {
             if (l == 0) {
-                for (int ir = 0; ir < (int)r.size(); ++ir)
+                for (int ir = 0; ir < mesh_size; ++ir)
                     aux[ir] = r[ir] * chi[ir];
             } else {
-                for (int ir = 0; ir < (int)r.size(); ++ir)
+                for (int ir = 0; ir < mesh_size; ++ir)
                     aux[ir] = 0.0;
             }
         } else {
-            for (int ir = 0; ir < (int)r.size(); ++ir) {
+            for (int ir = 0; ir < mesh_size; ++ir) {
                 aux[ir] = r[ir] * chi[ir] * spherical_bessel_jl(l, q * r[ir]);
             }
         }
-        chi_q[iq] = simpson_integrate(aux, rab) * fpi;
+        // 使用截断后的 rab 进行积分
+        std::vector<double> rab_truncated(rab.begin(), rab.begin() + mesh_size);
+        chi_q[iq] = simpson_integrate(aux, rab_truncated) * fpi;
     }
-    printf("DEBUG WavefunctionFactory: Added orbital type=%d, l=%d, chi_q[1](q=0)=%.6f\n", type, l,
-           chi_q[1]);
+    printf(
+        "DEBUG WavefunctionFactory: Added orbital type=%d, l=%d, msh=%d/%zu, chi_q[1](q=0)=%.6f\n",
+        type, l, mesh_size, r.size(), chi_q[1]);
     orbital_tables_[type].push_back({l, chi_q});
 }
 
@@ -150,28 +161,159 @@ void WavefunctionFactory::build_atomic_wavefunctions(Wavefunction& psi, bool ran
     grid_.synchronize();
 
     int current_band = 0;
-    // Iterate over orbital indices (e.g. first orbital of all atoms, then second...)
-    // This ensures that even with few bands, we get a symmetric starting point.
-    int max_orbs = 0;
-    for (int t = 0; t < (int)orbital_tables_.size(); ++t) {
-        max_orbs = std::max(max_orbs, (int)orbital_tables_[t].size());
-    }
+    // ✅ FIX (2026-01-26): 采用 QE 的方式生成原子波函数
+    // QE 逻辑: 为每个原子的每个轨道创建独立的 band
+    // 参考: QE Modules/wavefunctions.f90:203-251
+    //
+    // 循环顺序：
+    //   1. 遍历原子 (na)
+    //   2. 遍历轨道类型 (nb)
+    //   3. 遍历磁量子数 (m)
+    //   → 每个 (原子, 轨道, m) 组合创建一个新的 band
+    //
+    // 示例：2 个 Si 原子，每个有 s 和 p 轨道
+    //   Band 1: 原子1, s (l=0, m=0)
+    //   Band 2: 原子1, px (l=1, m=1)
+    //   Band 3: 原子1, py (l=1, m=-1)
+    //   Band 4: 原子1, pz (l=1, m=0)
+    //   Band 5: 原子2, s (l=0, m=0)
+    //   Band 6: 原子2, px (l=1, m=1)
+    //   Band 7: 原子2, py (l=1, m=-1)
+    //   Band 8: 原子2, pz (l=1, m=0)
 
-    for (int i_orb = 0; i_orb < max_orbs; ++i_orb) {
-        for (int iat = 0; iat < (int)atoms_->nat(); ++iat) {
-            int type = atoms_->h_type()[iat];
-            if (i_orb >= (int)orbital_tables_[type].size())
-                continue;
+    const int block_size = 256;
+    const int grid_size = (nnr + block_size - 1) / block_size;
 
+    // 遍历所有原子
+    for (int iat = 0; iat < (int)atoms_->nat(); ++iat) {
+        int type = atoms_->h_type()[iat];
+
+        // 遍历该原子的所有轨道
+        for (int i_orb = 0; i_orb < (int)orbital_tables_[type].size(); ++i_orb) {
             const auto& orb = orbital_tables_[type][i_orb];
             size_t offset = table_offsets[type][i_orb];
 
+            // 遍历所有磁量子数
             for (int m = 0; m < 2 * orb.l + 1; ++m) {
-                if (current_band >= n_bands)
-                    break;
+                if (current_band >= n_bands) {
+                    printf("WARNING: current_band (%d) >= n_bands (%d), stopping early\n",
+                           current_band, n_bands);
+                    goto done;  // 跳出所有循环
+                }
 
-                const int block_size = 256;
-                const int grid_size = (nnr + block_size - 1) / block_size;
+                // 为该 (原子, 轨道, m) 组合生成波函数
+                // 注意：这里不使用 atomicAdd，直接写入（覆盖之前的值）
+                build_atomic_band_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+                    nnr, atoms_->pos_x(), atoms_->pos_y(), atoms_->pos_z(), iat, orb.l, m,
+                    grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), d_tab_.data() + offset,
+                    (int)orb.chi_q.size(), dq_, omega_bohr, psi.encut(),
+                    psi.band_data(current_band));
+
+                if (randomize_phase) {
+                    unsigned int seed = 42 + current_band;
+                    apply_random_phase_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
+                        nnr, psi.band_data(current_band), seed);
+                }
+
+                current_band++;
+            }
+        }
+    }
+
+done:
+
+    grid_.synchronize();
+}
+
+int WavefunctionFactory::calculate_num_bands() const {
+    int total = 0;
+    for (int iat = 0; iat < (int)atoms_->nat(); ++iat) {
+        int type = atoms_->h_type()[iat];
+        if (type >= (int)orbital_tables_.size())
+            continue;
+
+        for (const auto& orb : orbital_tables_[type]) {
+            total += (2 * orb.l + 1);  // Each orbital has (2l+1) magnetic quantum numbers
+        }
+    }
+    return total;
+}
+
+int WavefunctionFactory::num_bands() const {
+    return calculate_num_bands();
+}
+
+std::unique_ptr<Wavefunction> WavefunctionFactory::build(bool randomize_phase) {
+    int n_bands = calculate_num_bands();
+
+    if (n_bands == 0) {
+        throw std::runtime_error("WavefunctionFactory::build: No atomic orbitals added. "
+                                 "Call add_atomic_orbital() before build().");
+    }
+
+    printf("WavefunctionFactory: Building %d atomic wavefunctions...\n", n_bands);
+
+    // Create Wavefunction object
+    auto psi = std::make_unique<Wavefunction>(grid_, n_bands, grid_.ecutwfc());
+
+    // Fill with atomic orbitals (reuse existing implementation)
+    build_atomic_wavefunctions_internal(*psi, randomize_phase);
+
+    printf(
+        "WavefunctionFactory: Atomic wavefunctions built successfully (%d bands, non-orthogonal)\n",
+        n_bands);
+
+    return psi;
+}
+
+void WavefunctionFactory::build_atomic_wavefunctions_internal(Wavefunction& psi,
+                                                              bool randomize_phase) {
+    // This is the same as the old build_atomic_wavefunctions, just renamed
+    int n_bands = psi.num_bands();
+    int nnr = grid_.nnr();
+    double omega_bohr = grid_.volume_bohr();
+
+    printf("DEBUG WavefunctionFactory: Building %d bands for %zu atoms...\n", n_bands,
+           atoms_->nat());
+
+    grid_.synchronize();
+    cudaMemset(psi.data(), 0, n_bands * nnr * sizeof(gpufftComplex));
+
+    // Combine all tables into a flat contiguous buffer
+    std::vector<double> h_total_table;
+    std::vector<std::vector<size_t>> table_offsets(orbital_tables_.size());
+
+    for (int t = 0; t < (int)orbital_tables_.size(); ++t) {
+        for (const auto& orb : orbital_tables_[t]) {
+            table_offsets[t].push_back(h_total_table.size());
+            h_total_table.insert(h_total_table.end(), orb.chi_q.begin(), orb.chi_q.end());
+        }
+    }
+
+    d_tab_.resize(h_total_table.size());
+    d_tab_.copy_from_host(h_total_table.data());
+    grid_.synchronize();
+
+    int current_band = 0;
+    const int block_size = 256;
+    const int grid_size = (nnr + block_size - 1) / block_size;
+
+    // 遍历所有原子
+    for (int iat = 0; iat < (int)atoms_->nat(); ++iat) {
+        int type = atoms_->h_type()[iat];
+
+        // 遍历该原子的所有轨道
+        for (int i_orb = 0; i_orb < (int)orbital_tables_[type].size(); ++i_orb) {
+            const auto& orb = orbital_tables_[type][i_orb];
+            size_t offset = table_offsets[type][i_orb];
+
+            // 遍历所有磁量子数
+            for (int m = 0; m < 2 * orb.l + 1; ++m) {
+                if (current_band >= n_bands) {
+                    printf("WARNING: current_band (%d) >= n_bands (%d), stopping early\n",
+                           current_band, n_bands);
+                    goto done;
+                }
 
                 build_atomic_band_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
                     nnr, atoms_->pos_x(), atoms_->pos_y(), atoms_->pos_z(), iat, orb.l, m,
@@ -187,13 +329,10 @@ void WavefunctionFactory::build_atomic_wavefunctions(Wavefunction& psi, bool ran
 
                 current_band++;
             }
-            if (current_band >= n_bands)
-                break;
         }
-        if (current_band >= n_bands)
-            break;
     }
 
+done:
     grid_.synchronize();
 }
 

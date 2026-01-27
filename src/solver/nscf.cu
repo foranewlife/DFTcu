@@ -80,7 +80,27 @@ EnergyBreakdown NonSCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, double 
 
     std::cout << "     TRACE: calling subspace_solver_.solve_direct (Davidson iteration)"
               << std::endl;
-    std::vector<double> eigenvalues = subspace_solver_.solve_direct(ham, psi);
+    std::vector<double> eigenvalues_all = subspace_solver_.solve_direct(ham, psi);
+
+    // ✅ FIX (2026-01-26): 如果 psi 包含 n_starting_wfc > nbands 个原子波函数，
+    // 只保留前 nbands 个本征值（对应占据态）
+    int n_starting_wfc = psi.num_bands();
+    int nbands_out = (int)(nelec / 2.0 + 0.5);  // 假设自旋简并，nelec/2 个占据态
+
+    std::vector<double> eigenvalues;
+    if (n_starting_wfc > nbands_out) {
+        std::cout << "     TRACE: Subspace diagonalization: " << n_starting_wfc
+                  << " atomic wfcs -> " << nbands_out << " eigenstates" << std::endl;
+        eigenvalues.assign(eigenvalues_all.begin(), eigenvalues_all.begin() + nbands_out);
+
+        // TODO: 需要用本征矢量旋转波函数，将 psi 从 n_starting_wfc bands 降维到 nbands_out bands
+        // 当前暂时使用所有 n_starting_wfc 个本征值进行后续计算
+        std::cout << "     WARNING: Wavefunction rotation not implemented yet. "
+                  << "Using all " << n_starting_wfc << " bands for now." << std::endl;
+        eigenvalues = eigenvalues_all;  // 临时：使用所有本征值
+    } else {
+        eigenvalues = eigenvalues_all;
+    }
 
     // ────────────────────────────────────────────────────────────────────────────────
     // Diagnostic: 导出本征值 (Phase 1 结果)

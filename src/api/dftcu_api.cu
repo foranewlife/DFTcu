@@ -430,9 +430,31 @@ PYBIND11_MODULE(_dftcu, m) {
 
     py::class_<dftcu::WavefunctionFactory>(m, "WavefunctionFactory")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())
-        .def("add_atomic_orbital", &dftcu::WavefunctionFactory::add_atomic_orbital)
+        .def("add_atomic_orbital", &dftcu::WavefunctionFactory::add_atomic_orbital, py::arg("type"),
+             py::arg("l"), py::arg("r"), py::arg("chi"), py::arg("rab"), py::arg("msh") = 0,
+             "Add atomic orbital for a given atom type")
         .def("build_atomic_wavefunctions", &dftcu::WavefunctionFactory::build_atomic_wavefunctions,
-             py::arg("psi"), py::arg("randomize_phase") = false);
+             py::arg("psi"), py::arg("randomize_phase") = false,
+             "Build atomic wavefunctions (legacy interface, fills existing Wavefunction object)")
+        .def(
+            "build",
+            [](dftcu::WavefunctionFactory& self, bool randomize_phase) {
+                return self.build(randomize_phase).release();
+            },
+            py::arg("randomize_phase") = false, py::return_value_policy::take_ownership,
+            "Build and return atomic wavefunctions (recommended interface)")
+        .def("num_bands", &dftcu::WavefunctionFactory::num_bands,
+             "Get the number of bands that will be created");
+
+    // Atoms factory functions
+    m.def("create_atoms_from_angstrom", &dftcu::create_atoms_from_angstrom, py::arg("atoms_ang"),
+          "Create Atoms from positions in Angstrom");
+    m.def("create_atoms_from_bohr", &dftcu::create_atoms_from_bohr, py::arg("atoms_bohr"),
+          "Create Atoms from positions in Bohr (atomic units)");
+    m.def("create_atoms_from_structure", &dftcu::create_atoms_from_structure, py::arg("elements"),
+          py::arg("positions"), py::arg("lattice_vectors"), py::arg("cartesian"),
+          py::arg("unique_elements"), py::arg("valence_electrons"),
+          "Create Atoms from structure data (supports fractional coordinates)");
 
     // DensityFunctionalPotential (new name for Evaluator)
     // Also register as "Evaluator" for backward compatibility
@@ -548,7 +570,8 @@ PYBIND11_MODULE(_dftcu, m) {
         .def_readwrite("xmin", &dftcu::RadialMesh::xmin)
         .def_readwrite("rmax", &dftcu::RadialMesh::rmax)
         .def_readwrite("mesh", &dftcu::RadialMesh::mesh)
-        .def_readwrite("zmesh", &dftcu::RadialMesh::zmesh);
+        .def_readwrite("zmesh", &dftcu::RadialMesh::zmesh)
+        .def_readwrite("msh", &dftcu::RadialMesh::msh);
 
     py::class_<dftcu::LocalPotential>(m, "LocalPotential")
         .def(py::init<>())
@@ -1079,7 +1102,7 @@ PYBIND11_MODULE(_dftcu, m) {
             config.output_dir = "nscf_output"
 
             workflow = dftcu.NSCFWorkflow(
-                grid, atoms, pseudo_data, rho_data, config
+                grid, atoms, pseudo_data, config
             )
 
             result = workflow.execute()
@@ -1087,19 +1110,10 @@ PYBIND11_MODULE(_dftcu, m) {
         )pbdoc")
         .def(py::init([](dftcu::Grid& grid, std::shared_ptr<dftcu::Atoms> atoms,
                          const std::vector<dftcu::PseudopotentialData>& pseudo_data,
-                         py::array_t<double> rho_data, const dftcu::NSCFWorkflowConfig& config) {
-                 // 转换 NumPy 数组为 std::vector
-                 auto buf = rho_data.request();
-                 if (buf.ndim != 1) {
-                     throw std::runtime_error("rho_data 必须是 1D 数组");
-                 }
-                 double* ptr = static_cast<double*>(buf.ptr);
-                 std::vector<double> rho_vec(ptr, ptr + buf.size);
-
-                 return new dftcu::NSCFWorkflow(grid, atoms, pseudo_data, rho_vec, config);
+                         const dftcu::NSCFWorkflowConfig& config) {
+                 return new dftcu::NSCFWorkflow(grid, atoms, pseudo_data, config);
              }),
-             py::arg("grid"), py::arg("atoms"), py::arg("pseudo_data"), py::arg("rho_data"),
-             py::arg("config"),
+             py::arg("grid"), py::arg("atoms"), py::arg("pseudo_data"), py::arg("config"),
              R"pbdoc(
         构造 NSCF Workflow
 
@@ -1107,8 +1121,10 @@ PYBIND11_MODULE(_dftcu, m) {
             grid: Grid 对象
             atoms: Atoms 对象
             pseudo_data: 赝势数据列表（所有原子类型）
-            rho_data: 输入密度数据（1D NumPy 数组，e/Bohr³）
             config: NSCF 配置
+
+        注意:
+            密度和波函数会自动从 pseudo_data 中的原子数据初始化
         )pbdoc")
         .def(py::init([](dftcu::Grid& grid, std::shared_ptr<dftcu::Atoms> atoms,
                          const dftcu::Hamiltonian& ham, const dftcu::Wavefunction& psi,

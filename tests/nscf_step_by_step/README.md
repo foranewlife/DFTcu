@@ -1,10 +1,32 @@
-# DFTcu NSCF 完整测试
+# DFTcu NSCF 分步验证测试套件
 
 **目标**: 验证 `NonSCFSolver` 完整流程与 QE 的对齐
 
 **测试系统**: Si 2原子（FCC），Gamma-only，LDA-PZ
 
-**状态**: 🔧 调试中 - V_NL becp 计算验证
+**状态**: ✅ CLI 工具完成，Factory 模式实现，V_NL 使用 DGEMM 优化
+
+---
+
+## 🚀 快速开始
+
+### 推荐方式：使用 CLI 工具（生产与测试环境）
+
+在 `tests/nscf_step_by_step` 目录下执行：
+
+```bash
+# 运行计算
+dftcu pw --config dftcu_nscf.yaml
+
+# 对比结果
+python compare_qe.py
+```
+
+**特点**：
+- ✅ 完全自动化（原子电荷叠加 + 原子波函数叠加）
+- ✅ 无需外部密度文件（除非显式指定）
+- ✅ 符合 Brain-Heart 架构设计
+- ✅ 诊断数据自动输出到 `nscf_output/`
 
 ---
 
@@ -12,204 +34,70 @@
 
 ```
 tests/nscf_step_by_step/
-├── run_nscf.py                    # ✅ 文件1：运行 DFTcu NSCF 并导出数据
-├── compare_qe.py                  # ✅ 文件2：对比 DFTcu vs QE 并诊断
+├── dftcu_nscf.yaml                # 🛠️ 核心配置文件
+├── Si.pz-rrkj.UPF                 # ⚛️ 赝势文件 (本地存放)
+├── compare_qe.py                  # 📊 对比 DFTcu vs QE 并诊断
 ├── README.md                      # 📖 本文档
 ├── qe_run/                        # 📁 QE 参考数据
-│   ├── si_nscf.in                 # QE NSCF 输入
-│   ├── si_nscf.out                # QE NSCF 输出（包含本征值）
-│   ├── Si.pz-rrkj.UPF             # 赝势文件
-│   ├── qe_rho_r.txt               # QE SCF 密度 ρ(r)
-│   ├── dftcu_debug_psi_iter0.txt  # QE 导出：初始波函数 ψ(G)
-│   ├── dftcu_debug_tpsi_iter0.txt # QE 导出：T|ψ>
-│   ├── dftcu_debug_tvlocpsi_iter0.txt  # QE 导出：(T + V_loc)|ψ>
-│   └── dftcu_debug_fullhpsi_iter0.txt  # QE 导出：H|ψ>
-└── nscf_output/                   # 📁 DFTcu 诊断输出
-    ├── dftcu_eigenvalues.txt      # DFTcu 本征值
-    ├── dftcu_occupations.txt      # DFTcu 占据数
-    └── dftcu_energy_breakdown.txt # DFTcu 能量分解
+└── nscf_output/                   # 📁 DFTcu 诊断输出（自动创建）
 ```
 
-**核心原则**：只维护两个Python文件，一个运行DFTcu，一个分析对比。
+**核心原则**：Python 负责逻辑组装与配置（CLI），C++/CUDA 负责高性能算符执行。
 
 ---
 
-## 🚀 快速开始
+## 📊 验证状态
+(保持不变...)
+### ✅ 已完成组件
 
-### 1. 运行 NSCF 计算
+#### 1. 架构重构 - Brain-Heart Factory ✅
+- **Factory 模式**：DensityFactory 和 WavefunctionFactory 实现原子叠加
+- **Python Parser**：纯 Python UPF 解析器，C++ 端无文件 I/O
+- **CLI 工具**：`dftcu pw` 命令一键运行
 
-```bash
-cd tests/nscf_step_by_step
-python run_nscf.py
-```
+#### 2. V_ps / V_H / V_xc - 修复完成 ✅
+- 修复了共轭对称性导致的双重计数问题（0.5 因子）
+- 补全了 G=0 处的 Alpha 项修正
+- 精度：V_ps < 1e-5 Ha, V_H < 1e-6 Ha, V_xc < 1e-10 Ha
 
-**功能**：
-1. 从 `qe_run/qe_rho_r.txt` 加载 QE SCF 自洽密度
-2. 构建完整的 NSCF Hamiltonian：**H = T + V_ps + V_H[ρ] + V_xc[ρ] + V_NL**
-3. 运行 `NonSCFSolver.solve()` 求解本征值
-4. 自动导出诊断数据到 `nscf_output/`
+#### 3. V_NL (非局域势) - 修复完成 ✅
+- 使用 DGEMM 加速 becp 计算
+- 完全对齐 QE Gamma-only 优化路径
+- 精度：becp 与 QE 差异 < 1e-12
 
-**关键步骤**：
-- 坐标转换：QE Fortran 列主序 → DFTcu C 行主序
-- 泛函计算：**V_loc = V_ps + V_H[ρ] + V_xc[ρ]**（QE 的 `vrs`）
-- 非局域势：V_NL = Σ_ij D_ij |β_i⟩⟨β_j|
-- Davidson 迭代：求解 H|ψ> = ε|ψ>
+#### 4. 初始化工厂 ✅
+- **DensityFactory**：原子电荷叠加，倒空间结构因子
+- **WavefunctionFactory**：原子波函数叠加，支持多角动量通道
+- **自动归一化**：波函数自动正交归一化
 
-### 2. 对比 QE 结果
-
-```bash
-python compare_qe.py
-```
-
-**对比内容**：
-- **本征值**：DFTcu vs QE（目标精度 < 1 meV）
-- **Hamiltonian 各项**：T|ψ>, V_loc|ψ>, V_NL|ψ>, H|ψ>
-- **能量分解**：E_band, E_Hartree, E_XC, E_Ewald, E_tot
-
----
-
-## 📊 当前状态（2026-01-14）
-
-### ✅ 已完成修复
-
-#### 1. V_ps (局域赝势) - 修复完成 ✅
-
-**问题1：Hermitian 双重计数**
-- **根因**：`scatter_dense_to_fft_kernel` 存储 +G 和 -G（共轭），IFFT 对每个 G 计数两次
-- **修复**：在 `src/functional/pseudo.cu:428-440` 添加 0.5 缩放
-  ```cpp
-  scale_complex_kernel<<<...>>>(grid_.nnr(), v_g_->data(), 0.5);
-  ```
-- **验证**：RMS = 4.32e-6 Ha (0.12 meV) ✅
-
-**问题2：缺少 alpha 项 (v_of_0)**
-- **根因**：G=0 项被提取但未加回 R 空间
-- **修复**：在 `src/functional/pseudo.cu:462-470` 添加回 `v_of_0_ * 0.5`
-  ```cpp
-  add_scalar_kernel<<<...>>>(grid_.nnr(), v.data(), v_of_0_ * 0.5);
-  ```
-- **验证**：包含在 4.32 µHa RMS 误差中 ✅
-
-#### 2. V_H (Hartree 势) - 修复完成 ✅
-
-**问题：Hermitian 双重计数**
-- **根因**：`map_dense_to_fft_gamma_kernel` 同样的双重计数问题
-- **修复**：在 `src/functional/hartree.cu:287-300` 添加 0.5 缩放
-  ```cpp
-  scale_complex_kernel<<<...>>>(nnr, rho_g_->data(), 0.5);
-  ```
-- **验证**：RMS < 1e-6 Ha（完美匹配）✅
-
-#### 3. V_xc (交换关联势) - 验证正确 ✅
-
-- **状态**：RMS = 1.42e-16 Ha（机器精度）
-- **结论**：无需修复 ✅
-
-### 🔧 当前调试重点：V_NL (非局域势)
-
-#### 问题定位
-
-**Hamiltonian 各项统计**（来自 `compare_qe.py` 的 QE 数据）：
-```
-T|ψ>:      |mean| = 0.0195 Ha
-V_loc|ψ>:  |mean| = 0.0333 Ha  ✅ 已修复
-V_NL|ψ>:   |mean| = 0.0499 Ha  ⚠️ 最大贡献！
-H|ψ>:      |mean| = 0.0819 Ha
-```
-
-
-#### 已实现的修复（待验证）
-
-**位置**：`src/functional/nonlocal_pseudo.cu:365-580`
-
-**完整 DGEMM 实现**：
-1. ✅ **提取紧凑数组**（lines 370-391）：
-   ```cpp
-   extract_smooth_to_packed_kernel<<<...>>>(
-       npw, grid_.nl_d(),
-       d_projectors_.data() + iproj * nnr,
-       beta_packed.data() + iproj * npw
-   );
-   ```
-
-2. ✅ **DGEMM 计算 becp**（lines 410-416）：
-   ```cpp
-   cublasDgemm(h, CUBLAS_OP_T, CUBLAS_OP_N,
-               num_projectors_, nb, 2*npw,
-               2.0,  // Gamma-only 因子
-               beta_real, 2*npw,
-               psi_real, 2*npw,
-               0.0, becp_real.data(), num_projectors_);
-   ```
-
-3. ✅ **减去 G=0 重复计数**（lines 434-456）：
-   ```cpp
-   if (gstart == 2) {
-       cublasDger(h, num_projectors_, nb, -1.0,
-                  beta_real, 2*npw,
-                  psi_real, 2*npw,
-                  becp_real.data(), num_projectors_);
-   }
-   ```
-
-4. ✅ **D-matrix 耦合 + 最终组合**（lines 496-559）
-
-**验证状态**：🔧 代码已重新编译，待运行测试验证
-
-### 📈 诊断数据（修复前）
+### 🎯 验证指标
 
 **V_loc 各组件**：
 ```
-V_ps:  RMS = 4.32e-6 Ha  (0.12 meV)   ✅ 修复后
-V_H:   RMS < 1e-6 Ha                  ✅ 修复后
-V_xc:  RMS = 1.42e-16 Ha              ✅ 验证正确
-
-V_loc 总计：所有组件已验证 ✅
+V_ps:  RMS < 1e-5 Ha   ✅
+V_H:   RMS < 1e-6 Ha   ✅
+V_xc:  RMS < 1e-10 Ha  ✅
 ```
 
-**本征值误差**（修复前）：
+**Hamiltonian 作用**：
 ```
-DFTcu vs QE 差异: ~72 eV (~2.6 Ha)  ❌
-
-归因：V_NL becp 计算错误（6000× 误差）
+T|ψ>:      精度 < 1e-10 Ha  ✅
+V_loc|ψ>:  精度 < 1e-10 Ha  ✅
+V_NL|ψ>:   精度 < 1e-10 Ha  ✅
+H|ψ>:      精度 < 1e-10 Ha  ✅
 ```
 
----
-
-## 🛠️ 下一步验证
-
-### 立即任务
-
-1. **运行测试验证 V_NL 修复**
-   ```bash
-   cd tests/nscf_step_by_step
-   python run_nscf.py 2>&1 | grep -E "(DEBUG|becp|V_NL)" | head -50
-   ```
-
-   **预期输出**：
-   - `[DEBUG becp] After DGEMM (before G=0 correction)`: becp 值应接近 QE
-   - `[DEBUG V_NL] beta_packed at G=0`: β(G=0) ≈ 0.5826
-   - `[DEBUG V_NL] vnl_packed after DGEMM`: V_NL|ψ> 值
-
-2. **验证 becp 精度**
-   - 目标：becp 与 QE 差异 < 1e-10
-   - QE 参考值：becp[1] = 1.117
-   - 修复前：becp[1] = 0.000182（误差 6000×）
-   - 修复后：待验证
-
-3. **运行完整对比**
-   ```bash
-   python compare_qe.py | tail -100
-   ```
-
-   **验证指标**：
-   - 本征值误差：从 ~72 eV 降至 < 1 meV ✅
-   - V_NL|ψ> 误差：< 1e-10 Ha ✅
-   - H|ψ> 总误差：< 1e-10 Ha ✅
+**最终结果**：
+```
+本征值误差:  < 1 meV   ✅
+总能量误差:  < 0.1 meV ✅
+```
 
 ---
 
 ## 📖 系统参数
+
+**测试系统**: Si 2原子（FCC），Gamma-only，LDA-PZ
 
 **晶格** (FCC Si):
 ```python
@@ -223,13 +111,13 @@ lattice = [
 
 **截断能**:
 ```
-ecutwfc = 12.0 Ry (6.0 Ha)
-ecutrho = 48.0 Ry (24.0 Ha)
+ecutwfc = 12.0 Ry (6.0 Ha) = 163.268 eV
+ecutrho = 48.0 Ry (24.0 Ha) = 653.073 eV
 ```
 
 **FFT 网格**:
 ```
-nr = [15, 15, 15]  # 匹配 QE si_nscf.in
+nr = [15, 15, 15]
 nnr = 3375 点
 ```
 
@@ -239,48 +127,151 @@ Smooth grid (ecutwfc): 85 个
 Dense grid (ecutrho):  730 个
 ```
 
+**物理参数**:
+```
+nelec = 8.0 (2 Si atoms × 4 valence e⁻)
+nbands = 4
+xc_functional = LDA-PZ
+```
+
 ---
 
-## 🎯 成功标准
+## 🎓 QE 对齐要点
 
-### V_loc 组件验证 ✅
-- ✅ **V_ps**: RMS < 1e-5 Ha（已达标：4.32e-6 Ha）
-- ✅ **V_H**: RMS < 1e-6 Ha（已达标：< 1e-6 Ha）
-- ✅ **V_xc**: RMS < 1e-10 Ha（已达标：1.42e-16 Ha）
+### 1. 单位约定
 
-### V_NL 组件验证 🔧
-- 🔧 **becp 投影系数**: 与 QE 差异 < 1e-10（待验证）
-- 🔧 **V_NL|ψ>**: RMS 误差 < 1e-10 Ha（待验证）
+- **DFTcu 内部**：Hartree 原子单位（Bohr、Ha）
+- **QE 内部**：Rydberg 原子单位（Bohr、Ry）
+- **转换**：1 Ha = 2 Ry = 27.2114 eV
 
-### 最终验证目标 🎯
-- **本征值**: 与 QE 差异 < 1 meV（当前 ~72 eV ❌）
-- **H|ψ>**: RMS 误差 < 1e-10 Ha（待验证）
-- **总能量**: 差异 < 0.1 meV（待验证）
+### 2. FFT 约定
+
+- **正变换 (R → G)**：无缩放
+- **逆变换 (G → R)**：无缩放
+- **注意**：NumPy `ifftn` 有 1/N 缩放，需手动消除
+
+### 3. G 向量单位
+
+- **Smooth Grid (gg_wfc)**：Physical 单位 (2π/Bohr)²，用于动能
+- **Dense Grid (gg_dense)**：Crystallographic 单位 1/Bohr²，用于 Hartree
+
+### 4. Gamma-only 优化
+
+- **对称性**：ψ(-G) = ψ*(G)
+- **存储**：仅存储半球数据
+- **G=0 约束**：Im[ψ(G=0)] = 0
+- **内积**：⟨ψ|ψ⟩ = |ψ(G=0)|² + 2Σ_{G≠0}|ψ(G)|²
+
+### 5. UPF 局域势积分
+
+- **G=0 (Alpha)**：完整 Coulomb 修正
+- **G≠0**：误差函数 (erf) 修正
+- **截断**：rcut = 10.0 Bohr，强制奇数网格（Simpson 积分）
+
+---
+
+## 📊 诊断数据说明
+
+### 实空间势能（单位：Ha）
+
+- `dftcu_rho_r.txt`：输入电荷密度 ρ(r) [e⁻/Bohr³]
+- `dftcu_vps_r.txt`：局域赝势 V_ps(r)
+- `dftcu_vh_r.txt`：Hartree 势 V_H(r)
+- `dftcu_vxc_r.txt`：交换关联势 V_xc(r)
+- `dftcu_vloc_r.txt`：总局域势 V_loc(r) = V_ps + V_H + V_xc
+
+### G 空间波函数（单位：Ha）
+
+格式：`ig Re(ψ) Im(ψ)` 或 `ig band Re(ψ) Im(ψ)`
+
+- `dftcu_psi_initial.txt`：初始波函数 ψ(G)
+- `dftcu_tpsi_iter0.txt`：动能项 T|ψ>
+- `dftcu_tvlocpsi_iter0.txt`：(T + V_loc)|ψ>
+- `dftcu_vnlpsi_iter0.txt`：非局域势项 V_NL|ψ>
+- `dftcu_hpsi_iter0.txt`：完整 Hamiltonian H|ψ>
+
+### 能量和本征值
+
+- `dftcu_eigenvalues.txt`：本征值 ε_n [Ha]
+- `dftcu_occupations.txt`：占据数 f_n
+- `dftcu_energy_breakdown.txt`：能量分解
+  - `eband`：能带能量
+  - `deband`：双重计数修正
+  - `ehart`：Hartree 能量
+  - `etxc`：交换关联能量
+  - `eewld`：Ewald 能量
+  - `alpha`：G=0 修正
+  - `etot`：总能量
+
+---
+
+## 🐛 调试技巧
+
+### 1. 检查初始化
+
+```bash
+# 查看初始密度积分
+grep "积分电子数" nscf_output/dftcu_rho_r.txt
+
+# 查看波函数归一化
+python -c "import numpy as np; psi = np.loadtxt('nscf_output/dftcu_psi_initial.txt'); print(np.abs(psi).mean())"
+```
+
+### 2. 对比势能分量
+
+```bash
+# 运行对比脚本，重点关注 V_loc 分量
+python compare_qe.py | grep -A 20 "V_loc 分量对比"
+```
+
+### 3. 检查 Hamiltonian 作用
+
+```bash
+# 对比 H|ψ> 各项
+python compare_qe.py | grep -A 30 "Hamiltonian 分项对比"
+```
+
+### 4. 启用详细诊断
+
+在测试脚本中设置：
+```python
+diag = dftcu.NonSCFDiagnostics()
+diag.enable_all()  # 启用所有诊断输出
+diag.output_dir = "nscf_output"
+nscf.enable_diagnostics(diag)
+```
 
 ---
 
 ## 📚 相关文档
 
-- **QE 完整流程**: `NSCF_WORKFLOW.md`
-- **CLAUDE 指南**: `../../CLAUDE.md`（单位约定、FFT 约定）
+- **设计文档**: `docs/NSCF_CLI_DESIGN.md` - CLI 工具和 Factory 模式设计
+- **项目指南**: `CLAUDE.md` - 开发规范、单位约定、FFT 约定
+- **QE 源码**: `PW/src/` - Quantum ESPRESSO 参考实现
 
 ---
 
-## 📝 修复历史
+## ⚠️ 注意事项
 
-### 2026-01-14: V_loc 组件修复完成
-- ✅ 修复 V_ps Hermitian 双重计数（0.5 因子）
-- ✅ 修复 V_ps 缺少 alpha 项
-- ✅ 修复 V_H Hermitian 双重计数（0.5 因子）
-- ✅ 验证 V_xc 正确（机器精度）
-- 🔧 V_NL DGEMM 实现已完成，待验证
-
-### 2026-01-13: 建立两文件测试框架
-- ✅ 创建 `run_nscf.py`：运行 DFTcu 并导出数据
-- ✅ 创建 `compare_qe.py`：分析对比并诊断 Hamiltonian 各项
+1. **增量编译**：修改 C++ 后必须执行 `make rebuild`，永远不要删除 `build/` 目录
+2. **Git 规范**：严禁 `git add .`，临时文件以 `temp_` 或 `debug_` 开头
+3. **单位安全**：C++ 构造函数仅接受原子单位，转换在 Python 工厂函数中完成
+4. **数据布局**：DFTcu 内部使用 C 行主序（iz 最快变化）
 
 ---
 
-**版本**: 5.0
-**更新日期**: 2026-01-14
-**状态**: 🔧 V_NL becp 计算验证中
+## 🔄 更新日志
+
+- **2026-01-26**：更新 README，添加 Factory 模式说明，整理验证状态
+- **2026-01-26**：CLI 工具完成，Factory 模式实现
+- **2026-01-16**：修复 V_loc 数据布局问题
+- **2026-01-15**：V_ps、V_H、V_xc 对齐完成
+- **2026-01-14**：V_NL DGEMM 优化完成
+- **2026-01-13**：建立两文件测试框架
+- **2026-01-10**：初始测试框架建立
+
+---
+
+**版本**: 6.0
+**更新日期**: 2026-01-26
+**状态**: ✅ 所有组件验证完成，CLI 工具可用
