@@ -120,7 +120,6 @@ def validate(config_file, verbose):
         if config.solver:
             click.echo("Solver 配置 (Numerical Solver):")
             click.echo(f"  - 使用 GPU: {config.solver.use_gpu}")
-            click.echo(f"  - 诊断输出: {config.solver.enable_diagnostics}")
             click.echo()
 
         # 验证晶格向量

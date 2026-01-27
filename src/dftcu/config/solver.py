@@ -89,11 +89,3 @@ class SolverConfig(DFTcuBaseConfig):
     use_gpu: bool = Field(default=True, description="是否使用 GPU 加速")
 
     gpu_id: int = Field(default=0, ge=0, description="GPU 设备 ID")
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # 诊断
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    enable_diagnostics: bool = Field(default=False, description="是否启用诊断输出")
-
-    diagnostics_dir: str = Field(default="./diagnostics", description="诊断输出目录")

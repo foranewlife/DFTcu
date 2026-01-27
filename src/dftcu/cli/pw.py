@@ -195,8 +195,6 @@ def _run_nscf(config: DFTcuConfig, verbose: int):
     wf_config = dftcu.NSCFWorkflowConfig()
     wf_config.nbands = config.physics.nbands
     wf_config.nelec = config.physics.nelec
-    wf_config.enable_diagnostics = config.task.verbosity == "high"
-    wf_config.output_dir = config.task.outdir
 
     # ✅ 新接口：不需要手动组装 Hamiltonian、Density、Wavefunction
     workflow = dftcu.NSCFWorkflow(grid, atoms, pseudo_data_list, wf_config)
