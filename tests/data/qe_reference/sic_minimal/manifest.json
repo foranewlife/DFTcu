@@ -1,0 +1,74 @@
+{
+  "metadata": {
+    "qe_version": "7.x",
+    "capture_date": "2026-01-28",
+    "input_file": "../../inputs/sic_minimal.in",
+    "pseudopotentials": {
+      "Si": "../../pseudopotentials/Si.pz-rrkj.UPF",
+      "C": "../../pseudopotentials/C.pz-vbc.UPF"
+    },
+    "parameters": {
+      "ecutwfc_ry": 20.0,
+      "ecutrho_ry": 80.0,
+      "celldm1_bohr": 8.22,
+      "omega_bohr3": 138.853062,
+      "nr1": 18,
+      "nr2": 18,
+      "nr3": 18,
+      "nnr": 5832,
+      "ngm_dense": 730,
+      "nqx": 898,
+      "dq": 0.01
+    }
+  },
+  "upf_radial": {
+    "Si": {
+      "file": "upf_radial_Si.dat",
+      "msh": 957,
+      "zp": 4.0,
+      "unit": "Ry",
+      "description": "UPF radial mesh data: r, rab, vloc_r"
+    },
+    "C": {
+      "file": "upf_radial_C.dat",
+      "msh": 219,
+      "zp": 4.0,
+      "unit": "Ry",
+      "description": "UPF radial mesh data: r, rab, vloc_r"
+    }
+  },
+  "vloc_tab": {
+    "Si": {
+      "file": "vloc_tab_Si.dat",
+      "atom_type": 1,
+      "zp": 4.0,
+      "unit": "Ry"
+    },
+    "C": {
+      "file": "vloc_tab_C.dat",
+      "atom_type": 2,
+      "zp": 4.0,
+      "unit": "Ry"
+    }
+  },
+  "v_ps_r": {
+    "file": "v_ps_r.dat",
+    "index": ["ir"],
+    "unit": "Ha",
+    "description": "3D local pseudopotential in real space V_ps(r)"
+  },
+  "vloc_g": {
+    "file": "vloc_g.dat",
+    "index": ["ig"],
+    "unit": "Ry",
+    "description": "V_loc(G) with structure factor (complex)"
+  },
+  "mill_dense": {
+    "file": "mill_dense.dat",
+    "description": "Dense grid Miller indices (h, k, l)"
+  },
+  "nl_dense": {
+    "file": "nl_dense.dat",
+    "description": "Dense grid nl/nlm mapping to FFT grid"
+  }
+}
