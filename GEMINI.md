@@ -5,9 +5,10 @@
 | 操作 | 命令 |
 |------|------|
 | 增量编译 | `make rebuild`（**禁止**删除 `build/`） |
-| 运行测试 | `dftcu pw --config examples/nscf_si.yaml` |
-| 对齐验证 | `cd tests/nscf_step_by_step && python compare_qe.py` |
-
+| Debug 编译 | `make debug`（启用调试符号） |
+| 运行全部测试 | `make test`（C++ ctest + Python pytest） |
+| 运行 CLI | `dftcu pw --config examples/nscf_si.yaml` |
+| QE 编译 | `cd external/qe; cmake --build build` |
 **开发红线**：
 - ❌ `git add .`（严禁）
 - ❌ C++ 层文件 I/O（调试用单元测试）
@@ -209,27 +210,46 @@ WavefunctionBuilder ──▶ Wavefunction ──▶ Hamiltonian ──▶ H|ψ�
 
 ## 🧪 测试与验证
 
-### 测试系统
-- **系统**：Si 2原子（FCC），Gamma-only，LDA-PZ
-- **位置**：`tests/nscf_step_by_step/`
+### ⚠️ 测试开发流程（必读）
 
-### 分项验证状态
-| 项目 | 状态 |
-|------|------|
-| V_ps (局域赝势) | ✅ 已修复 Hermitian 双重计数 |
-| V_H (Hartree 势) | ✅ 已修复 Hermitian 双重计数 |
-| V_xc (交换关联势) | ✅ 机器精度对齐 |
-| V_NL (非局域势) | 🔄 调试中 |
+添加新测试时，**必须遵循 `tests/README.md` 的四步法**：
+
+1. **代码分解分析**：识别 `[PURE]` vs `[SIDE_EFFECT]` 函数
+2. **测试类型矩阵**：确定测试策略（解析解 / QE Golden Data）
+3. **QE 数据截获**：从 QE 真实运行中截获带索引的中间数据
+4. **数据标准化**：静态物理档案入库（manifest.json + 数值文件）
+
+**禁止**：直接编写测试代码而跳过数据准备步骤。
+
+### 测试架构（物理契约体系）
+
+基于 **物理契约 (Physical Contract)** 的 GTest C++ 测试框架，详见 `tests/README.md`。
+
+| 维度 | 验证重点 | 工具 |
+|------|----------|------|
+| 物理算子 (Functional) | 1D/3D 插值、径向积分、泛函公式 | GTest + Indexed Ref |
+| 代数算法 (Solver) | $H|\psi\rangle$ 作用、子空间对角化 | GTest + Analytic Check |
+| 端到端 (Workflow) | SiC 体系全流程对齐 | CLI + Regression Pack |
+
+### 索引锁定规范
+- **实空间**：`(ix, iy, iz)` 逻辑网格坐标
+- **倒空间**：Miller 指数 `(h, k, l)`
+- **原子/投影项**：`(atom_type, atom_index, proj_l, proj_m)`
 
 ### 运行测试
 ```bash
-# CLI 方式
-dftcu pw --config examples/nscf_si.yaml
+# 全部测试（推荐）
+make test
 
-# 分步调试
-cd tests/nscf_step_by_step
-python run_nscf.py && python compare_qe.py
+# 仅 C++ 测试
+cd build && ctest --output-on-failure
+
+# 仅 Python 测试
+make test-python
 ```
+
+### ⚠️ 过时目录
+- `tests/nscf_step_by_step/` — 已过时，请使用 `tests/unit/` 和 `tests/data/`
 
 ---
 
