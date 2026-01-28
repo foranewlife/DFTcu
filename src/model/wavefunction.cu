@@ -121,20 +121,21 @@ __global__ void set_coefficients_miller_kernel(int nr0, int nr1, int nr2, int np
         int n1 = (k_val % nr1 + nr1) % nr1;
         int n2 = (l_val % nr2 + nr2) % nr2;
         size_t nnr_v = (size_t)nr0 * nr1 * nr2;
-        // ✅ Column-major (Fortran-style) indexing to match QE
-        size_t idx = (size_t)n0 + n1 * nr0 + n2 * nr0 * nr1;
+        // Row-major (C-style) indexing to match nl_d convention
+        // idx = n0 * (nr1*nr2) + n1 * nr1 + n2
+        size_t idx = (size_t)n0 * (nr1 * nr2) + n1 * nr1 + n2;
 
         for (int b = 0; b < num_bands; ++b) {
             gpufftComplex val = values[b * npw + ig];
 
             if (expand_hermitian && (h_val != 0 || k_val != 0 || l_val != 0)) {
-                // ✅ QE Gamma-only 数据已经包含 sqrt(2) 因子
+                // QE Gamma-only 数据已经包含 sqrt(2) 因子
                 // 直接展开到 -G 位置（复共轭），无需额外归一化
                 int n0_i = (-h_val % nr0 + nr0) % nr0;
                 int n1_i = (-k_val % nr1 + nr1) % nr1;
                 int n2_i = (-l_val % nr2 + nr2) % nr2;
-                // ✅ Column-major (Fortran-style) indexing to match QE
-                size_t idx_i = (size_t)n0_i + n1_i * nr0 + n2_i * nr0 * nr1;
+                // Row-major (C-style) indexing to match nl_d convention
+                size_t idx_i = (size_t)n0_i * (nr1 * nr2) + n1_i * nr1 + n2_i;
                 data[b * nnr_v + idx_i].x = val.x;
                 data[b * nnr_v + idx_i].y = -val.y;
             }

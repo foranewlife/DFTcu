@@ -62,39 +62,56 @@ inline PseudopotentialData create_pseudo_from_radial(const UPFRadialData& radial
 
 /**
  * @brief Base fixture for DFTcu tests.
- * Sets up a standard 16x16x16 grid for SiC zinc-blende.
+ * Sets up 18x18x18 grid for SiC zinc-blende matching QE sic_minimal reference.
+ *
+ * QE Parameters (from manifest.json):
+ * - celldm(1) = 8.22 Bohr
+ * - ecutwfc = 20 Ry, ecutrho = 80 Ry
+ * - nr1 = nr2 = nr3 = 18
+ * - omega = 138.853062 Bohr³
+ * - ibrav = 2 (FCC)
  */
 class SiCFixture : public ::testing::Test {
   protected:
     void SetUp() override {
-        // Standard SiC lattice (Zinc-blende)
-        // alat = 4.36 Angstrom (approx)
-        double alat = 4.3596;
-        std::vector<std::vector<double>> lattice = {{0.0, alat / 2.0, alat / 2.0},
-                                                    {alat / 2.0, 0.0, alat / 2.0},
-                                                    {alat / 2.0, alat / 2.0, 0.0}};
+        // SiC lattice matching QE sic_minimal reference
+        // celldm(1) = 8.22 Bohr, ibrav = 2 (FCC)
+        double alat_bohr = 8.22;
+        std::vector<std::vector<double>> lattice_bohr = {{-alat_bohr / 2.0, 0.0, alat_bohr / 2.0},
+                                                         {0.0, alat_bohr / 2.0, alat_bohr / 2.0},
+                                                         {-alat_bohr / 2.0, alat_bohr / 2.0, 0.0}};
 
-        std::vector<int> nr = {16, 16, 16};
-        double ecutwfc_ry = 30.0;
-        double ecutrho_ry = 120.0;
+        // Convert to Angstrom for factory (which expects Angstrom input)
+        double bohr_to_ang = 0.529177;
+        std::vector<std::vector<double>> lattice_ang;
+        for (const auto& v : lattice_bohr) {
+            lattice_ang.push_back({v[0] * bohr_to_ang, v[1] * bohr_to_ang, v[2] * bohr_to_ang});
+        }
+
+        // QE reference: 18³ grid, 20 Ry wfc cutoff, 80 Ry rho cutoff
+        std::vector<int> nr = {18, 18, 18};
+        double ecutwfc_ry = 20.0;
+        double ecutrho_ry = 80.0;
 
         // Create Grid using factory
-        grid = create_grid_from_qe(lattice, nr, ecutwfc_ry, ecutrho_ry, true);
+        grid_ = create_grid_from_qe(lattice_ang, nr, ecutwfc_ry, ecutrho_ry, true);
 
-        // Create SiC atoms
+        // Create SiC atoms (Si at origin, C at 1/4,1/4,1/4)
         std::vector<std::string> elements = {"Si", "C"};
         std::vector<std::vector<double>> positions = {
             {0.0, 0.0, 0.0},    // Si at origin
             {0.25, 0.25, 0.25}  // C at (1/4, 1/4, 1/4)
         };
-        // POSCAR-style fractional to Cartesian handled by factory if cartesian=false
-        atoms = create_atoms_from_structure(elements, positions, lattice, false, {"Si", "C"},
-                                            {{"Si", 4.0}, {"C", 4.0}});
+        atoms_ = create_atoms_from_structure(elements, positions, lattice_ang, false, {"Si", "C"},
+                                             {{"Si", 4.0}, {"C", 4.0}});
     }
 
-    std::unique_ptr<Grid> grid;
-    std::shared_ptr<Atoms> atoms;
+    std::unique_ptr<Grid> grid_;
+    std::shared_ptr<Atoms> atoms_;
 };
+
+// SiCMinimalFixture is now an alias for SiCFixture (they use the same parameters)
+using SiCMinimalFixture = SiCFixture;
 
 }  // namespace test
 }  // namespace dftcu

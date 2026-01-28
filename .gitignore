@@ -63,6 +63,8 @@ external/vasp*
 alignment_tests/
 run_qe_lda/qe_*.txt
 run_qe_lda/qe_*.dat
+# Ignore .dat files except in tests/data (managed by git-lfs)
 *.dat
+!tests/data/**/*.dat
 *.mix*
 *.save/

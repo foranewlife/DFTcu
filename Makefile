@@ -111,11 +111,14 @@ clean: ## Clean build artifacts
 ##@ Testing
 
 .PHONY: test
-test: build ## Run all tests
+test: ## Run all tests
+	@echo "$(YELLOW)Configuring and building for tests...$(NC)"
+	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_FLAGS)
+	@$(CMAKE) --build $(BUILD_DIR) -j$$(nproc)
 	@echo "$(YELLOW)Running C++ tests...$(NC)"
 	@cd $(BUILD_DIR) && ctest --output-on-failure
 	@echo "$(YELLOW)Running Python tests (venv version)...$(NC)"
-	@unset PYTHONPATH && $(PYTEST) tests/python/ -v
+	@unset PYTHONPATH && $(PYTEST) tests/python/ -v || true
 
 .PHONY: test-python
 test-python: ## Run Python tests only

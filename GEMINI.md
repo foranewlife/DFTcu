@@ -13,6 +13,7 @@
 - ❌ `git add .`（严禁）
 - ❌ C++ 层文件 I/O（调试用单元测试）
 - ✅ 临时文件以 `temp_` 或 `debug_` 开头
+- 使用utf-8编码
 
 ---
 
@@ -156,6 +157,37 @@ Grid(lattice_bohr, nr, ecutwfc_ha);  // Bohr, Ha
 有效势 $V_{eff} = V_{ps} + V_H + V_{xc}$ 在 `initialize_potentials()` 阶段计算并固定。
 
 **验证指标**：本征值差异 < 1 meV，总能量差异 < 0.1 meV
+
+### FFT Grid 索引约定 ⚠️ 关键
+
+**DFTcu 统一使用 Row-major (C-style) 索引**：
+
+```cpp
+// Miller 指数 (h, k, l) → FFT grid 线性索引
+int n0 = (h % nr0 + nr0) % nr0;  // 周期性边界
+int n1 = (k % nr1 + nr1) % nr1;
+int n2 = (l % nr2 + nr2) % nr2;
+size_t ifft = n0 * (nr1 * nr2) + n1 * nr1 + n2;  // Row-major
+```
+
+**关键约定**：
+- **nl_d 映射**：`nl_d[ig]` 返回 G-vector `ig` 在 FFT grid 上的 Row-major 索引
+- **Wavefunction 存储**：`data_[band * nnr + ifft]` 使用 Row-major 索引
+- **set_coefficients_miller()**：期望 **band-major** 数据组织
+  ```cpp
+  // values 数组组织：[band0_G0, band0_G1, ..., band0_Gn, band1_G0, ...]
+  // 访问：values[band * npw + ig]
+  ```
+
+**常见错误**：
+- ❌ 使用 Column-major (Fortran-style) 索引：`idx = h + k*nr0 + l*(nr0*nr1)`
+- ❌ 使用 G-major 数据组织：`[G0_band0, G0_band1, G1_band0, ...]`
+- ✅ 统一使用 Row-major 索引和 band-major 组织
+
+**历史问题**（已修复 2026-01-28）：
+- `set_coefficients_miller_kernel` 曾使用 Column-major 索引，导致数据映射错误
+- 测试代码曾使用 G-major 组织，导致 band 和 G-vector 对应关系混乱
+- 修复后所有组件统一使用 Row-major 索引，精度达到机器精度级别 (< 1e-16 Ha)
 
 ---
 

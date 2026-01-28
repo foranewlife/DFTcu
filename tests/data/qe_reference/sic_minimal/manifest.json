@@ -8,9 +8,10 @@
       "C": "../../pseudopotentials/C.pz-vbc.UPF"
     },
     "parameters": {
+      "ibrav": 2,
+      "celldm1_bohr": 8.22,
       "ecutwfc_ry": 20.0,
       "ecutrho_ry": 80.0,
-      "celldm1_bohr": 8.22,
       "omega_bohr3": 138.853062,
       "nr1": 18,
       "nr2": 18,
@@ -18,7 +19,8 @@
       "nnr": 5832,
       "ngm_dense": 730,
       "nqx": 898,
-      "dq": 0.01
+      "dq": 0.01,
+      "_note": "nr1/nr2/nr3 are auto-calculated by QE from ecutrho"
     }
   },
   "upf_radial": {
@@ -56,6 +58,34 @@
     "index": ["ir"],
     "unit": "Ha",
     "description": "3D local pseudopotential in real space V_ps(r)"
+  },
+  "rho_r": {
+    "file": "rho_r.dat",
+    "index": ["ix", "iy", "iz"],
+    "unit": "e/Bohr^3",
+    "description": "Electron density in real space (first SCF iteration)"
+  },
+  "v_xc_r": {
+    "file": "v_xc_r.dat",
+    "index": ["ix", "iy", "iz"],
+    "unit": "Ry",
+    "description": "LDA PZ exchange-correlation potential in real space"
+  },
+  "v_h_r": {
+    "file": "v_h_r.dat",
+    "index": ["ix", "iy", "iz"],
+    "unit": "Ry",
+    "description": "Hartree potential in real space"
+  },
+  "e_xc": {
+    "file": "e_xc.dat",
+    "unit": "Ry",
+    "description": "Exchange-correlation energy"
+  },
+  "e_hartree": {
+    "file": "e_hartree.dat",
+    "unit": "Ry",
+    "description": "Hartree energy"
   },
   "vloc_g": {
     "file": "vloc_g.dat",

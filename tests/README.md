@@ -224,11 +224,137 @@ UPF radial data → init_tab_vloc() → vloc_tab[iq]
 - 最大绝对误差: 1.97e-6 Ha (0.05 meV)
 - DFTcu/QE 比例: 1.0000
 
-**Mock UPF 方案**：
-为绕过 Python UPF 解析器依赖，采用 Mock UPF 方案：
-1. 从 QE 截获 UPF 径向数据 (r, rab, vloc_r)
-2. 保存为 `upf_radial_*.dat` 格式
-3. C++ 侧直接加载构建 PseudopotentialData
+---
+
+### LDA_PZ XC 泛函测试 ✅
+
+**物理流程验证**：
+```
+ρ(r) → lda_pz_kernel() → V_xc(r), ε_xc(r)
+     → ∫ ε_xc(r) dr → E_xc
+```
+
+**测试文件**：
+- `tests/unit/functional/test_lda_pz.cu` - 6 个单元测试
+- `tests/integration/functional/test_lda_pz.cu` - 4 个集成测试
+
+**单元测试覆盖**：
+| 测试 | 验证内容 |
+|------|----------|
+| `Exchange_HighDensity_rs_LessThan1` | 高密度区 (rs < 1) 交换公式 |
+| `Correlation_LowDensity_rs_GreaterThan1` | 低密度区 (rs ≥ 1) PZ 关联公式 |
+| `ZeroDensity_ReturnsZero` | 零密度返回零势 |
+| `BelowThreshold_ReturnsZero` | 阈值以下密度处理 |
+| `NegativeDensity_UsesAbsValue` | 负密度使用绝对值（与 QE 一致）|
+| `BranchTransition_rs_Equals1` | rs = 1 处连续性验证 |
+
+**集成测试覆盖**：
+| 测试 | 验证内容 |
+|------|----------|
+| `QEReference_DataValidity` | ρ(r) 参考数据物理合理性 |
+| `QEReference_VxcDataValidity` | V_xc(r) 参考数据物理合理性 |
+| `ExcEnergy_QEComparison` | **核心**：E_xc 能量 vs QE 精度 < 1 meV |
+| `Vxc_PointByPoint_QEComparison` | V_xc(r) 点对点比较 vs QE |
+
+**验证精度** (SiC 体系, 5832 网格点)：
+- E_xc 误差: < 0.1 meV
+- V_xc 最大误差: < 10 meV
+
+---
+
+### Hartree 泛函测试 ✅
+
+**物理流程验证**：
+```
+ρ(r) → FFT → ρ(G)
+     → V_H(G) = 4πρ(G)/|G|² (Poisson)
+     → FFT⁻¹ → V_H(r)
+     → E_H = 0.5 ∫ ρ(r) V_H(r) dr
+```
+
+**测试文件**：
+- `tests/unit/functional/test_hartree.cu` - 4 个单元测试
+- `tests/integration/functional/test_hartree.cu` - 4 个集成测试
+
+**单元测试覆盖**：
+| 测试 | 验证内容 |
+|------|----------|
+| `PoissonFormula_Analytical` | Poisson 方程系数验证 (fac = 2/π) |
+| `GZero_ReturnsZero` | G=0 返回零（电中性条件）|
+| `LargeG_Asymptotic` | 大 G 渐近行为 V_H(G) → 0 |
+| `EnergyFormula_Scaling` | 能量公式 0.5 因子验证 |
+
+**集成测试覆盖**：
+| 测试 | 验证内容 |
+|------|----------|
+| `QEReference_DataValidity` | V_H(r) 参考数据物理合理性 |
+| `EhEnergy_QEComparison` | **核心**：E_H 能量 vs QE 精度 < 1 meV |
+| `Vh_PointByPoint_QEComparison` | V_H(r) 点对点比较 vs QE |
+| `Vh_SamplePoints_Comparison` | 采样点详细对比输出 |
+
+**验证精度** (SiC 体系, 5832 网格点)：
+- E_H 误差: 0.04 meV (< 1 meV 目标)
+- V_H 最大误差: < 10 meV
+
+---
+
+### Hamiltonian V_loc 测试 ✅
+
+**物理流程验证**：
+```
+ψ(G) → FFT → ψ(r) → V_loc(r) * ψ(r) → FFT → V_loc|ψ⟩(G)
+```
+
+**测试文件**：
+- `tests/unit/solver/test_vloc_kernel.cu` - 8 个单元测试
+- `tests/integration/solver/test_hamiltonian_vloc.cu` - 5 个集成测试
+- `tests/integration/solver/test_vloc_index_mapping.cu` - 5 个诊断测试
+- `tests/integration/solver/test_nl_d_convention.cu` - 2 个索引约定验证测试
+
+**单元测试覆盖**：
+| 测试 | 验证内容 |
+|------|----------|
+| `RealSpaceMultiplication_Analytical` | V(r) * ψ(r) 实空间乘法解析解 |
+| `RealSpaceMultiplication_VaryingPotential` | 变化势能的乘法验证 |
+| `ScaleFactor_TwoBands` | fac=0.5 双 band 打包缩放 |
+| `ScaleFactor_SingleBand` | fac=1.0 单 band 缩放 |
+| `ScaleFactor_Zero` | fac=0.0 边界条件 |
+| `GammaConstraint_G0_Concept` | Gamma-only G=0 约束验证 |
+| `ZeroPotential_NoChange` | V=0 边界条件 |
+
+**集成测试覆盖**：
+| 测试 | 验证内容 |
+|------|----------|
+| `QEReference_DataValidity` | QE 参考数据物理合理性 |
+| `MillerIndex_Mapping` | Miller 指数映射完整性 (100% 覆盖) |
+| `VlocPsi_SamplePoints_QuickCheck` | 关键 G-vector 采样验证 |
+| `VlocPsi_EnergyExpectation_ManualCalculation` | **核心**：能量期望值 ⟨ψ\|V_loc\|ψ⟩ vs QE (0 meV 误差) |
+| `VlocPsi_FullPipeline_QEAlignment` | **核心**：完整流程 V_loc\|ψ⟩ vs QE 点对点比较 |
+
+**诊断测试覆盖**（索引约定验证）：
+| 测试 | 验证内容 |
+|------|----------|
+| `NlDConventionTest.ManualVerification` | nl_d 使用 Row-major 索引 (8/8 匹配) |
+| `NlDConventionTest.SetCoefficientsMillerConvention` | set_coefficients_miller() 使用 Row-major 索引 |
+| `VlocIndexMappingTest.MillerIndices_Completeness` | Miller 指数完整性 (100% 覆盖) |
+| `VlocIndexMappingTest.NlMapping_Consistency` | nl_d 映射内部一致性 |
+| `VlocIndexMappingTest.DataExtraction_Method` | 数据提取方法正确性 (182/182 点匹配) |
+
+**验证精度** (SiC 体系, 91 G-vectors × 2 bands)：
+- 点对点匹配率: 100% (182/182 点)
+- 最大绝对误差: 7.85e-17 Ha (机器精度级别)
+- 最大相对误差: 2.07e-14 %
+
+**关键修复** (2026-01-28)：
+1. **索引约定不一致**：`set_coefficients_miller_kernel` 从 Column-major 改为 Row-major
+2. **数据组织错误**：测试代码从 G-major 改为 band-major 组织
+3. **验证方法**：通过诊断测试明确识别索引约定，确保所有组件一致
+
+**🎓 经验教训**：
+1. **索引约定必须统一**：在整个代码库中，FFT grid 的索引方式必须保持一致
+2. **数据组织方式要明确**：band-major vs G-major 的选择要在接口文档中明确说明
+3. **测试要覆盖数据流**：不仅要测试算法逻辑，还要测试数据的正确传递
+4. **诊断测试很重要**：当端到端测试失败时，需要细粒度的诊断测试来定位问题
 
 ---
 
@@ -238,8 +364,12 @@ UPF radial data → init_tab_vloc() → vloc_tab[iq]
 - **LocalPseudo 测试完成**：8 单元 + 7 集成测试全部通过
 - **2x 缩放 Bug 修复**：移除 compute() 中错误的 0.5 缩放因子
 - **Mock UPF 方案实现**：绕过 Python 依赖，纯 C++ 测试
+- **LDA_PZ 测试完成**：6 单元 + 4 集成测试全部通过
+- **Hartree 测试完成**：4 单元 + 4 集成测试全部通过
+- **SiCFixture 统一**：所有测试使用统一的 QE sic_minimal 参数
+- **Hamiltonian V_loc 测试完成**：8 单元 + 5 集成 + 7 诊断测试全部通过
+- **索引约定修复**：统一使用 Row-major 索引，精度达到机器精度级别
 
 ### 🚀 下一步计划
-- **Hartree 泛函测试**：验证 Poisson 方程求解
 - **NonLocalPseudo 测试**：非局域赝势算符验证
 - **Davidson 求解器测试**：本征值求解精度验证
