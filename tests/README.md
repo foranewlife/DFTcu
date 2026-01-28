@@ -55,15 +55,26 @@
 
 ```bash
 tests/
-│   ├── unit/                  # 单元测试：针对解耦后的 [PURE] 物理逻辑
-│   │   ├── functional/        # 物理算符测试 (如 LocalPseudo, Hartree)
-│   │   └── solver/            # 算法逻辑测试 (如 Hamiltonian, Davidson)
-│   ├── fixtures/              # 测试脚手架：提供标准 Grid, Atoms (SiC) 预设
-│   ├── data/                  # 静态测试数据
-│   │   ├── pseudopotentials/  # 存档的 UPF 赝势
-│   │   └── qe_reference/      # 固化的 Golden Package 数据 (.ref, .in)
-│   ├── CMakeLists.txt         # 测试构建配置
-│   └── README.md              # 本文档
+├── unit/                      # 单元测试：针对解耦后的 [PURE] 物理逻辑
+│   ├── functional/            # 物理算符测试
+│   │   └── test_local_pseudo.cu  # LocalPseudo 单元测试 (8 tests)
+│   └── solver/                # 算法逻辑测试 (如 Hamiltonian, Davidson)
+├── integration/               # 集成测试：端到端物理验证
+│   └── functional/            # 物理算符集成测试
+│       └── test_local_pseudo_operator.cu  # LocalPseudo 集成测试 (7 tests)
+├── fixtures/                  # 测试脚手架
+│   ├── test_fixtures.cuh      # SiC 预设、create_pseudo_from_radial()
+│   └── test_data_loader.cuh   # StandardDataLoader、UPFRadialData
+├── data/                      # 静态测试数据
+│   ├── pseudopotentials/      # 存档的 UPF 赝势
+│   └── qe_reference/          # 固化的 Golden Package 数据
+│       └── sic_minimal/       # SiC 最小化参考数据
+│           ├── v_ps_r.dat         # V_ps(r) 参考 (5832 点)
+│           ├── upf_radial_Si.dat  # Si 径向数据 (957 点)
+│           ├── upf_radial_C.dat   # C 径向数据 (219 点)
+│           └── vloc_tab_*.dat     # V_loc 插值表
+├── CMakeLists.txt             # 测试构建配置
+└── README.md                  # 本文档
 ```
 
 ---
@@ -170,13 +181,65 @@ tests/data/
 
 ---
 
-## 7. 工作日志 (2026-01-28)
+## 7. 已完成测试模块
 
-### ✅ 今日进展
-- **测试流程规范化**：定义「测试设计四步法」，从代码分解到数据标准化的完整流程
-- **数据格式优化**：采用路径索引方式，避免赝势/输入文件冗余
-- **LocalPseudo 分析**：完成代码结构分析，识别 [PURE] 和 [SIDE_EFFECT] 函数
+### LocalPseudoOperator 测试 ✅
+
+**物理流程验证**：
+```
+UPF radial data → init_tab_vloc() → vloc_tab[iq]
+              → vloc_of_g() → V_loc(G)
+              → structure factor → Σ V_loc(G) * S(G)
+              → FFT⁻¹ → V_ps(r)
+```
+
+**测试文件**：
+- `tests/unit/functional/test_local_pseudo.cu` - 8 个单元测试
+- `tests/integration/functional/test_local_pseudo_operator.cu` - 7 个集成测试
+
+**单元测试覆盖**：
+| 测试 | 验证内容 |
+|------|----------|
+| `Simpson_Integration_Polynomial` | Simpson 积分对 r² 的精度 < 1e-12 |
+| `Lagrange_Interpolation_Accuracy` | Lagrange 4 点插值误差 < 1e-10 |
+| `Alpha_G0_FromMockUPF` | G=0 (alpha) 项与 QE 误差 < 1e-12 Ha |
+| `VlocG_NonZeroG_CoulombCorrection` | G≠0 Coulomb 修正精度 < 1e-10 Ha |
+| `StructureFactor_Phase_Accuracy` | 结构因子相位 exp(-i 2π G·τ) 误差 < 1e-12 |
+| `TabVloc_Interpolation_Consistency` | 插值表内部一致性 |
+| `VlocG_MultipleGShells` | 多 G-shell 插值精度 |
+| `VlocG_LargeG_Asymptotic` | 大 G 渐近行为正确性 |
+
+**集成测试覆盖**：
+| 测试 | 验证内容 |
+|------|----------|
+| `VpsR_QEAlignment` | QE 参考数据物理合理性检查 |
+| `GridSetup_MatchesQE` | 网格设置与 QE 对齐 (18³, Ω≈138.85 Bohr³) |
+| `AtomsSetup_MatchesQE` | 原子设置验证 (Si+C, 各 4 价电子) |
+| `MockUPF_DataLoaded` | Mock UPF 数据加载正确性 |
+| `MockUPF_CreatePseudopotentialData` | PseudopotentialData 构建验证 |
+| `EndToEnd_BuildLocalPseudo` | build_local_pseudo() 端到端验证 |
+| `EndToEnd_VpsR_QEComparison` | **核心**：V_ps(r) vs QE 精度 < 1e-4 Ha |
+
+**验证精度** (SiC 体系, 5832 网格点)：
+- 最大绝对误差: 1.97e-6 Ha (0.05 meV)
+- DFTcu/QE 比例: 1.0000
+
+**Mock UPF 方案**：
+为绕过 Python UPF 解析器依赖，采用 Mock UPF 方案：
+1. 从 QE 截获 UPF 径向数据 (r, rab, vloc_r)
+2. 保存为 `upf_radial_*.dat` 格式
+3. C++ 侧直接加载构建 PseudopotentialData
+
+---
+
+## 8. 工作日志
+
+### 2026-01-28 ✅
+- **LocalPseudo 测试完成**：8 单元 + 7 集成测试全部通过
+- **2x 缩放 Bug 修复**：移除 compute() 中错误的 0.5 缩放因子
+- **Mock UPF 方案实现**：绕过 Python 依赖，纯 C++ 测试
 
 ### 🚀 下一步计划
-- **SiC 基准构建**：设计最小化 QE 输入，截获 `vloc_tab` 和 `vloc_r` 数据
-- **编写首个测试**：`test_local_pseudo_kernels.cu`，验证 `interpolate_vloc_phys()` 和 `compute_structure_factor_phase()`
+- **Hartree 泛函测试**：验证 Poisson 方程求解
+- **NonLocalPseudo 测试**：非局域赝势算符验证
+- **Davidson 求解器测试**：本征值求解精度验证
