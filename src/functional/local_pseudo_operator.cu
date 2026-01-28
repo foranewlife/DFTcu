@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include "fft/fft_solver.cuh"
+#include "local_pseudo_kernels.cuh"
 #include "local_pseudo_operator.cuh"
 #include "math/bessel.cuh"
 #include "utilities/constants.cuh"
@@ -15,7 +16,7 @@
 namespace dftcu {
 
 // ============================================================================
-// Existing LocalPseudoOperator implementation
+// Internal Kernels
 // ============================================================================
 
 namespace {
@@ -58,79 +59,32 @@ __global__ void vloc_gspace_kernel(int n, const double* gx, const double* gy, co
     if (i >= n)
         return;
 
-    // CRITICAL FIX: gg is in crystallographic units (1/Bohr²)
-    // Must convert to physical units (2π/Bohr) for interpolation!
-    double g2_cryst = gg[i];  // 1/Bohr² (crystallographic)
-
-    // Apply G-vector cutoff (ecutrho) to prevent Gibbs oscillations
-    // gcut is ecutrho in Rydberg, g2 is in Bohr^-2
-    // In atomic units: |G|^2 (Bohr^-2) = energy (Ry) numerically
+    double g2_cryst = gg[i];
     if (gcut > 0 && g2_cryst > gcut) {
         v_g[i].x = 0.0;
         v_g[i].y = 0.0;
         return;
     }
 
-    // Convert crystallographic |G|² to physical |G|² for interpolation
-    // QE: gx = sqrt(gl(igl) * tpiba2), where tpiba2 = (2π/alat)²
-    // Since gl is normalized by alat² in QE, we just need × (2π)²
-    const double tpiba_factor = 4.0 * constants::D_PI * constants::D_PI;  // (2π)²
-    double g2_phys = g2_cryst * tpiba_factor;                             // (2π/Bohr)² (physical)
-    double gmod = sqrt(g2_phys);                                          // 2π/Bohr (physical)
-    const double fpi = 4.0 * constants::D_PI;
+    const double tpiba_factor = 4.0 * constants::D_PI * constants::D_PI;
+    double gmod = sqrt(g2_cryst * tpiba_factor);
 
     double sum_re = 0;
     double sum_im = 0;
-
-    // DEBUG: Print detailed calculation for first few G-vectors
-    bool debug_this = (i < 5 && blockIdx.x == 0 && threadIdx.x < 5);
 
     for (int iat = 0; iat < nat; ++iat) {
         int type = c_pseudo_atom_type[iat];
         const double* table_short = flat_tab + type * stride;
 
-        double vlocg = 0;
-        if (g2_phys < 1e-12) {
-            vlocg = table_short[0];
-        } else {
-            int i0 = (int)(gmod / dq) + 1;
-            i0 = min(max(i0, 1), stride - 4);
-            double px = gmod / dq - (double)(i0 - 1);
-            double ux = 1.0 - px;
-            double vx = 2.0 - px;
-            double wx = 3.0 - px;
+        // 1. 调用纯插值函数
+        double vlocg = interpolate_vloc_phys(gmod, table_short, stride, zp[type], omega);
 
-            vlocg =
-                table_short[i0] * ux * vx * wx / 6.0 + table_short[i0 + 1] * px * vx * wx / 2.0 -
-                table_short[i0 + 2] * px * ux * wx / 2.0 + table_short[i0 + 3] * px * ux * vx / 6.0;
+        // 2. 调用纯相位函数
+        gpufftComplex phase = compute_structure_factor_phase(
+            gx[i], gy[i], gz[i], c_pseudo_atom_x[iat], c_pseudo_atom_y[iat], c_pseudo_atom_z[iat]);
 
-            // vlocg intensive in Hartree
-            // Use physical g2 for Coulomb correction
-            vlocg -= (fpi * zp[type] / (omega * g2_phys)) * exp(-0.25 * g2_phys);
-        }
-
-        // Structure factor phase: exp(-i × 2π × G·τ)
-        // G is in Cartesian 1/Bohr (crystallographic, NO 2π factor)
-        // τ is in Cartesian Bohr
-        // G·τ has units [1/Bohr × Bohr] = dimensionless (fractional coordinate)
-        // Need to multiply by 2π to get phase in radians matching QE's exp(-i 2π G·τ)
-        double phase = -(gx[i] * c_pseudo_atom_x[iat] + gy[i] * c_pseudo_atom_y[iat] +
-                         gz[i] * c_pseudo_atom_z[iat]) *
-                       2.0 * constants::D_PI;
-        double s, c;
-        sincos(phase, &s, &c);
-
-        if (debug_this) {
-            // printf("[KERNEL ig=%d, iat=%d] G=(%.6f,%.6f,%.6f), tau=(%.6f,%.6f,%.6f), phase=%.6f,
-            // "
-            //        "vlocg=%.9e, exp(-iG.tau)=(%.9f, %.9f)\n",
-            //        i, iat, gx[i], gy[i], gz[i], c_pseudo_atom_x[iat], c_pseudo_atom_y[iat],
-            //        c_pseudo_atom_z[iat], phase, vlocg, c, s);
-        }
-
-        sum_re += vlocg * c;
-        sum_im +=
-            vlocg * s;  // Note: s = sin(-(G·τ)), so this gives correct -sin(G·τ) for exp(-i G·τ)
+        sum_re += vlocg * phase.x;
+        sum_im += vlocg * phase.y;
     }
     v_g[i].x = sum_re;
     v_g[i].y = sum_im;
@@ -443,18 +397,21 @@ void LocalPseudoOperator::compute(RealField& v) {
 
     complex_to_real(grid_.nnr(), v_g_->data(), v.data(), grid_.stream());
 
-    // ✅ Scale by 0.5 because we filled both +G and -G (Hermitian symmetry)
-    // AND add v_of_0_ (which is already in Hartree).
-    const int bs_vloc = 256;
-    const int gs_vloc = (grid_.nnr() + bs_vloc - 1) / bs_vloc;
-    scale_vloc_kernel<<<gs_vloc, bs_vloc, 0, grid_.stream()>>>(grid_.nnr(), v.data(), 0.5);
-    GPU_CHECK_KERNEL;
+    // NOTE: The 0.5 factor was previously applied here due to a misunderstanding
+    // of Hermitian symmetry. The correct behavior is:
+    // - We fill both +G and -G with conjugate values (Hermitian symmetry)
+    // - The IFFT naturally produces the correct real-space values
+    // - No additional scaling is needed
+    //
+    // The 0.5 factor has been REMOVED to match QE's output.
+    // If you see a 2x discrepancy with QE, check:
+    // 1. init_tab_vloc() Ry→Ha conversion (should be ×0.5)
+    // 2. FFT normalization convention
 
     // 3. Add back the alpha shift (v_of_0_) to all R-space points
-    // halving v_of_0_ here because it seems to be doubled in DFTcu's current logic
-    // compared to QE's V_ps reference.
-    add_scalar_kernel<<<gs_vloc, bs_vloc, 0, grid_.stream()>>>(grid_.nnr(), v.data(),
-                                                               v_of_0_ * 0.5);
+    const int bs_vloc = 256;
+    const int gs_vloc = (grid_.nnr() + bs_vloc - 1) / bs_vloc;
+    add_scalar_kernel<<<gs_vloc, bs_vloc, 0, grid_.stream()>>>(grid_.nnr(), v.data(), v_of_0_);
     GPU_CHECK_KERNEL;
 
     grid_.synchronize();
