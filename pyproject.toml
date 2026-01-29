@@ -44,7 +44,7 @@ cmake.version = ">=3.18"
 # This allows sharing build artifacts between `cmake --build` and `uv pip install`
 build-dir = "build"
 cmake.args = [
-    "-DBUILD_TESTING=OFF",
+    "-DBUILD_TESTING=ON",
     "-DBUILD_DOCS=OFF",
     "-DCMAKE_COMPILE_WARNING_AS_ERROR=OFF"
 ]

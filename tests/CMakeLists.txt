@@ -3,6 +3,7 @@ include(FetchContent)
 FetchContent_Declare(
   googletest
   URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.tar.gz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 # For Windows: prevent overriding the parent project's compiler/linker settings
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
@@ -50,6 +51,11 @@ add_cuda_test(unit.functional.test_hartree
 # 4. V_loc Kernel Tests (Solver Layer)
 add_cuda_test(unit.solver.test_vloc_kernel
     unit/solver/test_vloc_kernel.cu
+)
+
+# 5. Kinetic Energy Tests (Solver Layer)
+add_cuda_test(unit.solver.test_kinetic_energy
+    unit/solver/test_kinetic_energy.cu
 )
 
 # ════════════════════════════════════════════════════════════════════════════════
