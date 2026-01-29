@@ -6,12 +6,19 @@
 namespace dftcu {
 
 /**
- * @brief Spherical Bessel functions j_l(x) for small l, mimicking QE implementation.
+ * @brief Spherical Bessel functions j_l(x) matching QE implementation.
+ *
+ * 实现策略：
+ * - 小 x (< 0.05): 使用级数展开（避免数值不稳定）
+ * - 大 x: 使用 QE 的解析公式 (l=0,1,2,3,4)
+ *
+ * 参考：QE upflib/sph_bes.f90
  */
 __host__ __device__ inline double spherical_bessel_jl(int l, double x) {
     const double xseries = 0.05;
     double abs_x = std::abs(x);
 
+    // 小 x: 使用级数展开
     if (abs_x < xseries) {
         double x2 = x * x;
         double xl = (l == 0) ? 1.0 : std::pow(abs_x, l);
@@ -21,7 +28,7 @@ __host__ __device__ inline double spherical_bessel_jl(int l, double x) {
             semifact *= i;
         }
 
-        // Match QE's 4-term expansion
+        // 4-term expansion (matching QE)
         double term = 1.0 - x2 / (2.0 * (2.0 * l + 3.0)) *
                                 (1.0 - x2 / (4.0 * (2.0 * l + 5.0)) *
                                            (1.0 - x2 / (6.0 * (2.0 * l + 7.0)) *
@@ -33,24 +40,30 @@ __host__ __device__ inline double spherical_bessel_jl(int l, double x) {
         return res;
     }
 
-    // Analytic forms for larger x
+    // 大 x: 使用 QE 的解析公式
+    double qr = x;  // 在 QE 中是 q*r，这里 x = q*r
+    double sin_qr = std::sin(qr);
+    double cos_qr = std::cos(qr);
+    double qr2 = qr * qr;
+    double qr3 = qr2 * qr;
+    double qr4 = qr2 * qr2;
+    double qr5 = qr4 * qr;
+
     if (l == 0) {
-        return std::sin(x) / x;
+        // QE line 132: jl(ir) = sin(q*r(ir)) / (q*r(ir))
+        return sin_qr / qr;
     } else if (l == 1) {
-        return (std::sin(x) / x - std::cos(x)) / x;
+        // QE line 149-150: jl(ir) = (sin(q*r(ir))/(q*r(ir)) - cos(q*r(ir))) / (q*r(ir))
+        return (sin_qr / qr - cos_qr) / qr;
     } else if (l == 2) {
-        double x2 = x * x;
-        return ((3.0 / x2 - 1.0) * std::sin(x) - 3.0 * std::cos(x) / x) / x;
+        // QE line 167-168: jl(ir) = ((3/qr - qr)*sin(qr) - 3*cos(qr)) / qr^2
+        return ((3.0 / qr - qr) * sin_qr - 3.0 * cos_qr) / qr2;
     } else if (l == 3) {
-        double x2 = x * x;
-        double x3 = x2 * x;
-        return (std::sin(x) * (15.0 / x - 6.0 * x) + std::cos(x) * (x2 - 15.0)) / x3;
+        // QE line 187-190: jl(ir) = (sin(qr)*(15/qr - 6*qr) + cos(qr)*(qr^2 - 15)) / qr^3
+        return (sin_qr * (15.0 / qr - 6.0 * qr) + cos_qr * (qr2 - 15.0)) / qr3;
     } else if (l == 4) {
-        double x2 = x * x;
-        double x4 = x2 * x2;
-        return (std::sin(x) * (105.0 - 45.0 * x2 + x4) +
-                std::cos(x) * (10.0 * x2 * x - 105.0 * x)) /
-               (x4 * x);
+        // QE line 210-214: jl(ir) = (sin(qr)*(105 - 45*qr^2 + qr^4) + cos(qr)*(10*qr^3 - 105*qr)) / qr^5
+        return (sin_qr * (105.0 - 45.0 * qr2 + qr4) + cos_qr * (10.0 * qr3 - 105.0 * qr)) / qr5;
     }
 
     return 0.0;
