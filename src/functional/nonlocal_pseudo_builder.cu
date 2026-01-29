@@ -7,7 +7,8 @@ namespace dftcu {
 
 std::shared_ptr<NonLocalPseudoOperator> build_nonlocal_pseudo(
     Grid& grid, std::shared_ptr<Atoms> atoms, const PseudopotentialData& pseudo_data,
-    int atom_type) {  // ════════════════════════════════════════════════════════════════════════
+    int atom_type) {
+    // ════════════════════════════════════════════════════════════════════════
     // 创建 NonLocalPseudoOperator 对象
     // ════════════════════════════════════════════════════════════════════════
     auto nl_pseudo = std::make_shared<NonLocalPseudoOperator>(grid);

@@ -3,8 +3,8 @@
 #include <iomanip>
 #include <iostream>
 
+#include "functional/wavefunction_builder.cuh"
 #include "model/pseudopotential_data.cuh"
-#include "model/wavefunction_builder.cuh"
 #include "solver/nscf.cuh"
 #include "utilities/cublas_manager.cuh"
 #include "utilities/error.cuh"

@@ -1,7 +1,7 @@
 #include "functional/hartree.cuh"
+#include "functional/wavefunction_builder.cuh"
 #include "functional/xc/lda_pz.cuh"
 #include "model/density_builder.cuh"
-#include "model/wavefunction_builder.cuh"
 #include "utilities/error.cuh"
 #include "workflow/nscf_workflow.cuh"
 

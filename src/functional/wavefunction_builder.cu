@@ -1,9 +1,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include "functional/wavefunction_builder.cuh"
 #include "math/bessel.cuh"
 #include "math/ylm.cuh"
-#include "model/wavefunction_builder.cuh"
 #include "utilities/constants.cuh"
 #include "utilities/error.cuh"
 #include "utilities/math_utils.cuh"

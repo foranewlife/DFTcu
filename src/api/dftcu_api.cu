@@ -11,6 +11,7 @@
 #include "functional/local_pseudo_operator.cuh"
 #include "functional/nonlocal_pseudo_builder.cuh"
 #include "functional/nonlocal_pseudo_operator.cuh"
+#include "functional/wavefunction_builder.cuh"
 #include "functional/xc/lda_pz.cuh"
 #include "functional/xc/pbe.cuh"
 #include "math/bessel.cuh"
@@ -23,7 +24,6 @@
 #include "model/grid_factory.cuh"
 #include "model/pseudopotential_data.cuh"
 #include "model/wavefunction.cuh"
-#include "model/wavefunction_builder.cuh"
 #include "solver/davidson.cuh"
 #include "solver/evaluator.cuh"  // Keep for backward compatibility
 #include "solver/gamma_utils.cuh"

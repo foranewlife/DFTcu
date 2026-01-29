@@ -106,7 +106,7 @@ if(BUILD_WITH_CUDA)
         src/model/atoms_factory.cu
         src/model/density_builder.cu
         src/model/wavefunction.cu
-        src/model/wavefunction_builder.cu
+        src/functional/wavefunction_builder.cu
         src/functional/hartree.cu
         src/functional/ewald.cu
         src/functional/local_pseudo_operator.cu
