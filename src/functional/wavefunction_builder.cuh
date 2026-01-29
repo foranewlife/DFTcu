@@ -21,19 +21,23 @@ class WavefunctionBuilder {
 
     /**
      * @brief Set atomic radial orbital for an atom type.
+     * [SIDE_EFFECT] Modifies internal orbital_tables_ state
+     *
      * @param type Atom type index.
      * @param l Angular momentum.
      * @param r Radial grid.
      * @param chi Radial orbital (chi(r)).
      * @param rab Integration weights.
-     * @param msh Last grid point with r < 10 Bohr (QE convention, 0 = use all points).
+     *
+     * @note msh (r < 10 Bohr cutoff) is automatically computed following QE convention.
      */
     void add_atomic_orbital(int type, int l, const std::vector<double>& r,
-                            const std::vector<double>& chi, const std::vector<double>& rab,
-                            int msh = 0);
+                            const std::vector<double>& chi, const std::vector<double>& rab);
 
     /**
      * @brief Build wavefunctions from set orbitals (legacy interface).
+     * [SIDE_EFFECT] Modifies psi object in-place
+     *
      * @param psi Output Wavefunction object.
      * @param randomize_phase If true, add random phase to atomic orbitals (default: false).
      *
@@ -43,6 +47,7 @@ class WavefunctionBuilder {
 
     /**
      * @brief Build and return atomic wavefunctions (recommended interface).
+     * [BUILDER] Heavy construction: 1D radial → 3D wavefunction with FFT/integration
      *
      * This method:
      * 1. Automatically calculates the number of bands (n_starting_wfc)
@@ -55,19 +60,33 @@ class WavefunctionBuilder {
      *
      * Example:
      *   WavefunctionBuilder factory(grid, atoms);
-     *   factory.add_atomic_orbital(0, 0, r, chi_s, rab, msh);  // Si s orbital
-     *   factory.add_atomic_orbital(0, 1, r, chi_p, rab, msh);  // Si p orbital
+     *   factory.add_atomic_orbital(0, 0, r, chi_s, rab);  // Si s orbital
+     *   factory.add_atomic_orbital(0, 1, r, chi_p, rab);  // Si p orbital
      *   auto psi = factory.build();  // Returns unique_ptr<Wavefunction>
      */
     std::unique_ptr<Wavefunction> build(bool randomize_phase = false);
 
     /**
      * @brief Get the number of bands that will be created.
+     * [CONST] Does not modify object state
+     *
      * @return Total number of atomic wavefunctions (n_starting_wfc)
      *
      * Useful for diagnostics before calling build().
      */
     int num_bands() const;
+
+    /**
+     * @brief Get chi_q table for diagnostics (testing only).
+     * [CONST] Does not modify object state
+     *
+     * @param type Atom type index.
+     * @param orbital_idx Orbital index for this type.
+     * @return Reference to chi_q vector.
+     *
+     * @note This is a diagnostic interface for testing Bessel transform accuracy.
+     */
+    const std::vector<double>& get_chi_q(int type, int orbital_idx) const;
 
   private:
     Grid& grid_;
@@ -76,13 +95,18 @@ class WavefunctionBuilder {
     struct OrbitalTable {
         int l;
         std::vector<double> chi_q;
+        // 三次样条插值系数（预计算）
+        std::vector<double> spline_M;  // 二阶导数 M[i]
+        std::vector<double> spline_h;  // 网格间距 h[i]
     };
 
     // Mapping: [type_idx][orbital_idx] -> table
     std::vector<std::vector<OrbitalTable>> orbital_tables_;
 
     // Persistent GPU storage for build process
-    GPU_Vector<double> d_tab_;
+    GPU_Vector<double> d_tab_;           // chi_q 数据
+    GPU_Vector<double> d_spline_M_;      // 三次样条二阶导数
+    GPU_Vector<double> d_spline_h_;      // 三次样条网格间距
 
     static constexpr double dq_ = 0.01;
 
