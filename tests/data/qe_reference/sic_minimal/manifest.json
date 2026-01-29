@@ -100,5 +100,119 @@
   "nl_dense": {
     "file": "nl_dense.dat",
     "description": "Dense grid nl/nlm mapping to FFT grid"
+  },
+  "chi_r": {
+    "Si_s": {
+      "file": "chi_r_Si_s.dat",
+      "element": "Si",
+      "orbital": "s",
+      "l": 0,
+      "mesh": 1141,
+      "source": "Si.pz-rrkj.UPF",
+      "unit": "Bohr^(-3/2)",
+      "description": "Atomic orbital radial wavefunction chi(r) for Si 3s"
+    },
+    "Si_p": {
+      "file": "chi_r_Si_p.dat",
+      "element": "Si",
+      "orbital": "p",
+      "l": 1,
+      "mesh": 1141,
+      "source": "Si.pz-rrkj.UPF",
+      "unit": "Bohr^(-3/2)",
+      "description": "Atomic orbital radial wavefunction chi(r) for Si 3p"
+    },
+    "C_s": {
+      "file": "chi_r_C_s.dat",
+      "element": "C",
+      "orbital": "s",
+      "l": 0,
+      "mesh": 269,
+      "source": "C.pz-vbc.UPF",
+      "unit": "Bohr^(-3/2)",
+      "description": "Atomic orbital radial wavefunction chi(r) for C 2s"
+    },
+    "C_p": {
+      "file": "chi_r_C_p.dat",
+      "element": "C",
+      "orbital": "p",
+      "l": 1,
+      "mesh": 269,
+      "source": "C.pz-vbc.UPF",
+      "unit": "Bohr^(-3/2)",
+      "description": "Atomic orbital radial wavefunction chi(r) for C 2p"
+    }
+  },
+  "chi_q": {
+    "Si_s": {
+      "file": "chi_q_Si_s.dat",
+      "element": "Si",
+      "orbital": "s",
+      "l": 0,
+      "nqx": 451,
+      "dq": 0.01,
+      "qmax": 4.5,
+      "unit": "Bohr^(3/2)",
+      "description": "Bessel transform of chi(r): chi_q(q) for Si 3s",
+      "omega_inferred": 138.649045,
+      "omega_expected": 138.853062,
+      "note": "IMPORTANT: Inferred omega (138.649) differs from actual omega (138.853) by 0.147%. This causes ~0.07% systematic error in Bessel transform. Possible causes: (1) chi_q data from different calculation, (2) chi_q extracted from UPF file (cell-independent), (3) QE used different omega in intermediate step."
+    },
+    "Si_p": {
+      "file": "chi_q_Si_p.dat",
+      "element": "Si",
+      "orbital": "p",
+      "l": 1,
+      "nqx": 451,
+      "dq": 0.01,
+      "qmax": 4.5,
+      "unit": "Bohr^(3/2)",
+      "description": "Bessel transform of chi(r): chi_q(q) for Si 3p"
+    },
+    "C_s": {
+      "file": "chi_q_C_s.dat",
+      "element": "C",
+      "orbital": "s",
+      "l": 0,
+      "nqx": 451,
+      "dq": 0.01,
+      "qmax": 4.5,
+      "unit": "Bohr^(3/2)",
+      "description": "Bessel transform of chi(r): chi_q(q) for C 2s",
+      "omega_inferred": 138.649045,
+      "omega_expected": 138.853062,
+      "note": "Same omega inconsistency as Si_s"
+    },
+    "C_p": {
+      "file": "chi_q_C_p.dat",
+      "element": "C",
+      "orbital": "p",
+      "l": 1,
+      "nqx": 451,
+      "dq": 0.01,
+      "qmax": 4.5,
+      "unit": "Bohr^(3/2)",
+      "description": "Bessel transform of chi(r): chi_q(q) for C 2p"
+    }
+  },
+  "psi_atomic": {
+    "file": "psi_atomic_SiC.dat",
+    "system": "SiC",
+    "ik": 1,
+    "nbnd": 8,
+    "npw": 91,
+    "omega": 138.853062,
+    "unit": "dimensionless",
+    "description": "Atomic wavefunction superposition psi_atomic(G) at Gamma point",
+    "note": "Generated from chi_q tables with structure factors. Each band corresponds to one atomic orbital (Si 3s, Si 3p_x, Si 3p_y, Si 3p_z, C 2s, C 2p_x, C 2p_y, C 2p_z)."
+  },
+  "known_issues": {
+    "chi_q_omega_mismatch": {
+      "severity": "medium",
+      "description": "chi_q reference data contains implicit omega=138.649 Bohr^3, but actual SiC cell has omega=138.853 Bohr^3 (0.147% difference)",
+      "impact": "Causes ~0.07-0.10% systematic error in Bessel transform tests",
+      "workaround": "Use inferred omega (138.649) in tests, or regenerate chi_q data with correct omega",
+      "investigation": "See docs/BESSEL_TRANSFORM_INVESTIGATION.md for detailed analysis"
+    }
   }
 }

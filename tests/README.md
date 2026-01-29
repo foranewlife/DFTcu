@@ -4,6 +4,105 @@
 
 ---
 
+## ⚠️ 测试开发核心原则（必读）
+
+### 原则 1: 测试开发的正确顺序
+
+**❌ 错误做法**：
+```
+先写测试代码 → 再找参考数据 → 测试失败 → 修改假设
+```
+
+**✅ 正确做法**：
+```
+步骤 1: 分析代码，识别可分解的 [PURE] 和 [SIDE_EFFECT] 函数，如果需要重构就重构。
+   ↓
+步骤 2: 确定需要测试哪些函数（单元测试 vs 集成测试）
+   ↓
+步骤 3: 修改 QE 源码添加数据打印（针对需要测试的函数）
+   ↓
+步骤 4: 运行 QE 生成真实参考数据
+   ↓
+步骤 5: 基于真实数据编写测试代码
+   ↓
+步骤 6: 运行测试验证
+```
+
+**关键点**：
+- **先分析代码结构**：理解代码的可测试性，识别纯函数和有副作用的函数
+- **再确定测试策略**：决定测试哪些函数，用什么方法测试
+- **然后获取 QE 数据**：针对性地从 QE 截获需要的数据
+- **最后编写测试**：基于真实数据编写测试代码
+- 不要跳过前面的分析步骤，直接写测试代码
+
+### 原则 2: 数据必须包含物理索引
+
+**❌ 错误做法**：
+```
+# 仅有数值，依赖排序
+0.123456
+0.234567
+0.345678
+```
+
+**✅ 正确做法**：
+```
+# 包含物理索引（Miller 指数、元素、角动量等）
+# band  ig  h  k  l  psi_re  psi_im
+1      1   0  0  0  0.123456  0.000000
+1      2   1  0  0  0.234567  0.012345
+```
+
+**为什么重要**：
+- 避免排序依赖：不同 QE 版本可能有不同的 G-vector 排序
+- 确保数据可追溯：知道每个数据点对应的物理量
+- 便于调试：测试失败时可以定位到具体的 G-vector 或原子
+
+### 原则 3: 数据溯源（每个数据文件必须标明来源）
+
+**每个参考数据文件必须在文件头注明**：
+```
+# QE 源文件: PW/src/wfcinit.f90
+# QE 函数: atomic_wfc()
+# 截获位置: Bessel 变换循环后（约 180 行）
+# QE 版本: 7.2
+# 生成日期: 2026-01-29
+```
+
+**为什么重要**：
+- 数据可追溯：知道数据从哪里来
+- 便于更新：QE 版本升级时知道如何重新生成
+- 便于验证：其他人可以重现数据生成过程
+
+### 原则 4: 测试物理结果，而非实现细节
+
+**❌ 错误做法**：
+```cpp
+// 测试 Lagrange 插值的内部实现
+TEST(WavefunctionBuilder, Lagrange4Point_LinearFunction) {
+    // 假设插值公式是这样的...
+    double y = interpolate(x);  // 但实际代码可能不同
+}
+```
+
+**✅ 正确做法**：
+```cpp
+// 测试最终的物理结果（psi(G)）
+TEST(WavefunctionBuilder, EndToEnd_PsiG_QEAlignment) {
+    auto qe_psi = load_psi_atomic("qe_reference/psi_atomic.dat");
+    auto dftcu_psi = builder.build();
+    // 比较最终结果
+    compare_with_qe(dftcu_psi, qe_psi);
+}
+```
+
+**为什么重要**：
+- 实现细节可能改变，但物理结果不变
+- 测试物理契约，而非代码实现
+- 避免测试假设的实现（可能与实际代码不一致）
+
+---
+
 ## 1. 核心设计哲学
 
 ### 1.1 物理契约胜过输出比对
@@ -113,6 +212,8 @@ tests/
 
 ### 第三步：QE 数据截获
 
+**⚠️ 关键步骤**：这一步是测试开发的核心，必须先完成！
+
 准备 QE 输入，修改源码截获中间数据：
 
 1. **设计最小化输入**：避免测试数据过大
@@ -120,14 +221,49 @@ tests/
    - 使用低截断能（20-30 Ry）
    - 使用粗网格（足够验证精度即可）
 
-2. **截获点规范化**：记录截获位置和单位
+2. **修改 QE 源码添加数据打印**：
+   ```fortran
+   ! 在关键计算步骤后添加 WRITE 语句
+   WRITE(stdout, '(A)') '### DFTCU_DATA: CHI_Q_TABLE_START'
+   WRITE(stdout, '(A,A)') '# element = ', TRIM(psd(nt))
+   WRITE(stdout, '(A,I0)') '# l = ', l
+   DO iq = 1, nqx
+      WRITE(stdout, '(I6,2ES24.16)') iq-1, q, chiq(iq)
+   ENDDO
+   WRITE(stdout, '(A)') '### DFTCU_DATA: CHI_Q_TABLE_END'
+   ```
+
+3. **数据溯源规范**：每个数据块必须注明来源
    ```yaml
    capture_points:
-     - name: vloc_tab
-       source: vloc_mod.f90:vloc_of_g()
-       index: [element, ig]
-       unit: Ry
+     - name: chi_q_table
+       qe_source: PW/src/wfcinit.f90
+       qe_function: atomic_wfc()
+       capture_location: "Bessel 变换循环后（约 180 行）"
+       physical_meaning: "原子轨道径向函数的 Bessel 变换结果 χ(q)"
+       index: [element, l, iq]
+       unit: Bohr^(3/2)
    ```
+
+4. **运行 QE 生成数据**：
+   ```bash
+   # 编译修改后的 QE
+   cd external/qe/build
+   cmake .. && make -j8 pw
+
+   # 运行 QE
+   cd tests/data/inputs
+   mpirun -np 4 ../../../external/qe/build/bin/pw.x < sic_scf.in > sic_scf_debug.out
+
+   # 提取数据
+   cd ../../scripts
+   python extract_qe_data.py ../data/inputs/sic_scf_debug.out
+   ```
+
+**⚠️ 重要**：
+- 必须先生成 QE 数据，再编写测试代码
+- 不要假设数据格式，要从真实 QE 输出中提取
+- 每个数据文件必须包含物理索引（Miller 指数、元素、角动量等）
 
 ### 第四步：数据标准化
 
