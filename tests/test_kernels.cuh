@@ -48,5 +48,37 @@ __global__ void scale_complex_kernel_test(size_t n, gpufftComplex* data, double 
     }
 }
 
+/**
+ * @brief 动能算符 kernel：T|ψ⟩ = ½|G|² |ψ(G)⟩
+ *
+ * 公式：h_psi[idx] = g2kin[ig] * psi[idx]
+ * 其中 g2kin[ig] = ½|G|² (Hartree)
+ *
+ * @param npw 平面波数量
+ * @param num_bands band 数量
+ * @param lda Leading dimension (stride) = nnr
+ * @param nl_d G-vector → FFT grid 映射 [npw]
+ * @param g2kin 动能系数 ½|G|² [npw] (Hartree)
+ * @param psi 输入波函数 [num_bands × lda]
+ * @param h_psi 输出 T|ψ⟩ [num_bands × lda]
+ */
+__global__ void apply_kinetic_kernel_test(int npw, int num_bands, int lda, const int* nl_d,
+                                          const double* g2kin, const gpufftComplex* psi,
+                                          gpufftComplex* h_psi) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int total_size = npw * num_bands;
+    if (i < total_size) {
+        int band = i / npw;           // Which band
+        int ig = i % npw;             // Which G-vector (Smooth grid index)
+        int ifft = nl_d[ig];          // Map to FFT grid index
+        int idx = band * lda + ifft;  // Actual index with stride
+
+        // g2kin is already in Hartree (½|G|²_physical)
+        double t = g2kin[ig];
+        h_psi[idx].x = t * psi[idx].x;
+        h_psi[idx].y = t * psi[idx].y;
+    }
+}
+
 }  // namespace test
 }  // namespace dftcu
