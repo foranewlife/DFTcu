@@ -48,14 +48,34 @@ add_cuda_test(unit.functional.test_hartree
     unit/functional/test_hartree.cu
 )
 
-# 4. V_loc Kernel Tests (Solver Layer)
+# 4. WavefunctionBuilder Tests
+add_cuda_test(unit.functional.test_wavefunction_builder
+    unit/functional/test_wavefunction_builder.cu
+)
+
+# 5. V_loc Kernel Tests (Solver Layer)
 add_cuda_test(unit.solver.test_vloc_kernel
     unit/solver/test_vloc_kernel.cu
 )
 
-# 5. Kinetic Energy Tests (Solver Layer)
+# 6. Kinetic Energy Tests (Solver Layer)
 add_cuda_test(unit.solver.test_kinetic_energy
     unit/solver/test_kinetic_energy.cu
+)
+
+# 7. Simpson Integration Tests (Utilities Layer)
+add_cuda_test(unit.utilities.test_simpson
+    unit/utilities/test_simpson.cu
+)
+
+# 8. Spherical Bessel Function Tests (Math Layer)
+add_cuda_test(unit.math.test_bessel
+    unit/math/test_bessel.cu
+)
+
+# 9. Interpolation Tests (Math Layer)
+add_cuda_test(unit.math.test_interpolation
+    unit/math/test_interpolation.cu
 )
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -77,17 +97,22 @@ add_cuda_test(integration.functional.test_hartree
     integration/functional/test_hartree.cu
 )
 
-# 4. Hamiltonian V_loc Integration Test
+# 4. WavefunctionBuilder End-to-End Test
+add_cuda_test(integration.functional.test_wavefunction_builder_e2e
+    integration/functional/test_wavefunction_builder_e2e.cu
+)
+
+# 5. Hamiltonian V_loc Integration Test
 add_cuda_test(integration.solver.test_hamiltonian_vloc
     integration/solver/test_hamiltonian_vloc.cu
 )
 
-# 5. V_loc Index Mapping Diagnostic Test
+# 6. V_loc Index Mapping Diagnostic Test
 add_cuda_test(integration.solver.test_vloc_index_mapping
     integration/solver/test_vloc_index_mapping.cu
 )
 
-# 6. nl_d Convention Diagnostic Test
+# 7. nl_d Convention Diagnostic Test
 add_cuda_test(integration.solver.test_nl_d_convention
     integration/solver/test_nl_d_convention.cu
 )
