@@ -10,6 +10,7 @@ namespace dftcu {
 
 /**
  * @brief 从单原子赝势模型创建 3D 空间局域赝势
+ * [BUILDER] Heavy construction: 1D radial → 3D spatial distribution with interpolation
  *
  * 三层赝势模型：
  * ─────────────────────────────────────────────────────────────────────

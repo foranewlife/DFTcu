@@ -78,7 +78,7 @@ EnergyBreakdown NonSCFSolver::solve(Hamiltonian& ham, Wavefunction& psi, double 
             const auto& wfcs = pseudo.atomic_wfc().wavefunctions;
 
             for (const auto& wfc : wfcs) {
-                wfc_builder.add_atomic_orbital(itype, wfc.l, mesh.r, wfc.chi, mesh.rab, mesh.msh);
+                wfc_builder.add_atomic_orbital(itype, wfc.l, mesh.r, wfc.chi, mesh.rab);
             }
         }
 

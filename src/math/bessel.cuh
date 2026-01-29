@@ -62,7 +62,8 @@ __host__ __device__ inline double spherical_bessel_jl(int l, double x) {
         // QE line 187-190: jl(ir) = (sin(qr)*(15/qr - 6*qr) + cos(qr)*(qr^2 - 15)) / qr^3
         return (sin_qr * (15.0 / qr - 6.0 * qr) + cos_qr * (qr2 - 15.0)) / qr3;
     } else if (l == 4) {
-        // QE line 210-214: jl(ir) = (sin(qr)*(105 - 45*qr^2 + qr^4) + cos(qr)*(10*qr^3 - 105*qr)) / qr^5
+        // QE line 210-214: jl(ir) = (sin(qr)*(105 - 45*qr^2 + qr^4) + cos(qr)*(10*qr^3 - 105*qr)) /
+        // qr^5
         return (sin_qr * (105.0 - 45.0 * qr2 + qr4) + cos_qr * (10.0 * qr3 - 105.0 * qr)) / qr5;
     }
 

@@ -431,8 +431,8 @@ PYBIND11_MODULE(_dftcu, m) {
     py::class_<dftcu::WavefunctionBuilder>(m, "WavefunctionBuilder")
         .def(py::init<dftcu::Grid&, std::shared_ptr<dftcu::Atoms>>())
         .def("add_atomic_orbital", &dftcu::WavefunctionBuilder::add_atomic_orbital, py::arg("type"),
-             py::arg("l"), py::arg("r"), py::arg("chi"), py::arg("rab"), py::arg("msh") = 0,
-             "Add atomic orbital for a given atom type")
+             py::arg("l"), py::arg("r"), py::arg("chi"), py::arg("rab"),
+             "Add atomic orbital for a given atom type (msh cutoff computed automatically)")
         .def("build_atomic_wavefunctions", &dftcu::WavefunctionBuilder::build_atomic_wavefunctions,
              py::arg("psi"), py::arg("randomize_phase") = false,
              "Build atomic wavefunctions (legacy interface, fills existing Wavefunction object)")
