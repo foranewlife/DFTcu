@@ -50,10 +50,10 @@ struct UPFRadialData {
  * @brief chi(r) 径向轨道数据结构（用于 WavefunctionBuilder 测试）
  */
 struct ChiRData {
-    std::string element;  // 元素名（Si, C）
-    std::string orbital;  // 轨道名（s, p, d, f）
-    int l;                // 角动量量子数
-    int mesh;             // 径向网格点数
+    std::string element;      // 元素名（Si, C）
+    std::string orbital;      // 轨道名（s, p, d, f）
+    int l;                    // 角动量量子数
+    int mesh;                 // 径向网格点数
     std::vector<double> r;    // 径向坐标 r (Bohr)
     std::vector<double> rab;  // 积分权重 dr (Bohr)
     std::vector<double> chi;  // chi(r) 值 (Bohr^(-3/2))
@@ -63,11 +63,11 @@ struct ChiRData {
  * @brief chi_q 表数据结构（用于 WavefunctionBuilder 测试）
  */
 struct ChiQData {
-    std::string element;  // 元素名（Si, C）
-    std::string orbital;  // 轨道名（s, p, d, f）
-    int l;                // 角动量量子数
-    int nqx;              // q 点数量
-    double dq;            // q 点间距 (Bohr^-1)
+    std::string element;        // 元素名（Si, C）
+    std::string orbital;        // 轨道名（s, p, d, f）
+    int l;                      // 角动量量子数
+    int nqx;                    // q 点数量
+    double dq;                  // q 点间距 (Bohr^-1)
     std::vector<double> q;      // q 值 (Bohr^-1)
     std::vector<double> chi_q;  // chi_q 值 (Bohr^(3/2))
 };
@@ -473,8 +473,8 @@ class StandardDataLoader {
             // 解析数据行: band ig h k l psi_re psi_im |psi|
             PsiAtomicData::DataPoint point;
             std::stringstream ss(line);
-            if (ss >> point.band >> point.ig >> point.h >> point.k >> point.l >>
-                     point.psi_re >> point.psi_im >> point.psi_abs) {
+            if (ss >> point.band >> point.ig >> point.h >> point.k >> point.l >> point.psi_re >>
+                point.psi_im >> point.psi_abs) {
                 data.data.push_back(point);
             }
         }

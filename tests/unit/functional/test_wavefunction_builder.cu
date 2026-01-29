@@ -1,4 +1,3 @@
-#include <gtest/gtest.h>
 #include <memory>
 
 #include "fixtures/test_data_loader.cuh"
@@ -6,6 +5,8 @@
 #include "functional/wavefunction_builder.cuh"
 #include "model/atoms.cuh"
 #include "model/grid.cuh"
+
+#include <gtest/gtest.h>
 
 using namespace dftcu;
 using namespace dftcu::test;

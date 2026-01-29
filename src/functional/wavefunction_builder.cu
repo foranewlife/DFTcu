@@ -20,9 +20,8 @@ __global__ void build_atomic_band_kernel(int nnr, const double* atom_x, const do
                                          const double* gx, const double* gy, const double* gz,
                                          const double* gg, const double* tab_chi,
                                          const double* tab_q, const double* tab_M,
-                                         const double* tab_h, int nqx,
-                                         double dq, double omega_bohr, double encut_hartree,
-                                         gpufftComplex* band_out) {
+                                         const double* tab_h, int nqx, double dq, double omega_bohr,
+                                         double encut_hartree, gpufftComplex* band_out) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < nnr) {
         // gg is already in Bohr^-2, convert to Rydberg: multiply by 2
@@ -35,8 +34,7 @@ __global__ void build_atomic_band_kernel(int nnr, const double* atom_x, const do
         double chi_g = 0.0;
 
         // 使用三次样条插值（预计算系数）
-        chi_g = math::cubic_spline_interpolate_device(
-            gmod_phys, tab_q, tab_chi, tab_M, tab_h, nqx);
+        chi_g = math::cubic_spline_interpolate_device(gmod_phys, tab_q, tab_chi, tab_M, tab_h, nqx);
 
         double ylm = get_ylm(l, m_idx, gx[i], gy[i], gz[i], sqrt(gg[i]));
         double phase = -2.0 * constants::D_PI *
@@ -141,7 +139,7 @@ void WavefunctionBuilder::add_atomic_orbital(int type, int l, const std::vector<
     int nqx = static_cast<int>(qmax / dq_) + 1;  // 451 = 450 + 1
 
     std::vector<double> chi_q(nqx, 0.0);  // 注意：不是 nqx + 1
-    std::vector<double> aux(mesh_size);  // 使用截断后的大小
+    std::vector<double> aux(mesh_size);   // 使用截断后的大小
     const double fpi = 4.0 * constants::D_PI;
 
     // QE 的归一化因子：pref = 4π / sqrt(Ω)
@@ -308,11 +306,8 @@ void WavefunctionBuilder::build_atomic_wavefunctions_internal(Wavefunction& psi,
 
                 build_atomic_band_kernel<<<grid_size, block_size, 0, grid_.stream()>>>(
                     nnr, atoms_->pos_x(), atoms_->pos_y(), atoms_->pos_z(), iat, orb.l, m,
-                    grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(),
-                    d_tab_.data() + offset,
-                    d_q.data() + offset,
-                    d_spline_M_.data() + offset,
-                    d_spline_h_.data() + offset,
+                    grid_.gx(), grid_.gy(), grid_.gz(), grid_.gg(), d_tab_.data() + offset,
+                    d_q.data() + offset, d_spline_M_.data() + offset, d_spline_h_.data() + offset,
                     (int)orb.chi_q.size(), dq_, omega_bohr, psi.encut(),
                     psi.band_data(current_band));
 

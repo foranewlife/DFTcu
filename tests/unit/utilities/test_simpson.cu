@@ -1,8 +1,9 @@
-#include <gtest/gtest.h>
 #include <cmath>
 #include <vector>
 
 #include "utilities/math_utils.cuh"
+
+#include <gtest/gtest.h>
 
 using namespace dftcu;
 

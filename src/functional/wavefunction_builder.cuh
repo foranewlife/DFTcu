@@ -104,9 +104,9 @@ class WavefunctionBuilder {
     std::vector<std::vector<OrbitalTable>> orbital_tables_;
 
     // Persistent GPU storage for build process
-    GPU_Vector<double> d_tab_;           // chi_q 数据
-    GPU_Vector<double> d_spline_M_;      // 三次样条二阶导数
-    GPU_Vector<double> d_spline_h_;      // 三次样条网格间距
+    GPU_Vector<double> d_tab_;       // chi_q 数据
+    GPU_Vector<double> d_spline_M_;  // 三次样条二阶导数
+    GPU_Vector<double> d_spline_h_;  // 三次样条网格间距
 
     static constexpr double dq_ = 0.01;
 

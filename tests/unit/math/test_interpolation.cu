@@ -1,8 +1,9 @@
-#include <gtest/gtest.h>
 #include <cmath>
 #include <vector>
 
 #include "math/interpolation.cuh"
+
+#include <gtest/gtest.h>
 
 using namespace dftcu::math;
 
@@ -18,10 +19,8 @@ using namespace dftcu::math;
 class InterpolationTest : public ::testing::Test {
   protected:
     // 生成均匀网格数据
-    void generate_uniform_data(double x0, double x1, int n,
-                                std::function<double(double)> func,
-                                std::vector<double>& x_data,
-                                std::vector<double>& y_data) {
+    void generate_uniform_data(double x0, double x1, int n, std::function<double(double)> func,
+                               std::vector<double>& x_data, std::vector<double>& y_data) {
         x_data.resize(n);
         y_data.resize(n);
         double dx = (x1 - x0) / (n - 1);
@@ -32,9 +31,8 @@ class InterpolationTest : public ::testing::Test {
     }
 
     // 计算最大误差
-    double compute_max_error(const std::vector<double>& x_test,
-                              const std::vector<double>& y_test,
-                              const std::vector<double>& y_exact) {
+    double compute_max_error(const std::vector<double>& x_test, const std::vector<double>& y_test,
+                             const std::vector<double>& y_exact) {
         double max_err = 0.0;
         for (size_t i = 0; i < x_test.size(); ++i) {
             double err = std::abs(y_test[i] - y_exact[i]);

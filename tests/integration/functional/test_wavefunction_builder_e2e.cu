@@ -1,7 +1,6 @@
-#include <gtest/gtest.h>
 #include <cmath>
-#include <memory>
 #include <map>
+#include <memory>
 #include <tuple>
 
 #include "fixtures/test_data_loader.cuh"
@@ -9,6 +8,8 @@
 #include "functional/wavefunction_builder.cuh"
 #include "model/atoms.cuh"
 #include "model/grid.cuh"
+
+#include <gtest/gtest.h>
 
 using namespace dftcu;
 using namespace dftcu::test;
@@ -163,8 +164,8 @@ TEST_F(WavefunctionBuilderE2ETest, BandCount_Verification) {
             << "Band " << (band + 1) << " 应该有 " << qe_data.npw << " 个 G-vectors";
     }
 
-    std::cout << "✓ Band 数量验证通过：所有 " << qe_data.nbnd << " 个 bands 都有 "
-              << qe_data.npw << " 个 G-vectors" << std::endl;
+    std::cout << "✓ Band 数量验证通过：所有 " << qe_data.nbnd << " 个 bands 都有 " << qe_data.npw
+              << " 个 G-vectors" << std::endl;
 }
 
 /**
@@ -291,8 +292,7 @@ TEST_F(WavefunctionBuilderE2ETest, BesselTransform_C_s) {
     const std::vector<double>& dftcu_chi_q = builder.get_chi_q(1, 0);  // type=1, orbital_idx=0
 
     // 验证数据点数
-    ASSERT_EQ(dftcu_chi_q.size(), qe_chi_q.chi_q.size())
-        << "DFTcu 和 QE 的 chi_q 数据点数应该相同";
+    ASSERT_EQ(dftcu_chi_q.size(), qe_chi_q.chi_q.size()) << "DFTcu 和 QE 的 chi_q 数据点数应该相同";
 
     // 逐点比较
     double max_abs_err = 0.0;
@@ -319,19 +319,19 @@ TEST_F(WavefunctionBuilderE2ETest, BesselTransform_C_s) {
 
     // 输出详细对比（前 20 个 q 点）
     std::cout << "\n详细对比（前 20 个 q 点）:\n";
-    std::cout << "  iq      q(Bohr^-1)      DFTcu           QE              abs_err         rel_err(%)\n";
-    std::cout << "  ---------------------------------------------------------------------------------\n";
+    std::cout
+        << "  iq      q(Bohr^-1)      DFTcu           QE              abs_err         rel_err(%)\n";
+    std::cout
+        << "  ---------------------------------------------------------------------------------\n";
     for (size_t iq = 0; iq < std::min(size_t(20), qe_chi_q.chi_q.size()); ++iq) {
         double dftcu_val = dftcu_chi_q[iq];
         double qe_val = qe_chi_q.chi_q[iq];
         double abs_err = std::abs(dftcu_val - qe_val);
         double rel_err = std::abs(qe_val) > 1e-10 ? abs_err / std::abs(qe_val) * 100 : 0.0;
-        std::cout << "  " << std::setw(3) << iq
-                  << "  " << std::setw(14) << std::scientific << std::setprecision(6) << qe_chi_q.q[iq]
-                  << "  " << std::setw(14) << dftcu_val
-                  << "  " << std::setw(14) << qe_val
-                  << "  " << std::setw(14) << abs_err
-                  << "  " << std::setw(12) << std::fixed << std::setprecision(4) << rel_err << "\n";
+        std::cout << "  " << std::setw(3) << iq << "  " << std::setw(14) << std::scientific
+                  << std::setprecision(6) << qe_chi_q.q[iq] << "  " << std::setw(14) << dftcu_val
+                  << "  " << std::setw(14) << qe_val << "  " << std::setw(14) << abs_err << "  "
+                  << std::setw(12) << std::fixed << std::setprecision(4) << rel_err << "\n";
     }
 
     // 输出诊断信息
@@ -407,7 +407,7 @@ TEST_F(WavefunctionBuilderE2ETest, EndToEnd_PsiAtomic_Accuracy) {
     int total_points = 0;
 
     // 创建 Miller 指数到 ig 的映射
-    std::map<std::tuple<int,int,int>, int> miller_to_ig;
+    std::map<std::tuple<int, int, int>, int> miller_to_ig;
     std::vector<int> h_mill_h = grid_->miller_h_dense_host();
     std::vector<int> h_mill_k = grid_->miller_k_dense_host();
     std::vector<int> h_mill_l = grid_->miller_l_dense_host();
@@ -425,20 +425,21 @@ TEST_F(WavefunctionBuilderE2ETest, EndToEnd_PsiAtomic_Accuracy) {
     // 遍历所有 bands
     for (int band = 0; band < psi->num_bands(); ++band) {
         // 从 GPU 拷贝数据到 CPU
-        cudaMemcpy(h_psi.data(), psi->band_data(band),
-                   nnr * sizeof(gpufftComplex), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_psi.data(), psi->band_data(band), nnr * sizeof(gpufftComplex),
+                   cudaMemcpyDeviceToHost);
         cudaDeviceSynchronize();
 
         // 遍历 QE 的所有 G-vectors
         for (const auto& point : qe_psi.data) {
-            if (point.band - 1 != band) continue;  // QE uses 1-based indexing
+            if (point.band - 1 != band)
+                continue;  // QE uses 1-based indexing
 
             // 通过 Miller 指数找到对应的 ig
             auto key = std::make_tuple(point.h, point.k, point.l);
             auto it = miller_to_ig.find(key);
             if (it == miller_to_ig.end()) {
-                std::cout << "  警告: 未找到 Miller 指数 (" << point.h << ","
-                          << point.k << "," << point.l << ")" << std::endl;
+                std::cout << "  警告: 未找到 Miller 指数 (" << point.h << "," << point.k << ","
+                          << point.l << ")" << std::endl;
                 continue;
             }
 
@@ -462,8 +463,8 @@ TEST_F(WavefunctionBuilderE2ETest, EndToEnd_PsiAtomic_Accuracy) {
             if (err > 1e-3) {  // 使用 mock 数据，放宽精度要求
                 mismatch_count++;
                 if (mismatch_count <= 5) {  // 只打印前 5 个大误差
-                    std::cout << "  大误差点 band=" << (band+1) << " ("
-                              << point.h << "," << point.k << "," << point.l << ")"
+                    std::cout << "  大误差点 band=" << (band + 1) << " (" << point.h << ","
+                              << point.k << "," << point.l << ")"
                               << ": DFTcu=(" << dftcu_re << "," << dftcu_im << ")"
                               << " QE=(" << qe_re << "," << qe_im << ")"
                               << " err=" << err << std::endl;
